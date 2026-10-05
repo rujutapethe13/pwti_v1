@@ -1,0 +1,398 @@
+/**
+ * Global Styles & Design Tokens
+ *
+ * Powerweave Studio OS uses a calm, editorial, premium aesthetic.
+ * The color palette is designed for readability and elegance, not
+ * dense-data-dashboard visual style.
+ *
+ * ── Token Architecture ─────────────────────────────────────
+ * All colors are defined as CSS custom properties (design tokens)
+ * at the `:root` level, with a `.dark` override. Components and
+ * utility classes reference these tokens exclusively — no raw hex
+ * values in component files.
+ *
+ * ── Spacing & Typography ───────────────────────────────────
+ * Uses Tailwind's default scale (1 unit = 4px) extended for
+ * spacious layouts: 18, 22, 30, 36, 44, 52, 60, 72, 80, 96.
+ * Typography uses Inter at multiple sizes with a generous
+ * line-height for editorial feel.
+ * ────────────────────────────────────────────────────────────
+ */
+
+@import "tailwindcss";
+@import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap");
+
+@theme {
+  /* ── Backgrounds ──────────────────────────────── */
+  --background: 0 0% 100%;
+  --foreground: 20 14.3% 4.1%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 20 14.3% 4.1%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 20 14.3% 4.1%;
+
+  --muted: 60 4.8% 95.9%;
+  --muted-foreground: 25 5.3% 44.7%;
+
+  /* ── Interactive ──────────────────────────────── */
+  --primary: 142 72% 29%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 60 4.8% 95.9%;
+  --secondary-foreground: 24 9.8% 10%;
+
+  --accent: 60 4.8% 95.9%;
+  --accent-foreground: 24 9.8% 10%;
+
+  /* ── Destructive ──────────────────────────────── */
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 60 9.1% 97.8%;
+
+  /* ── Status ─────────────────────────────────── */
+  --success: 142 72% 29%;
+  --success-foreground: 0 0% 100%;
+
+  /* ── Editorial accent ──────────────────────────────
+     The one accent the interface spends, on highlights and positive
+     movement. It is deliberately separate from --primary: in dark mode
+     --primary is the off-white surface colour, so anything that means
+     "this is the accent" would flip meaning between themes. Everything
+     else on a page should be neutral. */
+  --highlight: 150 65% 24%;
+  --highlight-foreground: 0 0% 100%;
+  --warning: 38 92% 50%;
+  --warning-foreground: 0 0% 100%;
+  --info: 199 89% 48%;
+  --info-foreground: 0 0% 100%;
+
+  /* ── Borders & Inputs ─────────────────────────── */
+  --border: 20 5.9% 90%;
+  --input: 20 5.9% 90%;
+  --ring: 20 14.3% 4.1%;
+
+  /* ── Radius ──────────────────────────────────── */
+  --radius: 0.75rem;
+
+  /* ── Z-Index Scale ──────────────────────────── */
+  --z-base: 0;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-overlay: 300;
+  --z-modal: 400;
+  --z-popover: 500;
+  --z-toast: 600;
+
+  /* ── Brand ──────────────────────────────────── */
+  --brand: 234 89% 61%;
+  --brand-foreground: 0 0% 100%;
+
+  /* ── Soft Accents ──────────────────────────── */
+  --soft-teal-text: 172 55% 35%;
+  --soft-teal-bg: 172 70% 92%;
+  --soft-coral-text: 15 70% 48%;
+  --soft-coral-bg: 15 70% 90%;
+  --soft-amber-text: 40 90% 45%;
+  --soft-amber-bg: 40 90% 88%;
+  --soft-lavender-text: 250 60% 55%;
+  --soft-lavender-bg: 250 60% 92%;
+  --soft-gray-text: 220 10% 40%;
+  --soft-gray-bg: 220 10% 93%;
+  --terracotta-text: 15 80% 40%;
+  --terracotta-bg: 15 80% 90%;
+
+  /* Job-status colors. Only the dark values were ever defined, which left
+     light mode resolving an undefined variable; these keep every theme able
+     to render a status. */
+  --status-not-started: 220 14% 62%;
+  --status-in-progress: 199 89% 42%;
+  --status-review: 38 92% 45%;
+  --status-approved: 142 72% 32%;
+  --status-delayed: 0 72% 50%;
+  --status-done: 142 72% 32%;
+
+  /* ── Sidebar ──────────────────────────────────── */
+  --sidebar-background: 20 14.3% 4.1%;
+  --sidebar-foreground: 60 9.1% 97.8%;
+  --sidebar-muted: 12 6.5% 15.1%;
+  --sidebar-muted-foreground: 24 5.4% 63.9%;
+  --sidebar-accent: 12 6.5% 15.1%;
+  --sidebar-accent-foreground: 60 9.1% 97.8%;
+  --sidebar-border: 12 6.5% 15.1%;
+  --sidebar-ring: 24 5.7% 82.9%;
+}
+
+/* ── Color namespace ─────────────────────────────────────────
+   Tailwind v4 only turns a theme key into a utility when it carries a
+   namespace: `--color-*` becomes `bg-*` / `text-*` / `border-*`, and so
+   on. The block above is a v3-era token set whose keys are unnamespaced,
+   so on its own it emits the custom properties but *no* utilities — every
+   `bg-primary`, `text-muted-foreground` and `border-border` in the app
+   was silently a no-op. This block aliases each token into the color
+   namespace so those classes exist again.
+
+   `inline` keeps the generated utilities pointing at `var(--token)` rather
+   than copying the light value, so the `.dark` overrides below still take
+   effect at runtime. Adding a token to the set above means adding its
+   alias here too.
+   ───────────────────────────────────────────────────────────── */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+
+  --color-highlight: var(--highlight);
+  --color-highlight-foreground: var(--highlight-foreground);
+
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+
+  --color-soft-teal-text: var(--soft-teal-text);
+  --color-soft-teal-bg: var(--soft-teal-bg);
+  --color-soft-coral-text: var(--soft-coral-text);
+  --color-soft-coral-bg: var(--soft-coral-bg);
+  --color-soft-amber-text: var(--soft-amber-text);
+  --color-soft-amber-bg: var(--soft-amber-bg);
+  --color-soft-lavender-text: var(--soft-lavender-text);
+  --color-soft-lavender-bg: var(--soft-lavender-bg);
+  --color-soft-gray-text: var(--soft-gray-text);
+  --color-soft-gray-bg: var(--soft-gray-bg);
+  --color-terracotta-text: var(--terracotta-text);
+  --color-terracotta-bg: var(--terracotta-bg);
+
+  --color-sidebar-background: var(--sidebar-background);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-status-not-started: var(--status-not-started);
+  --color-status-in-progress: var(--status-in-progress);
+  --color-status-review: var(--status-review);
+  --color-status-approved: var(--status-approved);
+  --color-status-delayed: var(--status-delayed);
+  --color-status-done: var(--status-done);
+}
+
+/* ── Base Theme (Light) ─────────────────────────────────── */
+@layer base {
+  /* ── Dark Theme ─────────────────────────────────────────── */
+  .dark {
+    --background: 20 14.3% 4.1%;
+    --foreground: 60 9.1% 97.8%;
+
+    --card: 20 14.3% 4.1%;
+    --card-foreground: 60 9.1% 97.8%;
+
+    --popover: 20 14.3% 4.1%;
+    --popover-foreground: 60 9.1% 97.8%;
+
+    --muted: 12 6.5% 15.1%;
+    --muted-foreground: 24 5.4% 63.9%;
+
+    --primary: 60 9.1% 97.8%;
+    --primary-foreground: 24 9.8% 10%;
+
+    --secondary: 12 6.5% 15.1%;
+    --secondary-foreground: 60 9.1% 97.8%;
+
+    --accent: 12 6.5% 15.1%;
+    --accent-foreground: 60 9.1% 97.8%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 60 9.1% 97.8%;
+
+    --success: 142 72% 42%;
+    --success-foreground: 0 0% 100%;
+
+    --highlight: 150 58% 55%;
+    --highlight-foreground: 20 14.3% 4.1%;
+
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+
+    --info: 199 89% 56%;
+    --info-foreground: 0 0% 100%;
+
+    --border: 12 6.5% 15.1%;
+    --input: 12 6.5% 15.1%;
+    --ring: 24 5.7% 82.9%;
+
+    --sidebar-background: 20 14.3% 4.1%;
+    --sidebar-foreground: 60 9.1% 97.8%;
+    --sidebar-muted: 12 6.5% 15.1%;
+    --sidebar-muted-foreground: 24 5.4% 63.9%;
+    --sidebar-accent: 12 6.5% 15.1%;
+    --sidebar-accent-foreground: 60 9.1% 97.8%;
+    --sidebar-border: 12 6.5% 15.1%;
+    --sidebar-ring: 24 5.7% 82.9%;
+
+    --brand: 234 89% 61%;
+    --brand-foreground: 0 0% 100%;
+
+    /* ── Soft Accents (muted pastels — dark) ──────── */
+    --soft-teal-text: 172 55% 70%;
+    --soft-teal-bg: 172 70% 16%;
+    --soft-coral-text: 15 70% 65%;
+    --soft-coral-bg: 15 70% 17%;
+    --soft-amber-text: 40 90% 72%;
+    --soft-amber-bg: 40 90% 21%;
+    --soft-lavender-text: 250 60% 75%;
+    --soft-lavender-bg: 250 60% 21%;
+    --soft-gray-text: 220 10% 68%;
+    --soft-gray-bg: 220 10% 19%;
+    --terracotta-text: 15 80% 55%;
+    --terracotta-bg: 15 80% 25%;
+
+    --status-not-started: 220 14% 30%;
+    --status-in-progress: 199 89% 48%;
+    --status-review: 38 92% 50%;
+    --status-approved: 142 72% 42%;
+    --status-delayed: 0 84% 60%;
+    --status-done: 142 72% 42%;
+  }
+}
+
+/* ── Shared Type Scale ────────────────────────────────────────
+   Two classes carry the page's hierarchy, so a metric looks the same
+   wherever it is rendered:
+     .metric-eyebrow — the small uppercase label above a number
+     .metric-figure  — the number itself
+   ─────────────────────────────────────────────────────────── */
+@layer components {
+  .metric-eyebrow {
+    font-size: 10px;
+    line-height: 1.2;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  .metric-figure {
+    font-family: "DM Serif Display", "Georgia", "Times New Roman", serif;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.015em;
+    line-height: 1;
+  }
+}
+
+/* ── Base Layer Styles ───────────────────────────────────── */
+@layer base {
+  html {
+    font-size: 14px;
+    font-family:
+      "DM Sans",
+      system-ui,
+      -apple-system,
+      sans-serif;
+  }
+
+  .font-display {
+    font-family: "DM Serif Display", "Georgia", "Times New Roman", serif;
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-feature-settings:
+      "rlig" 1,
+      "calt" 1;
+  }
+
+  /* Custom scrollbar for sidebar */
+  .sidebar-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .sidebar-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .sidebar-scrollbar::-webkit-scrollbar-thumb {
+    background: hsl(var(--sidebar-muted-foreground) / 0.2);
+    border-radius: 9999px;
+  }
+  .sidebar-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--sidebar-muted-foreground) / 0.4);
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  /* Scrollable list inside the unmatched-values import panel */
+  .unmatched-scroll::-webkit-scrollbar {
+    width: 6px;
+  }
+  .unmatched-scroll::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .unmatched-scroll::-webkit-scrollbar-thumb {
+    background: #fcd34d;
+    border-radius: 9999px;
+  }
+  .unmatched-scroll::-webkit-scrollbar-thumb:hover {
+    background: #f59e0b;
+  }
+  /* Shadow-fade edges on the scroll container to hint at more content */
+  .unmatched-scroll-wrap::before,
+  .unmatched-scroll-wrap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 6px;
+    height: 10px;
+    pointer-events: none;
+    z-index: 1;
+  }
+  .unmatched-scroll-wrap::before {
+    top: 0;
+    background: linear-gradient(to bottom, hsl(48 96% 95% / 0.9), transparent);
+  }
+  .unmatched-scroll-wrap::after {
+    bottom: 0;
+    background: linear-gradient(to top, hsl(48 96% 95% / 0.9), transparent);
+  }
+}

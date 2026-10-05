@@ -1,0 +1,67 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# testing
+coverage/
+
+# next.js
+.next/
+out/
+
+# production
+build/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# local env files
+.env*.local
+.env
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# database backups — these contain real customer rows and permission grants
+backups/
+backup*.json
+backup-*.json
+supabase/.temp/
+
+# captured credentials and request/response dumps
+cookies.txt
+api-response.json
+temp_sql.json
+
+# run output captured into the repo root
+*.log
+build-output.txt
+tsc-output.txt
+vitest-output.txt
+tail.txt
+
+# one-off local probes kept for convenience, not part of the app
+/tmp-check.*
+/test-create.js
+/query-board.js
+/test_map*.ts
+/test_out*/
+
