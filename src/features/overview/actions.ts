@@ -100,9 +100,16 @@ export async function fetchOverviewData(
       .in("user_id", actorIds);
 
     for (const ar of actorRows ?? []) {
-      const roles = ar.roles as { name: string } | null;
-      const name = roles?.name;
-      if (name) actorNames.set(ar.user_id as string, name);
+      // `roles(name)` is an embedded PostgREST relation, so the runtime value is
+      // whatever the driver returned. Narrow it before reading `name`.
+      const roles: unknown = ar.roles;
+      const rawName =
+        typeof roles === "object" && roles !== null && "name" in roles
+          ? (roles as { name: unknown }).name
+          : undefined;
+      if (typeof rawName === "string" && rawName) {
+        actorNames.set(ar.user_id as string, rawName);
+      }
     }
   }
 

@@ -234,8 +234,8 @@ export function formatDateValue(value: ColumnValue): string | null {
     } else {
       const dmy = value.match(DMY_DATE_RE);
       if (dmy) {
-        let day = Number(dmy[1]);
-        let month = Number(dmy[2]);
+        const day = Number(dmy[1]);
+        const month = Number(dmy[2]);
         let year = Number(dmy[3]);
         if (year < 100) year += year < 70 ? 2000 : 1900;
         if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {

@@ -144,7 +144,7 @@ export function ChartsSection({ rows }: ChartsSectionProps) {
                   />
                   <Legend
                     wrapperStyle={{ fontSize: 11 }}
-                    formatter={(value) => <span className="text-muted-foreground">{value}</span>}
+                    formatter={(value: string) => <span className="text-muted-foreground">{value}</span>}
                   />
                 </PieChart>
               </ResponsiveContainer>

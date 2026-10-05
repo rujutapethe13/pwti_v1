@@ -101,7 +101,7 @@ export default function MyWorkPage() {
           <LayoutTemplate className="size-10 text-muted-foreground/40 mb-3" aria-hidden="true" />
           <h2 className="text-lg font-semibold">Nothing assigned to you yet</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Boards where you're assigned in a person column or mentioned in a comment will appear here.
+            Boards where you&apos;re assigned in a person column or mentioned in a comment will appear here.
           </p>
         </div>
       </div>

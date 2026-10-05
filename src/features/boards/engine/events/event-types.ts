@@ -57,6 +57,7 @@ export type DomainAction =
   | "unlink"
   | "recompute"
   | "update_options"
+  | "update_primary_column_label"
   | "update:color"
   | "update:statusOptions";
 

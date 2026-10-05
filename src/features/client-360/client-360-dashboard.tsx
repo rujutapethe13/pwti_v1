@@ -674,7 +674,7 @@ export function Client360Dashboard({ initialQuery, initialData }: Client360Dashb
           </Card>
             </>
           ) : (
-            <Client360DailyActivityView clientId={matches[0]?.clientId || ""} />
+            <Client360DailyActivityView />
           )}
         </>
       )}

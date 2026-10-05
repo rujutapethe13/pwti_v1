@@ -2,7 +2,35 @@
 
 import { cookies } from "next/headers";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { toErrorMessage } from "@/lib/utils";
+import type { PostgrestError } from "@supabase/supabase-js";
 import type { WorkspaceEntry, ContentItem } from "@/lib/workspace-context";
+
+/** Row shape returned by the `workspaces` insert-then-select round trip. */
+interface WorkspaceRow {
+  id: string;
+  name: string;
+  description: string | null;
+  organization_id: string;
+}
+
+/** Row shape returned by the `organizations` insert-then-select round trip. */
+interface OrganizationRow {
+  id: string;
+  name: string;
+}
+
+/**
+ * Structural subset of `PostgrestError` used by this module. Real PostgREST
+ * failures satisfy it structurally, and it lets locally synthesized failures
+ * (e.g. the timeout sentinel) be reported through the same channel.
+ */
+interface DbFailure {
+  message: string;
+  details: string;
+  hint: string;
+  code: string;
+}
 
 function generateId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -17,9 +45,13 @@ function generateSlug(name: string): string {
   return `${base}-${suffix}`;
 }
 
-async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+async function withTimeout<T>(
+  promise: PromiseLike<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
   return Promise.race([
-    promise,
+    Promise.resolve(promise),
     new Promise<T>((_, reject) => {
       setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
     }),
@@ -59,10 +91,10 @@ export async function createWorkspaceInDb(
   }
   const userId = user?.id;
 
-  let workspace;
-  let workspaceError;
+  let workspace: WorkspaceRow | null;
+  let workspaceError: PostgrestError | null;
   try {
-    const result = await withTimeout(
+    const result = await withTimeout<{ data: WorkspaceRow | null; error: PostgrestError | null }>(
       serviceClient
         .from("workspaces")
         .insert({
@@ -77,20 +109,20 @@ export async function createWorkspaceInDb(
           updated_at: now,
         })
         .select()
-        .single() as unknown as Promise<any>,
+        .single(),
       DB_TIMEOUT_MS,
       "workspaces insert",
     );
     workspace = result.data;
     workspaceError = result.error;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    const message = toErrorMessage(err, "Unknown error");
     console.error(`[createWorkspaceInDb] workspaces insert failed:`, message);
     throw new Error(`DB insert failed: ${message}`);
   }
 
   if (workspaceError || !workspace) {
-    const wsMsg = workspaceError instanceof Error ? workspaceError.message : (workspaceError as any)?.message || "Failed to create workspace.";
+    const wsMsg = toErrorMessage(workspaceError, "Failed to create workspace.");
     console.error("[createWorkspaceInDb] Failed to create workspace:", workspaceError);
     throw new Error(wsMsg);
   }
@@ -99,20 +131,22 @@ export async function createWorkspaceInDb(
 
   if (userId) {
     try {
-      const { error: onboardError } = await withTimeout(
-        client.rpc("onboard_workspace_owner", { p_workspace_id: workspaceId }) as unknown as Promise<any>,
+      const { error: onboardError } = await withTimeout<{
+        error: PostgrestError | null;
+      }>(
+        client.rpc("onboard_workspace_owner", { p_workspace_id: workspaceId }),
         DB_TIMEOUT_MS,
         "onboard_workspace_owner",
       );
       if (onboardError) {
-        const onboardMsg = onboardError instanceof Error ? onboardError.message : (onboardError as any)?.message || "Unknown error";
+        const onboardMsg = toErrorMessage(onboardError, "Unknown error");
         console.error("[createWorkspaceInDb] Failed to onboard workspace owner:", onboardError);
         throw new Error(`Failed to onboard workspace owner: ${onboardMsg}`);
       } else {
         console.log(`[createWorkspaceInDb] User onboarded as workspace owner: ${userId}`);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : (err as any)?.message || "Unknown error";
+      const message = toErrorMessage(err, "Unknown error");
       console.error(`[createWorkspaceInDb] onboard_workspace_owner failed:`, message);
       throw new Error(`Workspace owner onboarding failed: ${message}`);
     }
@@ -121,9 +155,9 @@ export async function createWorkspaceInDb(
   }
 
   const boardId = generateId("board");
-  let boardError;
+  let boardError: DbFailure | null;
   try {
-    const result = await withTimeout(
+    const result = await withTimeout<{ error: PostgrestError | null }>(
       serviceClient
         .from("boards")
         .insert({
@@ -142,15 +176,15 @@ export async function createWorkspaceInDb(
           updated_at: now,
         })
         .select()
-        .single() as unknown as Promise<any>,
+        .single(),
       DB_TIMEOUT_MS,
       "boards insert",
     );
     boardError = result.error;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    const message = toErrorMessage(err, "Unknown error");
     console.error(`[createWorkspaceInDb] boards insert failed:`, message);
-    boardError = { message, code: "DB_TIMEOUT" } as any;
+    boardError = { message, details: "", hint: "", code: "DB_TIMEOUT" };
   }
 
   if (boardError) {
@@ -197,10 +231,10 @@ export async function createOrganizationInDb(
   const organizationId = generateId("org");
   const now = new Date().toISOString();
 
-  let org;
-  let orgError;
+  let org: OrganizationRow | null;
+  let orgError: PostgrestError | null;
   try {
-    const result = await withTimeout(
+    const result = await withTimeout<{ data: OrganizationRow | null; error: PostgrestError | null }>(
       supabase
         .from("organizations")
         .insert({
@@ -212,31 +246,31 @@ export async function createOrganizationInDb(
           updated_at: now,
         })
         .select()
-        .single() as unknown as Promise<any>,
+        .single(),
       DB_TIMEOUT_MS,
       "organizations insert",
     );
     org = result.data;
     orgError = result.error;
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    const message = toErrorMessage(err, "Unknown error");
     console.error(`[createOrganizationInDb] organizations insert failed:`, message);
     throw new Error(`DB insert failed: ${message}`);
   }
 
   if (orgError || !org) {
-    const orgMsg = orgError instanceof Error ? orgError.message : (orgError as any)?.message || "Failed to create organization.";
+    const orgMsg = toErrorMessage(orgError, "Failed to create organization.");
     console.error("[createOrganizationInDb] Failed to create organization:", orgError);
     throw new Error(orgMsg);
   }
   console.log(`[createOrganizationInDb] organization created: ${organizationId}`);
 
   console.log(`[createOrganizationInDb] creating workspace for org: ${organizationId}`);
-  let workspace;
+  let workspace: WorkspaceEntry | null;
   try {
     workspace = await withTimeout(createWorkspaceInDb(name, organizationId), DB_TIMEOUT_MS, "createWorkspaceInDb");
   } catch (err) {
-    const message = err instanceof Error ? err.message : (err as any)?.message || "Unknown error";
+    const message = toErrorMessage(err, "Unknown error");
     console.error(`[createOrganizationInDb] createWorkspaceInDb failed:`, message);
     throw new Error(`Workspace creation failed: ${message}`);
   }

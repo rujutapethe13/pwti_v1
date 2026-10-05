@@ -349,6 +349,7 @@ export function ImportWizardModal({
                   headers={effectiveHeaders}
                   rows={previewRows}
                   highlightColumn={titleColumnIndex}
+                  headerRowOffset={headerRowOffset}
                   highlightedRowIndex={headerRowOffset}
                   columnTypes={columnTypes}
                   effectiveHeaders={effectiveHeaders}
@@ -358,6 +359,7 @@ export function ImportWizardModal({
                 <PreviewTable
                   headers={effectiveHeaders}
                   rows={previewRows}
+                  headerRowOffset={headerRowOffset}
                   highlightedRowIndex={headerRowOffset}
                   columnTypes={columnTypes}
                   effectiveHeaders={effectiveHeaders}
@@ -646,7 +648,7 @@ function Step2FirstColumn({
       <div>
         <h3 className="text-sm font-medium text-foreground">What is your first column?</h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          Confirm which column becomes the row titles — the primary "name" field
+          Confirm which column becomes the row titles — the primary &quot;name&quot; field
           for each item. The selected column is highlighted in the preview.
         </p>
       </div>

@@ -91,14 +91,14 @@ describe("volume trend projection", () => {
   });
 
   it("reports a range as non-empty when either series holds a job", () => {
-    const payload = toVolumeTrendPoints(
-      {
+    const result = toVolumeTrendPoints(
+      payload({
         range: { id: "7d", label: "Last 7 days", from: "2026-09-18", to: "2026-09-24", days: 7, granularity: "day", today: null },
         received: [{ key: "2026-09-18", label: "Fri", jobs: 2 }],
         completed: [{ key: "2026-09-18", label: "Fri", jobs: 0 }],
-      },
+      }),
       "received",
     );
-    expect(payload.isEmpty).toBe(false);
+    expect(result.isEmpty).toBe(false);
   });
 });

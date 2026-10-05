@@ -16,6 +16,7 @@ import {
 import { publishWorkspaceUpdate, subscribeWorkspaceUpdates } from "./workspace-events";
 import { createClient } from "@/lib/supabase/client";
 import { loadPersisted, savePersisted, clearAllPersisted, clearLegacyStorage } from "@/lib/storage";
+import { toErrorMessage } from "@/lib/utils";
 import { useBootIdSync } from "@/hooks/use-boot-sync";
 import {
   createWorkspaceInDb,
@@ -92,6 +93,8 @@ export interface WorkspaceContextValue {
   addAgent: (agent: { name: string; instructions: string; tools: string[] }) => Agent;
   removeAgent: (agentId: string) => void;
   renameAgent: (agentId: string, name: string) => void;
+  addVibeApp: (name: string, description: string) => ContentItem;
+  addForm: (name: string, boardId: string | null) => ContentItem;
   syncBoard: (board: {
     id: string;
     name: string;
@@ -545,7 +548,7 @@ try {
       orgResult = await withTimeout(createOrganizationInDb(name), CREATION_TIMEOUT_MS, "createOrganizationInDb");
       console.log(`[workspace] createOrganizationInDb succeeded for: "${name}"`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : (err as any)?.message || "Failed to create workspace.";
+      const message = toErrorMessage(err, "Failed to create workspace.");
       console.error(`[workspace] Failed to create workspace:`, err);
       throw new Error(message);
     } finally {
@@ -934,13 +937,13 @@ try {
   );
 
   const addForm = useCallback(
-    (name: string, boardId: string): ContentItem => {
+    (name: string, boardId: string | null): ContentItem => {
       const form: ContentItem = {
         id: `form-${Date.now()}`,
         type: "form",
         name,
         icon: "FileCog",
-        boardId,
+        boardId: boardId ?? undefined,
       };
       setWorkspaces((prev) =>
         prev.map((w) => (w.id === activeId ? { ...w, content: [...w.content, form] } : w)),

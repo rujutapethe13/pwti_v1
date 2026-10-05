@@ -1,8 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import type { NextRequest } from "next/server";
-
-// Workaround for TypeScript not recognizing vitest globals
-const vitestVi = vi as any;
 
 vi.mock("server-only", () => ({}));
 
@@ -94,11 +91,11 @@ describe("GET /api/client-360/snapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     getUserSpy.mockResolvedValue({ data: { user: { id: "user-123" } } });
-    (getUserOrganizationId as vitestVi.Mock).mockResolvedValue("org-test");
+    (getUserOrganizationId as Mock).mockResolvedValue("org-test");
   });
 
   it("returns 401 when user has no organization", async () => {
-    (getUserOrganizationId as vitestVi.Mock).mockResolvedValue(null);
+    (getUserOrganizationId as Mock).mockResolvedValue(null);
 
     const request = createMockRequest("http://localhost/api/client-360/snapshot");
     const response = await GET(request);

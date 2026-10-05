@@ -1,1 +1,3 @@
-export default {};
+const serverOnlyMock = {};
+
+export default serverOnlyMock;

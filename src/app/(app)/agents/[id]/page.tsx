@@ -10,7 +10,7 @@ export default function AgentDetailPage() {
   const params = useParams();
   const agentId = params.id as string;
   const { activeWorkspace } = useWorkspace();
-  const agent = activeWorkspace?.agents.find((a) => a.id === agentId);
+  const agent = activeWorkspace?.agents?.find((a) => a.id === agentId);
 
   if (!agent) {
     return (

@@ -31,7 +31,7 @@ import {
   FileCog,
 } from "lucide-react";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { cn, toErrorMessage } from "@/lib/utils";
 import { usePersistedState } from "@/lib/storage";
 import { useWorkspace, type ContentItem, type WorkspaceEntry } from "@/lib/workspace-context";
 import { useWorkspacePermission } from "@/lib/workspace-permissions";
@@ -119,6 +119,9 @@ function WorkspaceRowActions({ workspace, onRename, onDelete }: WorkspaceRowActi
 
 export function WorkspacePanel() {
   const pathname = usePathname();
+  // Widened to `string` so comparisons are not narrowed to a single literal by
+  // an enclosing `pathname === "..."` guard further down the tree.
+  const currentPath: string = pathname;
   const router = useRouter();
   const {
     workspaces,
@@ -195,7 +198,7 @@ export function WorkspacePanel() {
       setShowCreate(false);
       setShowDropdown(false);
     } catch (err) {
-      const message = err instanceof Error ? err.message : (err as any)?.message || "Failed to create workspace.";
+      const message = toErrorMessage(err, "Failed to create workspace.");
       console.error(`[workspace-panel] handleCreate failed:`, err);
       toast.error(message);
     } finally {
@@ -704,7 +707,7 @@ export function WorkspacePanel() {
                       onClick={() => router.push("/workspace/manage/compiled")}
                       className={cn(
                         "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm cursor-pointer transition-colors",
-                        pathname === "/workspace/manage/compiled"
+                        currentPath === "/workspace/manage/compiled"
                           ? "bg-accent text-accent-foreground"
                           : "hover:bg-accent",
                       )}

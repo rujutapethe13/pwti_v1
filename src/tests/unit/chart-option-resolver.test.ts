@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ColumnDefinition } from "@/features/boards/engine/types";
+import type { ColumnDefinition, ColumnValue } from "@/features/boards/engine/types";
 import { resolveOptionValue } from "@/features/boards/engine/view-engine/views/dashboard/dashboard-types";
 import { getLabel } from "@/features/boards/engine/view-engine/views/dashboard/chart-widget";
 
@@ -68,7 +68,7 @@ describe("resolveOptionValue (Bug 4 helper)", () => {
 });
 
 describe("getLabel (chart-widget dashboard pie/donut legend)", () => {
-  const cellValues = new Map<string, unknown>();
+  const cellValues = new Map<string, ColumnValue>();
 
   it("resolves an option id stored in a dropdown cell to its label", () => {
     const col = makeColumn([

@@ -263,7 +263,7 @@ function WorkspaceSwitcher({
   workspaces,
 }: {
   onClose: () => void;
-  current: Workspace;
+  current: Workspace | null;
   onSelect: (workspace: Workspace) => void;
   workspaces: Workspace[];
 }) {
@@ -327,7 +327,7 @@ function WorkspaceSwitcher({
         <WorkspaceRow
           key={workspace.id}
           ws={workspace}
-          active={workspace.id === current.id}
+          active={workspace.id === current?.id}
           onClick={() => {
             onSelect(workspace);
             onClose();
@@ -349,7 +349,7 @@ function WorkspaceSwitcher({
         <WorkspaceRow
           key={workspace.id}
           ws={workspace}
-          active={workspace.id === current.id}
+          active={workspace.id === current?.id}
           onClick={() => {
             onSelect(workspace);
             onClose();

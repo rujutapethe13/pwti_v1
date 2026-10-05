@@ -11,6 +11,18 @@ import { BaseRepository, type DatabaseRow, type RepositoryOptions } from "./base
 import type { ApiResponse } from "@/types";
 import type { ColumnDefinition, ColumnValue } from "../types";
 
+/**
+ * Column write payload.
+ *
+ * `organization_id` / `workspace_id` live on the `columns` table and are set by
+ * the create path, but they are not part of the engine-level `ColumnDefinition`
+ * entity, so they are accepted as optional passthrough fields here.
+ */
+type ColumnWritePayload = Partial<ColumnDefinition> & {
+  organizationId?: string;
+  workspaceId?: string;
+};
+
 export class ColumnRepository extends BaseRepository<ColumnDefinition> {
   protected tableName = "columns";
   protected primaryKey = "id";
@@ -41,8 +53,8 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     };
   }
 
-  protected toDatabase(entity: Partial<ColumnDefinition> | Record<string, unknown>): Record<string, unknown> {
-    const e = entity as Partial<ColumnDefinition>;
+  protected toDatabase(entity: ColumnWritePayload | Record<string, unknown>): Record<string, unknown> {
+    const e = entity as ColumnWritePayload;
     return {
       ...(e.id !== undefined ? { id: e.id } : {}),
       ...(e.boardId !== undefined ? { board_id: e.boardId } : {}),
