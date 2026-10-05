@@ -288,20 +288,29 @@ describe("WorkspaceProvider — board visibility with delayed responses (race co
     const { from } = makeDelayedSupabaseMock(50);
     const fromMock = from as Mock<typeof from>;
     fromMock.mockImplementation((table: string) => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn((_col: string, val: string) => {
-          if (table === "boards") {
-            chain._lastWsId = val;
-          }
-          return chain;
-        }),
+      const chain: {
+  select: ReturnType<typeof vi.fn>;
+  eq: ReturnType<typeof vi.fn>;
+  order: ReturnType<typeof vi.fn>;
+  insert: ReturnType<typeof vi.fn>;
+  single: ReturnType<typeof vi.fn>;
+  maybeSingle: ReturnType<typeof vi.fn>;
+  _lastWsId?: string;
+} = {
+  select: vi.fn().mockReturnThis(),
+  eq: vi.fn((_col: string, val: string) => {
+    if (table === "boards") {
+      chain._lastWsId = val;
+    }
+
+    return chain;
+  }),
         order: vi.fn(function () {
           let data: unknown[] = [];
           if (table === "workspaces") {
             data = mockWorkspaces;
           } else if (table === "boards") {
-            data = mockBoardsWithEmpty[(chain as any)._lastWsId ?? ""] ?? [];
+            data = mockBoardsWithEmpty[chain._lastWsId ?? ""] ?? [];
           } else if (table === "folders") {
             data = [];
           }
