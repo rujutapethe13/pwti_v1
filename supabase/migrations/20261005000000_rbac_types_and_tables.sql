@@ -407,6 +407,7 @@ create trigger on_profile_role_changed
 do $$
 declare
   v_uid uuid;
+  v_org text;
 begin
   select id into v_uid
     from auth.users
@@ -423,8 +424,29 @@ begin
   on conflict (id) do update
     set role = 'admin', updated_at = now();
 
+  -- Seed organization_members here rather than letting the profile sync trigger
+  -- do it later. current_role() reads organization_members, so without this the
+  -- super admin resolves to 'client' until file 05 runs.
+  select w.organization_id into v_org
+    from public.workspaces w
+   order by w.created_at asc
+   limit 1;
+
+  if v_org is not null then
+    insert into public.organization_members (organization_id, user_id, role)
+    values (v_org, v_uid, 'admin')
+    on conflict (organization_id, user_id) do update
+      set role = 'admin';
+  end if;
+
   raise notice 'rbac: super admin profile ready for %', v_uid;
 end
 $$;
 
-raise notice 'rbac 01: types, tables, columns and onboarding trigger in place';
+-- `raise` is PL/pgSQL, so it is only legal inside a function body. Wrapped in a
+-- DO block to reach the top level.
+do $$
+begin
+  raise notice 'rbac 01: types, tables, columns and onboarding trigger in place';
+end
+$$;

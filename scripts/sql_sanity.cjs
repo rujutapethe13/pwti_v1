@@ -85,3 +85,38 @@ console.log(
   "GET DIAGNOSTICS with undeclared target:",
   undeclared.length ? [...new Set(undeclared)] : "(none)",
 );
+
+// 7. PL/pgSQL-only statements at the top level. `raise` outside a function body
+// is a 42601 and took a real migration down, so it is worth catching here.
+// `begin;`/`end;` are not checked: `end;` terminates a CASE expression just as
+// legitimately as a transaction block, and the two are indistinguishable line-wise.
+const topLevelPlpgsql = [];
+let inBlock = false;
+let openTag = null;
+
+noComments.split(/\n/).forEach((line, i) => {
+  const tags = line.match(/\$[a-z_0-9]*\$/gi) || [];
+  for (const t of tags) {
+    if (!inBlock) {
+      inBlock = true;
+      openTag = t;
+    } else if (t === openTag) {
+      inBlock = false;
+      openTag = null;
+    }
+  }
+
+  if (inBlock) return;
+
+  const trimmed = line.trim();
+  if (/^(raise|declare|commit|rollback|exception)\b/i.test(trimmed)) {
+    topLevelPlpgsql.push(`line ${i + 1}: ${trimmed.slice(0, 60)}`);
+  } else if (/^if\b.*\bthen\s*$/i.test(trimmed) || /^while\b.*\bdo\s*$/i.test(trimmed)) {
+    topLevelPlpgsql.push(`line ${i + 1}: ${trimmed.slice(0, 60)}`);
+  }
+});
+
+console.log(
+  "top-level PL/pgSQL (42601):",
+  topLevelPlpgsql.length ? topLevelPlpgsql : "(none)",
+);

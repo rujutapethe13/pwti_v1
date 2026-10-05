@@ -764,56 +764,75 @@ create policy search_index_select_internal on public.search_index
 -- and leaves the sidebar trying to render something it cannot load. Both the
 -- read and the write are therefore gated on current visibility, so a revoke
 -- cleans up the bookmark view without any extra bookkeeping.
+--
+-- Guarded because `favorites` was added by a later migration
+-- (20260930130000_favorites_table.sql) that has not been applied to every
+-- database — on a database missing it, this file must still succeed. Apply that
+-- migration separately if you want the favourites feature; the policies below
+-- will apply automatically on the next re-run of this file.
 
-alter table public.favorites enable row level security;
+do $$
+begin
+  if to_regclass('public.favorites') is null then
+    raise warning 'rbac 04: public.favorites does not exist — skipping favorites policies. Apply 20260930130000_favorites_table.sql, then re-run this file.';
+    return;
+  end if;
 
-drop policy if exists "favorites_select_own" on public.favorites;
-create policy "favorites_select_own" on public.favorites
-  for select
-  using (
-    public.is_service_role()
-    or (
-      user_id = auth.uid()
-      and (
-        (item_type = 'workspace' and public.can_view_workspace(item_id))
-        or (item_type = 'board' and public.can_view_board(item_id))
-      )
-    )
-  );
+  execute $policies$
+    alter table public.favorites enable row level security;
 
-drop policy if exists "favorites_insert_own" on public.favorites;
-create policy "favorites_insert_own" on public.favorites
-  for insert
-  with check (
-    public.is_service_role()
-    or (
-      user_id = auth.uid()
-      and (
-        (item_type = 'workspace' and public.can_view_workspace(item_id))
-        or (item_type = 'board' and public.can_view_board(item_id))
-      )
-    )
-  );
+    drop policy if exists "favorites_select_own" on public.favorites;
+    create policy "favorites_select_own" on public.favorites
+      for select
+      using (
+        public.is_service_role()
+        or (
+          user_id = auth.uid()
+          and (
+            (item_type = 'workspace' and public.can_view_workspace(item_id))
+            or (item_type = 'board' and public.can_view_board(item_id))
+          )
+        )
+      );
 
-drop policy if exists "favorites_update_own" on public.favorites;
-create policy "favorites_update_own" on public.favorites
-  for update
-  using (public.is_service_role() or user_id = auth.uid())
-  with check (
-    public.is_service_role()
-    or (
-      user_id = auth.uid()
-      and (
-        (item_type = 'workspace' and public.can_view_workspace(item_id))
-        or (item_type = 'board' and public.can_view_board(item_id))
-      )
-    )
-  );
+    drop policy if exists "favorites_insert_own" on public.favorites;
+    create policy "favorites_insert_own" on public.favorites
+      for insert
+      with check (
+        public.is_service_role()
+        or (
+          user_id = auth.uid()
+          and (
+            (item_type = 'workspace' and public.can_view_workspace(item_id))
+            or (item_type = 'board' and public.can_view_board(item_id))
+          )
+        )
+      );
 
-drop policy if exists "favorites_delete_own" on public.favorites;
-create policy "favorites_delete_own" on public.favorites
-  for delete
-  using (public.is_service_role() or user_id = auth.uid());
+    drop policy if exists "favorites_update_own" on public.favorites;
+    create policy "favorites_update_own" on public.favorites
+      for update
+      using (public.is_service_role() or user_id = auth.uid())
+      with check (
+        public.is_service_role()
+        or (
+          user_id = auth.uid()
+          and (
+            (item_type = 'workspace' and public.can_view_workspace(item_id))
+            or (item_type = 'board' and public.can_view_board(item_id))
+          )
+        )
+      );
+
+    drop policy if exists "favorites_delete_own" on public.favorites;
+    create policy "favorites_delete_own" on public.favorites
+      for delete
+      using (public.is_service_role() or user_id = auth.uid());
+  $policies$;
+
+  raise notice 'rbac 04: favorites policies applied';
+end
+$$;
 
 -- ── audit_log ──────────────────────────────────────────────────────────────
 -- Append-only. Admins and the super admin read it; nobody updates or deletes.
@@ -871,4 +890,10 @@ begin
 end
 $$;
 
-raise notice 'rbac 04: RLS enabled and policies written on every RBAC and content table';
+-- `raise` is PL/pgSQL, so it is only legal inside a function body. Wrapped in a
+-- DO block to reach the top level.
+do $$
+begin
+  raise notice 'rbac 04: RLS enabled and policies written on every RBAC and content table';
+end
+$$;

@@ -38,6 +38,8 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_no_actor boolean := auth.uid() is null;
 begin
   if new.role is not distinct from old.role then
     return new;
@@ -49,23 +51,38 @@ begin
 
   -- Self-promotion. Covers a user editing their own profiles row, and an admin
   -- editing their own workspace_members row.
-  if old.user_id is not null and old.user_id = auth.uid() then
+  if not v_no_actor and old.user_id is not null and old.user_id = auth.uid() then
     raise exception 'rbac: you cannot change your own role'
       using errcode = '42501';
   end if;
 
-  -- The super admin is not demotable.
-  if public.is_super_admin_user(old.user_id) then
+  -- The super admin is not demotable. The one transition allowed is NULL ->
+  -- 'admin': that records their role on a membership row that simply had not
+  -- been set yet, and it grants nothing they do not already hold. It exists so
+  -- the migration backfill in file 05 can complete on their own rows — without
+  -- it, `set not null` on workspace_members.role could never be satisfied for
+  -- the super admin, and the alternative would be a migration-wide bypass that
+  -- also permits real demotions.
+  if public.is_super_admin_user(old.user_id)
+     and new.role is distinct from 'admin'::public.app_role then
     raise exception 'rbac: the super admin role cannot be changed'
       using errcode = '42501';
   end if;
 
-  if new.role = 'admin' and not public.is_super_admin() then
+  -- "Only the super admin can create admins" is a rule about *users*, so it only
+  -- applies when there is a user. With auth.uid() null there is no actor: the
+  -- statement came from the dashboard, or from a SECURITY DEFINER trigger such as
+  -- sync_organization_members_role. Both are trusted server-side code that has
+  -- already passed every user-facing check — and RLS on profiles,
+  -- organization_members and workspace_members denies an unauthenticated request
+  -- outright, so no browser can reach this path with a null uid.
+  if new.role = 'admin' and not v_no_actor and not public.is_super_admin() then
     raise exception 'rbac: only the super admin can grant the admin role'
       using errcode = '42501';
   end if;
 
   if new.role = 'staff'
+     and not v_no_actor
      and not (public.is_super_admin() or public.current_role() = 'admin') then
     raise exception 'rbac: only an admin can grant the staff role'
       using errcode = '42501';
@@ -83,6 +100,8 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_no_actor boolean := auth.uid() is null;
 begin
   if new.role is not distinct from old.role then
     return new;
@@ -92,22 +111,27 @@ begin
     return new;
   end if;
 
-  if old.user_id = auth.uid() then
+  if not v_no_actor and old.user_id = auth.uid() then
     raise exception 'rbac: you cannot change your own role'
       using errcode = '42501';
   end if;
 
-  if public.is_super_admin_user(old.user_id) then
+  -- Same rules as guard_role_change; see that function for why the
+  -- super-admin exception allows NULL -> 'admin' and why "no actor" exempts a
+  -- role assignment from the escalation checks.
+  if public.is_super_admin_user(old.user_id)
+     and new.role is distinct from 'admin'::public.app_role then
     raise exception 'rbac: the super admin role cannot be changed'
       using errcode = '42501';
   end if;
 
-  if new.role = 'admin' and not public.is_super_admin() then
+  if new.role = 'admin' and not v_no_actor and not public.is_super_admin() then
     raise exception 'rbac: only the super admin can grant the admin role'
       using errcode = '42501';
   end if;
 
   if new.role = 'staff'
+     and not v_no_actor
      and not (public.is_super_admin() or public.current_role() = 'admin') then
     raise exception 'rbac: only an admin can grant the staff role'
       using errcode = '42501';
@@ -815,4 +839,10 @@ grant execute on function public.get_board_cell_values(text) to authenticated, s
 grant execute on function public.get_board_groups(text) to authenticated, service_role;
 grant execute on function public.get_search_results(text, integer) to authenticated, service_role;
 
-raise notice 'rbac 03: write guards, escalation guards and client RPCs in place';
+-- `raise` is PL/pgSQL, so it is only legal inside a function body. Wrapped in a
+-- DO block to reach the top level.
+do $$
+begin
+  raise notice 'rbac 03: write guards, escalation guards and client RPCs in place';
+end
+$$;

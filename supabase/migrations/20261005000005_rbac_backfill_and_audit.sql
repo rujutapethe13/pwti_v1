@@ -27,8 +27,16 @@
 -- ── 1. Backfill ────────────────────────────────────────────────────────────
 
 -- workspace_members.role from the legacy roles.name.
+--
+-- Promote-only in spirit: this is a translation, not a decision. A membership
+-- row that was NULL becomes the closest equivalent app_role. The one thing it
+-- must never do is decide anything about the super admin, whose role is
+-- authoritative elsewhere — so their rows are set explicitly to 'admin' and the
+-- role-change guard is written to permit exactly that one transition (see
+-- guard_role_change in migration 03).
 update public.workspace_members wm
    set role = case
+                when public.is_super_admin_user(wm.user_id) then 'admin'::public.app_role
                 when lower(r.name) in ('owner', 'administrator', 'admin', 'manager')
                   then 'admin'::public.app_role
                 when lower(r.name) in ('viewer', 'guest')
@@ -39,15 +47,26 @@ update public.workspace_members wm
  where r.id = wm.role_id
    and wm.role is null;
 
+update public.workspace_members wm
+   set role = 'admin'::public.app_role
+ where wm.role is null
+   and public.is_super_admin_user(wm.user_id);
+
 update public.workspace_members set role = 'client'::public.app_role
  where role is null;
 
 alter table public.workspace_members alter column role set default 'client';
 alter table public.workspace_members alter column role set not null;
 
--- profiles.role: the highest authority any of a user's memberships implies, so
--- someone who is an Owner of any workspace is an admin org-wide rather than a
--- client who happens to hold one row.
+-- profiles.role: the highest authority any of a user's memberships implies.
+--
+-- Promote only — never demote. This distinction is the whole point: profiles.role
+-- was written authoritatively for the super admin by the onboarding bootstrap, and
+-- the rank below is derived from a *guess* about six ambiguous legacy role names.
+-- Overwriting a known-good value with a guessed lower one is how the first run of
+-- this file tried to demote the super admin to 'staff', which guard_role_change
+-- correctly refused. A backfill may raise a role to what its memberships imply; it
+-- may never lower one.
 with strongest as (
   select wm.user_id,
          max(
@@ -59,21 +78,32 @@ with strongest as (
          ) as rank
     from public.workspace_members wm
    group by wm.user_id
+),
+ranked as (
+  select p.id,
+         p.role,
+         case s.rank
+           when 2 then 2
+           when 1 then 1
+           else 0
+         end as membership_rank
+    from public.profiles p
+    join strongest s on s.user_id = p.id
 )
 update public.profiles p
-   set role = case s.rank
+   set role = case r.membership_rank
                 when 2 then 'admin'::public.app_role
                 when 1 then 'staff'::public.app_role
                 else 'client'::public.app_role
               end,
        updated_at = now()
-  from strongest s
- where s.user_id = p.id
-   and p.role is distinct from case s.rank
-                                  when 2 then 'admin'::public.app_role
-                                  when 1 then 'staff'::public.app_role
-                                  else 'client'::public.app_role
-                                end;
+  from ranked r
+ where r.id = p.id
+   and r.membership_rank > case p.role
+                             when 'admin'::public.app_role then 2
+                             when 'staff'::public.app_role then 1
+                             else 0
+                           end;
 
 -- organization_members from profiles, so current_role() has a row to read for
 -- users who were created before the onboarding trigger existed.
@@ -249,4 +279,10 @@ begin
 end
 $$;
 
-raise notice 'rbac 05: audit triggers attached and backfill verified';
+-- `raise` is PL/pgSQL, so it is only legal inside a function body. Wrapped in a
+-- DO block to reach the top level.
+do $$
+begin
+  raise notice 'rbac 05: audit triggers attached and backfill verified';
+end
+$$;

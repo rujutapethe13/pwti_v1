@@ -625,4 +625,10 @@ grant execute on function public.client_can_edit_column(text, text) to authentic
 grant execute on function public.client_visible_column_ids(text) to authenticated, service_role;
 grant execute on function public.accessible_workspace_ids(boolean) to authenticated, service_role;
 
-raise notice 'rbac 02: helpers in place (is_super_admin, current_role, current_org_id, can_view/edit_workspace, can_view/edit_board, client_can_view/edit_column, client_visible_column_ids, accessible_workspace_ids)';
+-- `raise` is PL/pgSQL, so it is only legal inside a function body. Wrapped in a
+-- DO block to reach the top level.
+do $$
+begin
+  raise notice 'rbac 02: helpers in place (is_super_admin, current_role, current_org_id, can_view/edit_workspace, can_view/edit_board, client_can_view/edit_column, client_visible_column_ids, accessible_workspace_ids)';
+end
+$$;
