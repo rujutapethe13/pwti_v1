@@ -29,6 +29,7 @@ import {
   Archive,
   Zap,
   FileCog,
+  UserPlus,
 } from "lucide-react";
 import Link from "next/link";
 import { cn, toErrorMessage } from "@/lib/utils";
@@ -48,6 +49,7 @@ import {
 import { ConfirmDialog } from "@/features/boards/engine/components/confirm-dialog";
 import { toast } from "sonner";
 import { AddNewMenu } from "@/components/shared/add-new-menu";
+import { MembersAccessModal } from "@/components/shared/members-access-modal";
 
 function getInitials(name: string) {
   return name.charAt(0).toUpperCase();
@@ -160,6 +162,7 @@ export function WorkspacePanel() {
   const [workspaceDeleteOpen, setWorkspaceDeleteOpen] = useState(false);
   const [showArchive, setShowArchive] = useState(false);
   const [showIconPicker, setShowIconPicker] = useState(false);
+  const [membersOpen, setMembersOpen] = useState(false);
   const [iconValue, setIconValue] = useState("");
   const [wsIcons, setWsIcons] = usePersistedState<Record<string, string>>("workspace-icons", {});
   const [foldersCollapsed, setFoldersCollapsed] = usePersistedState<boolean>("workspace-folders-collapsed", false);
@@ -374,6 +377,13 @@ export function WorkspacePanel() {
                   </DropdownMenuItem>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuItem
+                className="gap-2 rounded-sm"
+                onClick={() => { setMembersOpen(true); setWorkspaceMenuOpen(false); }}
+              >
+                <UserPlus className="size-4" aria-hidden="true" />
+                Add members
+              </DropdownMenuItem>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger className="gap-2 rounded-sm">
                   <ArrowUpDown className="size-4" aria-hidden="true" />
@@ -1024,6 +1034,15 @@ export function WorkspacePanel() {
           </div>
         </div>
       )}
+
+      {/* Members & access */}
+      <MembersAccessModal
+        open={membersOpen}
+        onOpenChange={setMembersOpen}
+        scope={activeWorkspaceId ? { kind: "workspace", id: activeWorkspaceId } : null}
+        workspaceId={activeWorkspaceId ?? undefined}
+        subjectName={activeWorkspace?.name}
+      />
 
       {/* Workspace Delete confirmation */}
       <ConfirmDialog

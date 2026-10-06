@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/components/shared/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { UserProvider } from "@/lib/user-context";
 import { WorkspaceProvider } from "@/lib/workspace-context";
 import { siteConfig } from "@/config/site";
 import "@/styles/globals.css";
@@ -39,9 +40,11 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <TooltipProvider delayDuration={300}>
-            <WorkspaceProvider>
-              {children}
-            </WorkspaceProvider>
+            {/* Outside WorkspaceProvider: the top bar, not the provider, binds the
+                active workspace into it, so there is no cycle between them. */}
+            <UserProvider>
+              <WorkspaceProvider>{children}</WorkspaceProvider>
+            </UserProvider>
           </TooltipProvider>
         </ThemeProvider>
       </body>

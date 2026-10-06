@@ -436,7 +436,7 @@ export function GlobalSidebar({
                   </button>
 
                   {showWorkspaceDropdown && (
-                    <div className="absolute left-0 z-[200] mt-1 w-64 rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+                    <div className="absolute left-0 z-[var(--z-popover)] mt-1 w-64 popover-surface">
                       <div className="p-2">
                         <div className="relative">
                           <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -659,8 +659,8 @@ export function GlobalSidebar({
 
       {/* ── Create Workspace Modal ─────────────────────── */}
       {showCreateWorkspace && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+        <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-sm rounded-lg popover-surface p-4">
             <h3 className="text-sm font-semibold">Create new workspace</h3>
             <input
               autoFocus

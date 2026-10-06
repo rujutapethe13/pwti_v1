@@ -19,6 +19,7 @@ type FieldErrors = {
 export default function SignInPage() {
   const [isPending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
+  const [success, setSuccess] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<FieldErrors>({});
   const [rememberMe, setRememberMe] = React.useState(false);
 
@@ -26,8 +27,12 @@ export default function SignInPage() {
     const params = new URLSearchParams(window.location.search);
     const verified = params.get("verified");
     const errorParam = params.get("error");
+    const passwordUpdated = params.get("password_updated");
 
-    if (verified === "true") {
+    if (passwordUpdated === "1") {
+      // Arrive here from the set-new-password page after a reset.
+      setSuccess("Password updated. You can sign in with your new password.");
+    } else if (verified === "true") {
       setError("Email verified! You can now sign in.");
     } else if (errorParam === "verification_failed") {
       setError("Verification failed. Please try again or request a new link.");
@@ -79,6 +84,15 @@ export default function SignInPage() {
                 <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
                 <span>{error}</span>
               </div>
+            </div>
+          )}
+
+          {success && (
+            <div
+              role="status"
+              className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-sm text-success"
+            >
+              {success}
             </div>
           )}
 

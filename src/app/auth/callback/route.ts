@@ -51,6 +51,17 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // A session now exists, so stamp last_login_at. `signInWithEmail` does the
+  // same for password sign-in; this is the OAuth / email-confirmation path.
+  // Failures are logged rather than surfaced — a missing timestamp must not
+  // block the redirect into the app.
+  const { error: activityError } = await supabase.rpc("touch_user_activity", {
+    p_is_login: true,
+  });
+  if (activityError) {
+    console.error("[auth/callback] could not record last login:", activityError.message);
+  }
+
   return NextResponse.redirect(new URL(next, request.url));
 }
 

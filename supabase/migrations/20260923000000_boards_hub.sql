@@ -43,30 +43,37 @@ CREATE INDEX IF NOT EXISTS board_access_requests_user_id_idx ON public.board_acc
 
 -- RLS: board_access_roles (readable by any authenticated user)
 ALTER TABLE public.board_access_roles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "board_access_roles_select_authenticated" ON public.board_access_roles;
 CREATE POLICY "board_access_roles_select_authenticated"
   ON public.board_access_roles FOR SELECT
   USING (auth.uid() IS NOT NULL);
 
 -- RLS: board_access_overrides (users can read their own; admins can manage)
 ALTER TABLE public.board_access_overrides ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "board_access_overrides_select_own" ON public.board_access_overrides;
 CREATE POLICY "board_access_overrides_select_own"
   ON public.board_access_overrides FOR SELECT
   USING (auth.uid() IS NOT NULL);
+DROP POLICY IF EXISTS "board_access_overrides_upsert_own" ON public.board_access_overrides;
 CREATE POLICY "board_access_overrides_upsert_own"
   ON public.board_access_overrides FOR INSERT
   WITH CHECK (auth.uid() IS NOT NULL);
+DROP POLICY IF EXISTS "board_access_overrides_update_own" ON public.board_access_overrides;
 CREATE POLICY "board_access_overrides_update_own"
   ON public.board_access_overrides FOR UPDATE
   USING (auth.uid() IS NOT NULL);
 
 -- RLS: board_access_requests (users can read their own, request access)
 ALTER TABLE public.board_access_requests ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "board_access_requests_select_own" ON public.board_access_requests;
 CREATE POLICY "board_access_requests_select_own"
   ON public.board_access_requests FOR SELECT
   USING (auth.uid() IS NOT NULL);
+DROP POLICY IF EXISTS "board_access_requests_insert_own" ON public.board_access_requests;
 CREATE POLICY "board_access_requests_insert_own"
   ON public.board_access_requests FOR INSERT
   WITH CHECK (auth.uid() IS NOT NULL);
+DROP POLICY IF EXISTS "board_access_requests_update_own" ON public.board_access_requests;
 CREATE POLICY "board_access_requests_update_own"
   ON public.board_access_requests FOR UPDATE
   USING (auth.uid() IS NOT NULL);

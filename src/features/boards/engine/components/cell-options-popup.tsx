@@ -239,7 +239,7 @@ export function EditLabelsPanel({
                       <MoreHorizontal className="size-3.5" />
                     </button>
                     {menuId === option.id && (
-                      <div className="absolute right-0 top-full z-[200] mt-0.5 w-24 rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+                      <div className="absolute right-0 top-full z-[var(--z-popover)] mt-0.5 w-24 popover-surface">
                         <button
                           type="button"
                           onClick={() => {
@@ -256,7 +256,7 @@ export function EditLabelsPanel({
                 </div>
 
                 {isStatus && colorPickerId === option.id && (
-                  <div className="mt-1.5 rounded-lg bg-white p-2 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+                  <div className="mt-1.5 popover-surface p-2">
                     <div className="grid grid-cols-7 gap-1">
                       {PRESET_COLORS.map((color) => (
                         <div key={color} className="flex flex-col gap-0.5">
@@ -419,7 +419,7 @@ export function CellOptionsPopup({
   return (
     <div
       ref={popupRef}
-      className="absolute z-[200] mt-1 min-w-[200px] rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]"
+      className="absolute z-[var(--z-popover)] mt-1 min-w-[200px] popover-surface"
     >
       <div className="flex max-h-64 flex-col">
         {/* Create label input */}
@@ -452,7 +452,7 @@ export function CellOptionsPopup({
           <div className="flex flex-wrap gap-1.5">
             {options.map((option) => {
               const isSelected = option.label === value;
-              let colorClass = "bg-white text-foreground shadow-sm";
+              let colorClass = "bg-card text-foreground shadow-sm";
               let colorStyle: Record<string, string> | undefined;
               if (isStatus && option.color) {
                 colorStyle = { backgroundColor: option.color };
@@ -646,7 +646,7 @@ function LabelManagementSubPanel({
   }, [options, onCancel, syncOptions]);
 
   return (
-    <div className="flex max-h-80 flex-col rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+    <div className="flex max-h-80 flex-col popover-surface">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-xs font-medium text-foreground">Edit Labels</span>
         <button
@@ -718,7 +718,7 @@ function LabelManagementSubPanel({
                       <MoreHorizontal className="size-3.5" />
                     </button>
                     {menuId === option.id && (
-                      <div className="absolute right-0 top-full z-[200] mt-0.5 w-24 rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+                      <div className="absolute right-0 top-full z-[var(--z-popover)] mt-0.5 w-24 popover-surface">
                         <button
                           type="button"
                           onClick={() => handleDelete(option.id)}
@@ -732,7 +732,7 @@ function LabelManagementSubPanel({
                 </div>
 
 {isStatus && colorPickerId === option.id && (
-                    <div className="mt-1.5 rounded-lg bg-white p-2 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+                    <div className="mt-1.5 popover-surface p-2">
                     <div className="grid grid-cols-7 gap-1">
                       {PRESET_COLORS.map((color) => (
                         <div

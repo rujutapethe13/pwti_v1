@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 
-import { ThemeProvider } from "@/components/shared/theme-provider";
 import { AppShell } from "@/components/shared/app-shell";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/sonner";
@@ -20,16 +19,11 @@ export default function AppGroupLayout({
   children: React.ReactNode;
 }) {
   return (
-    <ThemeProvider
-      attribute="class"
-      defaultTheme="system"
-      enableSystem
-      disableTransitionOnChange
-    >
+    <>
       <TooltipProvider delayDuration={300}>
         <AppShell>{children}</AppShell>
       </TooltipProvider>
       <Toaster />
-    </ThemeProvider>
+    </>
   );
 }

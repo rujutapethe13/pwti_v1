@@ -607,8 +607,8 @@ function GroupHeaderMenu({
 
       {/* Status options editor panel */}
       {editingStatus && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/20" onClick={handleStatusCancel}>
-          <div className="w-80 rounded-lg border border-border bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50" onClick={handleStatusCancel}>
+          <div className="w-80 popover-surface" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between border-b border-border px-3 py-2">
               <span className="text-xs font-medium text-foreground">Status Options</span>
               <button type="button" onClick={handleStatusCancel} className="flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground">
@@ -1740,7 +1740,7 @@ export function TableView({
                     key={column.id}
                     className={cn(
                       "px-4 py-2 align-top text-sm font-medium tabular-nums",
-                      column.frozen && "sticky left-0 z-10 bg-white shadow-sm",
+                      column.frozen && "sticky left-0 z-10 bg-card shadow-sm",
                     )}
                   >
                     {sum.toLocaleString()}

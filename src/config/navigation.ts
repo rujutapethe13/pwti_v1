@@ -88,6 +88,10 @@ export const quickCreateActions: QuickCreateAction[] = [
   { id: "new-board", label: "New Board", icon: boardCatalog[5].icon!, description: "Create a custom board" },
 ];
 
+/**
+ * @deprecated Dead code — these components are not imported anywhere. Kept only
+ * so the typecheck does not fail while the files are still on disk.
+ */
 export const mockUser = {
   name: "Alex Chen",
   email: "alex@powerweave.studio",
@@ -96,6 +100,9 @@ export const mockUser = {
   avatarColor: "bg-gradient-to-br from-amber-500 to-orange-600",
 };
 
+/**
+ * @deprecated Dead code — workspace panel and sidebar are not imported anywhere.
+ */
 export const mockWorkspaces = [
   { id: "pw-main", label: "Powerweave Studio", plan: "Enterprise" },
   { id: "pw-design", label: "Design Division", plan: "Pro" },

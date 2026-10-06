@@ -326,11 +326,11 @@ export function DropdownCell({
           createPortal(
             <div
               ref={dropdownRef}
-              className="fixed min-w-[200px] rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]"
+              className="fixed min-w-[200px] popover-surface"
               style={{
                 top: dropdownPosition.top,
                 left: dropdownPosition.left,
-                zIndex: 9999,
+                zIndex: 1000,
                 maxHeight: dropdownPosition.openUpward
                   ? triggerRect.top - 16
                   : window.innerHeight - triggerRect.bottom - 16,

@@ -82,7 +82,7 @@ export function TimeRangeSelector({
           <ChevronDown className="size-3.5 opacity-60" aria-hidden="true" />
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent align="end" className="w-48 z-[1000]">
         <DropdownMenuLabel>Time range</DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuRadioGroup

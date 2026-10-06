@@ -21,16 +21,17 @@ import {
   Search,
   SlidersHorizontal,
   Trash2,
-  Crown,
   HardDrive,
   Grid3X3,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { useWorkspace, type ContentItem } from "@/lib/workspace-context";
+import { useCurrentUser, userInitials } from "@/lib/user-context";
 import { EmptyState } from "@/components/shared/empty-state";
 import { FavoriteStar } from "@/components/shared/favorite-star";
-import { createClient } from "@/lib/supabase/client";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { MembersAccessModal } from "@/components/shared/members-access-modal";
 import { ConfirmDialog } from "@/features/boards/engine/components/confirm-dialog";
 
 function getInitials(name: string) {
@@ -109,18 +110,11 @@ export default function WorkspacePage() {
     }
   }, [isEditingDesc]);
 
-  const [currentUser, setCurrentUser] = useState<{ name: string; email: string } | null>(null);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getUser().then(({ data }) => {
-      const u = data.user;
-      if (!u) return;
-      const meta = (u.user_metadata ?? {}) as { full_name?: string; name?: string };
-      const name = meta.full_name || meta.name || u.email?.split("@")[0] || "User";
-      setCurrentUser({ name, email: u.email ?? "" });
-    });
-  }, []);
+  // The member's own identity, shared with the top bar through UserProvider
+  // rather than fetched again here. The previous local copy resolved the name
+  // from auth metadata and defaulted to "User", which is why the workspace page
+  // and the top bar could show different people.
+  const { user } = useCurrentUser();
 
   const handleNameClick = () => {
     if (!activeWorkspace) return;
@@ -144,6 +138,7 @@ export default function WorkspacePage() {
 
   const [showSettings, setShowSettings] = useState(false);
   const [showShare, setShowShare] = useState(false);
+  const [showMembers, setShowMembers] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const isFav = activeWorkspaceId ? favoritedWorkspaceIds.has(activeWorkspaceId) : false;
@@ -200,9 +195,7 @@ export default function WorkspacePage() {
 
   const currentBoards = (activeWorkspace?.content ?? []).filter((item): item is ContentItem => item.type === "board");
 
-  const userInitials = currentUser
-    ? currentUser.name.split(/\s+/).filter(Boolean).map((p) => p[0]!.toUpperCase()).slice(0, 2).join("")
-    : "U";
+  const userInitialsLabel = userInitials(user?.name ?? null, user?.email ?? null);
 
   const tabs = [
     { id: "recents", label: "Recents", icon: History },
@@ -212,13 +205,6 @@ export default function WorkspacePage() {
   ];
 
   const [cleanupMode, setCleanupMode] = useState(false);
-
-  const mockUsers = [
-    { id: "u1", name: "Alex Chen", email: "alex@powerweave.studio", role: "Admin", initials: "AC", color: "bg-amber-500" },
-    { id: "u2", name: "Priya Patel", email: "priya@powerweave.studio", role: "Editor", initials: "PP", color: "bg-emerald-500" },
-    { id: "u3", name: "Marcus Johnson", email: "marcus@powerweave.studio", role: "Viewer", initials: "MJ", color: "bg-sky-500" },
-    { id: "u4", name: "Sofia Rodriguez", email: "sofia@powerweave.studio", role: "Editor", initials: "SR", color: "bg-purple-500" },
-  ];
 
   return (
     <div className="flex-1 overflow-y-auto bg-background">
@@ -273,12 +259,23 @@ export default function WorkspacePage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button className="flex size-8 items-center justify-center rounded-full bg-muted hover:bg-accent" aria-label={currentUser?.name ?? "User menu"}>
-              <span className="text-xs font-bold">{userInitials}</span>
-            </button>
-
-            <button onClick={() => setShowShare(true)} className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700">
-              Invite / 3
+            <span className="flex size-8 items-center justify-center rounded-full bg-muted" aria-hidden="true">
+              {user?.avatarUrl ? (
+                <Avatar className="size-8">
+                  <AvatarImage src={user.avatarUrl} alt="" />
+                  <AvatarFallback className="text-xs font-bold">
+                    {userInitialsLabel}
+                  </AvatarFallback>
+                </Avatar>
+              ) : (
+                <span className="text-xs font-bold">{userInitialsLabel}</span>
+              )}
+            </span>
+            <button
+              onClick={() => setShowMembers(true)}
+              className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700"
+            >
+              Members
             </button>
 
             <div className="relative" ref={headerDropdownRef}>
@@ -471,41 +468,29 @@ export default function WorkspacePage() {
                    compact
                  />
                </div>
-               <div>
-                 <h3 className="mb-3 text-sm font-semibold">Users</h3>
-                 <div className="rounded-lg border">
-                   <table className="w-full text-sm">
-                     <thead>
-                       <tr className="border-b text-left text-xs text-muted-foreground">
-                         <th className="px-4 py-2.5 font-medium">User</th>
-                         <th className="px-4 py-2.5 font-medium">Email</th>
-                         <th className="px-4 py-2.5 font-medium">Role</th>
-                       </tr>
-                     </thead>
-                     <tbody>
-                       {mockUsers.map((user) => (
-                         <tr key={user.id} className="border-b last:border-b-0 hover:bg-accent/50">
-                           <td className="px-4 py-2.5">
-                             <div className="flex items-center gap-2.5">
-                               <span className={cn("flex size-8 items-center justify-center rounded-full text-xs font-bold text-white", user.color)}>
-                                                                 {user.initials}
-                                 </span>
-                               <span className="font-medium">{user.name}</span>
-                             </div>
-                           </td>
-                           <td className="px-4 py-2.5 text-muted-foreground">{user.email}</td>
-                           <td className="px-4 py-2.5">
-                             <span className="inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-semibold">
-                               {user.role === "Admin" && <Crown className="size-3" aria-hidden="true" />}
-                               {user.role}
-                             </span>
-                           </td>
-                         </tr>
-                       ))}
-                     </tbody>
-                   </table>
-                 </div>
-               </div>
+<div>
+                  <div className="mb-3 flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">Users</h3>
+                    <button
+                      onClick={() => setShowMembers(true)}
+                      className="text-xs font-medium text-blue-600 hover:underline"
+                    >
+                      Members &amp; access
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => setShowMembers(true)}
+                    className="flex w-full flex-col items-center justify-center rounded-lg border border-gray-200 py-10 text-center hover:bg-accent/40"
+                  >
+                    <Users2 className="size-8 text-muted-foreground/50" aria-hidden="true" />
+                    <span className="mt-2 text-sm font-medium">
+                      View members &amp; access
+                    </span>
+                    <span className="mt-0.5 text-xs text-muted-foreground">
+                      Roles, status and last active for everyone in this workspace.
+                    </span>
+                  </button>
+                </div>
              </div>
            )}
 
@@ -574,6 +559,13 @@ export default function WorkspacePage() {
             </div>
           </div>
         )}
+
+        <MembersAccessModal
+          open={showMembers}
+          onOpenChange={setShowMembers}
+          scope={activeWorkspaceId ? { kind: "workspace", id: activeWorkspaceId } : null}
+          subjectName={activeWorkspace?.name}
+        />
 
         <ConfirmDialog
           open={deleteConfirmOpen}

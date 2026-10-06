@@ -326,11 +326,11 @@ export function StatusCell({
           createPortal(
             <div
               ref={dropdownRef}
-              className="fixed rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]"
+              className="fixed popover-surface"
               style={{
                 top: dropdownPosition.top,
                 left: dropdownPosition.left,
-                zIndex: 9999,
+                zIndex: 1000,
                 minWidth: 280,
                 maxHeight: dropdownPosition.openUpward
                   ? triggerRect.top - 16

@@ -424,10 +424,10 @@ export function AddNewMenu() {
           align="start"
           side="bottom"
           sideOffset={4}
-          className="w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+          className="w-56 p-1"
           onMouseLeave={handleMouseLeave}
         >
-          <div className="px-2 py-1.5 text-xs font-semibold text-gray-500">Add new</div>
+          <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground">Add new</div>
 
           <DropdownMenuItem
             onSelect={() => handleAgentVibeCreate("agent")}
@@ -448,7 +448,7 @@ export function AddNewMenu() {
             {!isWorkspaceReady && <Settings2 className="ml-auto size-3.5 text-gray-400" aria-hidden="true" />}
           </DropdownMenuItem>
 
-          <DropdownMenuSeparator className="my-1 bg-gray-100" />
+          <DropdownMenuSeparator className="my-1" />
 
           <div onMouseEnter={handleBoardHover} onMouseLeave={handleMouseLeave}>
             <DropdownMenuSub open={boardSubOpen} onOpenChange={setBoardSubOpen}>
@@ -463,7 +463,7 @@ export function AddNewMenu() {
               <DropdownMenuSubContent
                 alignOffset={-8}
                 sideOffset={-4}
-                className="w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+                className="w-56 p-1"
               >
                 <DropdownMenuItem
                   onSelect={() => { setNameDialogTarget("board"); setShowNameDialog(true); }}
@@ -506,7 +506,7 @@ export function AddNewMenu() {
               <DropdownMenuSubContent
                 alignOffset={-8}
                 sideOffset={-4}
-                className="w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+                className="w-56 p-1"
               >
                 <DropdownMenuItem
                   onSelect={() => create("doc")}
@@ -529,7 +529,7 @@ export function AddNewMenu() {
             <span>Dashboard</span>
           </DropdownMenuItem>
 
-          <DropdownMenuSeparator className="my-1 bg-gray-100" />
+          <DropdownMenuSeparator className="my-1" />
 
           <DropdownMenuItem
             onSelect={() => create("folder")}
@@ -547,7 +547,7 @@ export function AddNewMenu() {
             <span>Template center</span>
           </DropdownMenuItem>
 
-          <DropdownMenuSeparator className="my-1 bg-gray-100" />
+          <DropdownMenuSeparator className="my-1" />
 
           <div onMouseEnter={handleMoreHover} onMouseLeave={handleMouseLeave}>
             <DropdownMenuSub open={moreSubOpen} onOpenChange={setMoreSubOpen}>
@@ -559,7 +559,7 @@ export function AddNewMenu() {
               <DropdownMenuSubContent
                 alignOffset={-8}
                 sideOffset={-4}
-                className="w-56 rounded-lg border border-gray-200 bg-white p-1 shadow-[0_8px_24px_rgba(0,0,0,0.12)]"
+                className="w-56 p-1"
               >
                 <DropdownMenuItem
                   onSelect={openImportWizard}
@@ -596,8 +596,8 @@ export function AddNewMenu() {
       </DropdownMenu>
 
       {showCreateWorkspace && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+        <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-sm rounded-lg popover-surface p-4">
             <h3 className="text-sm font-semibold">Create new workspace</h3>
             <input
               autoFocus
@@ -707,8 +707,8 @@ export function AddNewMenu() {
       )}
 
       {showInstalledApps && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+        <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg popover-surface p-4">
             <h3 className="text-sm font-semibold">Installed apps</h3>
             <p className="mt-1 text-xs text-muted-foreground">Apps currently installed in this workspace.</p>
             <ul className="mt-3 space-y-1.5">
@@ -745,8 +745,8 @@ export function AddNewMenu() {
       )}
 
       {showFormBoardPicker && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-md rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+        <div className="fixed inset-0 z-[var(--z-modal)] flex items-center justify-center bg-black/50">
+          <div className="w-full max-w-md rounded-lg popover-surface p-4">
             <h3 className="text-sm font-semibold">Create new form</h3>
             <p className="mt-1 text-xs text-muted-foreground">Select the board this form should be linked to.</p>
             <div className="mt-3 space-y-1.5">

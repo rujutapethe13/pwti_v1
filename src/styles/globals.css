@@ -79,10 +79,15 @@
   --z-base: 0;
   --z-dropdown: 100;
   --z-sticky: 200;
-  --z-overlay: 300;
-  --z-modal: 400;
-  --z-popover: 500;
-  --z-toast: 600;
+  --z-overlay: 1999;
+  --z-modal: 2000;
+  --z-popover: 1000;
+  --z-toast: 3000;
+
+  /* ── Popover Surface Tokens (fully opaque) ───────────────── */
+  --popover-bg: 0 0% 100%;
+  --popover-border: 20 5.9% 90%;
+  --popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
 
   /* ── Brand ──────────────────────────────────── */
   --brand: 234 89% 61%;
@@ -146,6 +151,10 @@
 
   --color-popover: var(--popover);
   --color-popover-foreground: var(--popover-foreground);
+
+  --color-popover-bg: var(--popover-bg);
+  --color-popover-border: var(--popover-border);
+  --color-popover-shadow: var(--popover-shadow);
 
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
@@ -222,6 +231,10 @@
     --popover: 20 14.3% 4.1%;
     --popover-foreground: 60 9.1% 97.8%;
 
+    --popover-bg: 20 14.3% 12%;
+    --popover-border: 12 6.5% 22%;
+    --popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+
     --muted: 12 6.5% 15.1%;
     --muted-foreground: 24 5.4% 63.9%;
 
@@ -295,6 +308,15 @@
      .metric-figure  — the number itself
    ─────────────────────────────────────────────────────────── */
 @layer components {
+  .popover-surface {
+    background-color: hsl(var(--popover-bg));
+    opacity: 1;
+    backdrop-filter: none;
+    border: 1px solid hsl(var(--popover-border));
+    box-shadow: var(--popover-shadow);
+    border-radius: 8px;
+  }
+
   .metric-eyebrow {
     font-size: 10px;
     line-height: 1.2;
