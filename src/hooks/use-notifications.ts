@@ -69,8 +69,8 @@ export function useNotifications(): UseNotificationsResult {
   useEffect(() => {
     if (!userId) return;
 
-    const existing = (supabase as any).getChannels().find(
-      (c: any) => c.topic === "realtime:notifications"
+    const existing = supabase.getChannels().find(
+      (c) => c.topic === "realtime:notifications"
     );
     if (existing) {
       supabase.removeChannel(existing);
