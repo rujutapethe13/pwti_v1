@@ -564,6 +564,7 @@ export default function WorkspacePage() {
           open={showMembers}
           onOpenChange={setShowMembers}
           scope={activeWorkspaceId ? { kind: "workspace", id: activeWorkspaceId } : null}
+          workspaceId={activeWorkspaceId ?? undefined}
           subjectName={activeWorkspace?.name}
         />
 

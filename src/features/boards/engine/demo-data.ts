@@ -503,20 +503,7 @@ export interface DashboardWorkloadItem {
   total: number;
 }
 
-export interface DashboardNotification {
-  id: string;
-  title: string;
-  message: string;
-  timestamp: string;
-  unread: boolean;
-}
 
-export const dashboardKpis: DashboardKpi[] = [
-  { id: "delayed", label: "Delayed Batches", value: 4, trend: "+2", trendDirection: "up", statusColor: "status-delayed" },
-  { id: "pending", label: "Pending Approvals", value: 12, trend: "-3", trendDirection: "down", statusColor: "status-review" },
-  { id: "qc", label: "QC Queue", value: 8, trend: "+5", trendDirection: "up", statusColor: "status-in-progress" },
-  { id: "active", label: "Active Batches", value: 24, trend: "+4", trendDirection: "up", statusColor: "status-approved" },
-];
 
 export const dashboardActivity: DashboardActivityItem[] = [
   { id: "1", action: "Batch #B-024 approved", user: "Sarah", timestamp: "2 min ago", type: "approval" },
@@ -541,8 +528,3 @@ export const dashboardWorkload: DashboardWorkloadItem[] = [
   { department: "QC", active: 4, total: 6 },
 ];
 
-export const dashboardNotifications: DashboardNotification[] = [
-  { id: "1", title: "Batch delayed", message: "Production batch #B-024 is behind schedule", timestamp: "10 min ago", unread: true },
-  { id: "2", title: "Approval needed", message: "CGI-017 pending your review", timestamp: "1 hr ago", unread: true },
-  { id: "3", title: "Invoice paid", message: "Invoice #INV-042 has been marked as paid", timestamp: "3 hr ago", unread: false },
-];

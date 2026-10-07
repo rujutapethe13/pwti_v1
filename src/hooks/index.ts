@@ -16,4 +16,7 @@
 
 export { useBootIdSync } from "./use-boot-sync";
 export type { BootIdSyncState } from "./use-boot-sync";
+export { useNotifications } from "./use-notifications";
+export type { Notification } from "./use-notifications";
+export { timeAgo } from "./use-notifications";
 

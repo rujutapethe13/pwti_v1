@@ -190,13 +190,19 @@ async function loadWorkspaceMembers(workspaceId: string): Promise<{ members: Mem
     });
   }
 
+  const deduped = new Map<string, Member>();
+  for (const m of members) {
+    if (!deduped.has(m.user_id)) deduped.set(m.user_id, m);
+  }
+  const uniqueMembers = Array.from(deduped.values());
+
   const order: Record<AccessRole, number> = { owner: 0, edit: 1, view: 2 };
-  members.sort((a, b) => {
+  uniqueMembers.sort((a, b) => {
     const byRole = order[a.role] - order[b.role];
     return byRole !== 0 ? a.email.localeCompare(b.email) : a.user_id.localeCompare(b.user_id);
   });
 
-  return { members, emails };
+  return { members: uniqueMembers, emails };
 }
 
 export async function GET(request: NextRequest) {

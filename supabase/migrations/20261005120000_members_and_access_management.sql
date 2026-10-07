@@ -300,6 +300,11 @@ begin
     return null;
   end if;
 
+  -- Super admin always has owner access everywhere
+  if public.is_super_admin_user(p_user_id) then
+    return 'owner';
+  end if;
+
   -- The owner. app_role = 'admin' is a workspace administrator, not the owner:
   -- conflating the two would make every admin undeletable in the Members dialog.
   if v_owner = p_user_id then
@@ -347,6 +352,11 @@ begin
 
   if not found then
     return null;
+  end if;
+
+  -- Super admin always has owner access everywhere
+  if public.is_super_admin_user(p_user_id) then
+    return 'owner';
   end if;
 
   select o.access into v_access

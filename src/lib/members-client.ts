@@ -54,8 +54,8 @@ function scopeKey(
   workspaceId: string | null,
   boardId?: string | null,
 ): string | null {
-  if (!workspaceId) return null;
-  if (scope === "board") return boardId ? `board::${boardId}` : null;
+  if (!workspaceId || workspaceId === "null" || workspaceId === "undefined") return null;
+  if (scope === "board") return boardId && boardId !== "null" && boardId !== "undefined" ? `board::${boardId}` : null;
   return `workspace::${workspaceId}`;
 }
 
@@ -79,6 +79,12 @@ function queryFor(
   boardId?: string | null,
   q?: string,
 ): string {
+  if (!workspaceId || (scope === "board" && !boardId)) {
+    throw new Error("Invalid scope parameters: workspaceId and boardId (for board scope) are required");
+  }
+  if (scope !== "workspace" && scope !== "board") {
+    throw new Error("Invalid scope: must be 'workspace' or 'board'");
+  }
   const params = new URLSearchParams({ scope });
   if (scope === "board") {
     params.set("board_id", boardId ?? "");
@@ -159,7 +165,7 @@ export function useScopeAccess(
   const [state, setState] = useState<ScopeState>(() => (key ? cache.get(key) ?? LOADING : IDLE));
 
   useEffect(() => {
-    if (!key || !workspaceId) {
+    if (!key || !workspaceId || workspaceId === "null" || workspaceId === "undefined" || (scope === "board" && (!boardId || boardId === "null" || boardId === "undefined"))) {
       setState(IDLE);
       return;
     }

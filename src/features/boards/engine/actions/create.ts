@@ -30,68 +30,6 @@ function toAppError(error: unknown): Error {
   return new Error(detail ? `${message} (${detail})` : message);
 }
 
-async function seedDefaultRecord(
-  supabase: Awaited<ReturnType<typeof createServiceClient>>,
-  params: {
-    boardId: string;
-    organizationId: string;
-    workspaceId: string;
-    name: string;
-    groupId: string | null;
-    columns: ColumnDefinition[];
-    now: string;
-  },
-): Promise<BoardRecord> {
-  const { boardId, organizationId, workspaceId, name, groupId, columns, now } = params;
-  const defaultRecordId = generateId("record");
-
-  const { error: recordError } = await supabase.from("records").insert({
-    id: defaultRecordId,
-    organization_id: organizationId,
-    workspace_id: workspaceId,
-    board_id: boardId,
-    group_id: groupId,
-    title: name,
-    status: "active",
-    version: 1,
-    archived_at: null,
-    created_at: now,
-    updated_at: now,
-  });
-  if (recordError) throw toAppError(recordError);
-
-  const primaryColumn = columns[0];
-  const cellValue: ColumnValue = primaryColumn?.label ? name : "";
-  if (primaryColumn) {
-    const { error: cellError } = await supabase.from("cell_values").insert({
-      id: `${boardId}:${defaultRecordId}:${primaryColumn.id}`,
-      organization_id: organizationId,
-      workspace_id: workspaceId,
-      board_id: boardId,
-      record_id: defaultRecordId,
-      column_id: primaryColumn.id,
-      value: cellValue,
-      value_text: typeof cellValue === "string" ? cellValue : JSON.stringify(cellValue),
-      updated_at: now,
-    });
-    if (cellError) throw toAppError(cellError);
-  }
-
-  return {
-    id: defaultRecordId,
-    organizationId,
-    workspaceId,
-    boardId,
-    groupId,
-    title: name,
-    status: "active",
-    version: 1,
-    archivedAt: null,
-    createdAt: now,
-    updatedAt: now,
-  };
-}
-
 export async function createBoardWithDefaults(
   name: string,
   workspaceId: string,
@@ -395,20 +333,9 @@ export async function createBoardWithDefaults(
 
   if (viewError) throw toAppError(viewError);
 
-  // Seed a single default record so a freshly created board is not empty.
-  const defaultRecord = await seedDefaultRecord(supabase, {
-    boardId,
-    organizationId,
-    workspaceId,
-    name,
-    groupId: groups[0]?.id ?? null,
-    columns,
-    now,
-  });
-
   console.warn(`[createBoardWithDefaults] Created board ${board.id} (${board.name}) in workspace ${workspaceId}`);
 
-  return { board, groups, columns, records: [defaultRecord], viewId };
+  return { board, groups, columns, records: [], viewId };
 }
 
 export async function createBoardFromTemplate(
@@ -612,17 +539,6 @@ export async function createBoardFromTemplate(
     updated_at: now,
   });
   if (viewError) throw toAppError(viewError);
-
-  // Seed a single default record so a freshly created board is not empty.
-  await seedDefaultRecord(supabase, {
-    boardId,
-    organizationId,
-    workspaceId,
-    name,
-    groupId: groups[0]?.id ?? null,
-    columns,
-    now,
-  });
 
   console.warn(`[createBoardFromTemplate] Created board ${board.id} (${board.name}) from template ${templateId} in workspace ${workspaceId}`);
 
@@ -965,17 +881,6 @@ export async function createMultiLevelBoard(
     updated_at: now,
   });
   if (viewError) throw toAppError(viewError);
-
-  // Seed a single default record so a freshly created board is not empty.
-  await seedDefaultRecord(supabase, {
-    boardId,
-    organizationId,
-    workspaceId,
-    name,
-    groupId: groups[0]?.id ?? null,
-    columns,
-    now,
-  });
 
   console.warn(`[createMultiLevelBoard] Created board ${board.id} (${board.name}) with nested groups in workspace ${workspaceId}`);
 
