@@ -141,21 +141,32 @@ export function useBoard(initialBoards: BoardDefinition[] = []): UseBoardReturn 
 
   const deleteBoardFn = useCallback(
     async (boardId: string) => {
-      const prev = boards.find((b) => b.id === boardId);
-      setBoards((p) => p.filter((b) => b.id !== boardId));
+      setLoading(true);
+      setError(null);
+      // No optimistic removal: the board stays in the list until
+      // the server confirms the delete. The delete_board server
+      // action returns 403 when the caller may not delete and
+      // 404 when nothing was deleted, so both roll back cleanly —
+      // the UI was never changed.
       try {
         const response = await deleteBoard(boardId);
         if (response.error) {
-          if (prev) setBoards((p) => [...p, prev]);
+          setError(response.error);
           toast.error(response.error);
-        } else {
-          toast.success("Board deleted.", { action: { label: "Undo", onClick: () => {} } });
+          return;
         }
-      } catch {
-        if (prev) setBoards((p) => [...p, prev]);
+        // Confirmed deleted in the database: only now update the UI.
+        setBoards((prev) => prev.filter((b) => b.id !== boardId));
+        toast.success("Board deleted.");
+      } catch (err) {
+        const msg = toErrorMessage(err);
+        setError(msg);
+        toast.error(msg);
+      } finally {
+        setLoading(false);
       }
     },
-    [boards],
+    [],
   );
 
   const favoriteBoardFn = useCallback(

@@ -76,11 +76,13 @@ export async function GET(_request: NextRequest) {
       return NextResponse.json([]);
     }
 
-    // Get all boards in the user's workspaces
+    // Get all boards in the user's workspaces (archived boards
+    // are soft-deleted and must not appear here)
     const { data: boards, error: boardsErr } = await svc
       .from("boards")
       .select("id, name, slug, workspace_id, updated_at")
       .in("workspace_id", workspaceIds)
+      .neq("status", "archived")
       .order("updated_at", { ascending: false });
 
     if (boardsErr || !boards || boards.length === 0) {

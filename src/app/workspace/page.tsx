@@ -187,7 +187,7 @@ export default function WorkspacePage() {
       setDeleteConfirmOpen(false);
       router.push("/workspace");
     } catch {
-      toast.error("Failed to delete workspace.");
+      // deleteWorkspace already surfaced the real reason.
     } finally {
       setIsDeleting(false);
     }

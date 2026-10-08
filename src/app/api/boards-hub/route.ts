@@ -72,10 +72,14 @@ export async function GET(_request: NextRequest) {
     }> = [];
 
     for (const ws of workspaces) {
+      // Archived boards are soft-deleted: they must not appear in
+      // any list. The archive/trash surface is the only place they
+      // are meant to show.
       const { data: boards } = await svc
         .from("boards")
         .select("id, name, slug, created_at, is_restricted")
         .eq("workspace_id", ws.id)
+        .neq("status", "archived")
         .order("created_at", { ascending: true });
 
       if (boards && boards.length > 0) {

@@ -49,7 +49,10 @@ export async function GET(_request: NextRequest) {
       const { data: bd, error: be } = await svc
         .from("boards")
         .select("id, name, workspace_id, slug")
-        .in("id", boardIds);
+        .in("id", boardIds)
+        // Archived boards are soft-deleted; they must not
+        // appear in the favorites list.
+        .neq("status", "archived");
       if (be) {
         console.error("[favorites] boards lookup error:", be);
       } else if (bd) {

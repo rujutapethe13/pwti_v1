@@ -150,9 +150,9 @@ export function WorkspacePanel() {
   const [folderOpen, setFolderOpen] = useState<Record<string, boolean>>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
-  const [deletingId, setDeletingId] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
   const [searchQuery] = useState("");
 
   // Workspace "..." menu feature state (persisted to sessionStorage)
@@ -232,16 +232,17 @@ export function WorkspacePanel() {
   };
 
   const handleWorkspaceDelete = async () => {
-    if (!activeWorkspaceId) return;
+    if (!workspaceToDelete) return;
     setIsDeleting(true);
     try {
-      await deleteWorkspace(activeWorkspaceId);
-      toast.success("Workspace deleted.");
+      await deleteWorkspace(workspaceToDelete.id);
+      toast.success(`"${workspaceToDelete.name}" deleted.`);
     } catch {
-      toast.error("Failed to delete workspace.");
+      // deleteWorkspace already surfaced the real reason.
     } finally {
       setIsDeleting(false);
       setWorkspaceDeleteOpen(false);
+      setWorkspaceToDelete(null);
     }
   };
 
@@ -253,21 +254,28 @@ export function WorkspacePanel() {
   };
 
   const handleConfirmDelete = async () => {
-    if (!deletingId) return;
+    if (!workspaceToDelete) return;
     if (workspaces.length <= 1) {
       toast.error("You must have at least one workspace.");
       setDeleteConfirmOpen(false);
-      setDeletingId(null);
+      setWorkspaceToDelete(null);
       return;
     }
+    const nextWorkspace = workspaces.find((w) => w.id !== workspaceToDelete!.id);
     setIsDeleting(true);
-    const nextWorkspace = workspaces.find((w) => w.id !== deletingId);
-    await deleteWorkspace(deletingId);
-    setDeletingId(null);
-    setIsDeleting(false);
-    setDeleteConfirmOpen(false);
-    if (nextWorkspace) {
-      switchWorkspace(nextWorkspace.id);
+    try {
+      // deleteWorkspace switches the active workspace itself when
+      // the deleted one was active.
+      await deleteWorkspace(workspaceToDelete.id);
+      setDeleteConfirmOpen(false);
+      if (nextWorkspace && activeWorkspaceId === workspaceToDelete.id) {
+        switchWorkspace(nextWorkspace.id);
+      }
+    } catch {
+      // deleteWorkspace already surfaced the real reason.
+    } finally {
+      setWorkspaceToDelete(null);
+      setIsDeleting(false);
     }
   };
 
@@ -408,7 +416,13 @@ export function WorkspacePanel() {
               </DropdownMenuSub>
               <DropdownMenuItem
                 disabled={workspaces.length <= 1}
-                onClick={() => { setWorkspaceDeleteOpen(true); setWorkspaceMenuOpen(false); }}
+                onClick={() => {
+                  if (activeWorkspace) {
+                    setWorkspaceToDelete({ id: activeWorkspace.id, name: activeWorkspace.name });
+                    setWorkspaceDeleteOpen(true);
+                  }
+                  setWorkspaceMenuOpen(false);
+                }}
                 className="gap-2 rounded-sm text-destructive"
               >
                 <Trash2 className="size-4" aria-hidden="true" />
@@ -546,7 +560,7 @@ export function WorkspacePanel() {
                         setShowDropdown(false);
                       }}
                       onDelete={(workspace) => {
-                        setDeletingId(workspace.id);
+                        setWorkspaceToDelete({ id: workspace.id, name: workspace.name });
                         setDeleteConfirmOpen(true);
                       }}
                     />
@@ -1047,8 +1061,13 @@ export function WorkspacePanel() {
       {/* Workspace Delete confirmation */}
       <ConfirmDialog
         open={workspaceDeleteOpen}
-        onOpenChange={setWorkspaceDeleteOpen}
-        title={`Delete "${activeWorkspace?.name ?? ""}"?`}
+        onOpenChange={(open) => {
+          setWorkspaceDeleteOpen(open);
+          if (!open) {
+            setWorkspaceToDelete(null);
+          }
+        }}
+        title={workspaceToDelete ? `Delete "${workspaceToDelete.name}"?` : "Delete workspace?"}
         description="This will permanently delete all boards and data inside it. This cannot be undone."
         confirmLabel="Delete"
         variant="destructive"
@@ -1062,10 +1081,10 @@ export function WorkspacePanel() {
         onOpenChange={(open) => {
           setDeleteConfirmOpen(open);
           if (!open) {
-            setDeletingId(null);
+            setWorkspaceToDelete(null);
           }
         }}
-        title={`Delete "${deletingId ? workspaces.find((w) => w.id === deletingId)?.name : ""}"?`}
+        title={workspaceToDelete ? `Delete "${workspaceToDelete.name}"?` : "Delete workspace?"}
         description="This will permanently delete all boards and data inside it. This cannot be undone."
         confirmLabel="Delete"
         variant="destructive"

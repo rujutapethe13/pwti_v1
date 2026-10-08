@@ -24,6 +24,7 @@ import {
   renameBoard as renameBoardAction,
   renameWorkspaceInDb,
   deleteWorkspaceInDb,
+  purgeDeletedWorkspaces,
   createBoard,
 } from "@/features/boards/engine/actions";
 import { toast } from "sonner";
@@ -593,14 +594,61 @@ try {
   }, []);
 
   const deleteWorkspace = useCallback(async (id: string) => {
-    setWorkspaces((prev) => prev.filter((w) => w.id !== id));
-    publishWorkspaceUpdate({ type: "workspace:deleted", payload: { id } });
+    // No optimistic removal: the workspace stays in the sidebar
+    // until the database confirms the delete. A delete the server
+    // refuses (a regular member), or one that deletes 0 rows,
+    // therefore rolls back cleanly — the UI was never changed.
+    let result: { success: boolean; error?: string };
     try {
-      await deleteWorkspaceInDb(id);
-    } catch {
-      toast.error("Failed to delete workspace.");
+      result = await deleteWorkspaceInDb(id);
+    } catch (err) {
+      const message = toErrorMessage(err, "Failed to delete workspace.");
+      console.error(`[workspace] deleteWorkspace failed for ${id}:`, message);
+      toast.error(message);
+      throw err;
     }
-  }, []);
+
+    if (!result.success) {
+      // The delete did not happen. Surface the real reason —
+      // e.g. the permission error raised by the database — and
+      // keep the workspace in the UI.
+      const message = result.error ?? "Failed to delete workspace.";
+      console.warn(`[workspace] deleteWorkspace rejected for ${id}: ${message}`);
+      toast.error(message);
+      throw new Error(message);
+    }
+
+    // Confirmed deleted in the database: only now update the UI.
+    setWorkspaces((prev) => prev.filter((w) => w.id !== id));
+    workspaceContentCache.current.delete(id);
+    publishWorkspaceUpdate({ type: "workspace:deleted", payload: { id } });
+
+    if (activeId === id) {
+      const next = workspaces.find((w) => w.id !== id);
+      if (next) {
+        switchWorkspace(next.id);
+      } else {
+        setActiveId(null);
+        savePersisted("active-workspace", null);
+      }
+    }
+
+    // The authoritative workspace list comes from get_my_workspaces()
+    // on the next hydrate; dropping the cached board content makes a
+    // refresh authoritative too.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("workspace:refresh-content"));
+    }
+
+    // Fire-and-forget: schedule the background purge of the deleted
+    // workspace's child rows (boards, records, cells, etc.). This runs
+    // with service_role and bypasses per-row triggers, so it does not
+    // block the UI response. pg_cron also calls purge_deleted_workspaces()
+    // every 5 minutes as a safety net.
+    void purgeDeletedWorkspaces(100).catch((err) => {
+      console.error("[workspace] background purge failed:", err);
+    });
+  }, [activeId, workspaces, switchWorkspace]);
 
    const updateBoardFavorite = useCallback(
      (boardId: string, favorite: boolean) => {

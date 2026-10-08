@@ -9,6 +9,8 @@
 
 import "server-only";
 
+import { cookies } from "next/headers";
+
 import { BoardRepository } from "../repository/board-repository";
 import { GroupRepository } from "../repository/group-repository";
 import { ColumnRepository } from "../repository/column-repository";
@@ -34,8 +36,9 @@ import type {
   FavoriteBoardInput,
 } from "../schemas/board-schemas";
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createServiceClient, createClient } from "@/lib/supabase/server";
 import { createBoardWithDefaults } from "../actions/create";
+import type { PostgrestError } from "@supabase/supabase-js";
 
 const boardRepo = new BoardRepository();
 const groupRepo = new GroupRepository();
@@ -361,7 +364,14 @@ export const BoardService = {
   },
 
   /**
-   * Permanently delete a board.
+   * Permanently delete a board, or soft-delete (archive) it.
+   *
+   * Authorization happens in the database: the delete_board()
+   * security-definer function runs with the caller's identity,
+   * refuses anyone who is not the workspace owner, a workspace
+   * admin, an organization admin or the super admin (42501),
+   * and reports whether a row was actually deleted, so a
+   * zero-row no-op is never mistaken for success.
    */
   async delete(input: DeleteBoardInput, actorUserId: string): Promise<ApiResponse<null>> {
     const existing = await boardRepo.findById(input.boardId);
@@ -373,11 +383,48 @@ export const BoardService = {
       createEvent("board.delete:before", actorUserId, existing.data, existing.data as unknown as Record<string, unknown>, null),
     );
 
-    if (input.permanent) {
-      await cellRepo.clearRecord(input.boardId); // cascade cells
-      await boardRepo.hardDelete(input.boardId);
-    } else {
-      await boardRepo.softDelete(input.boardId);
+    let deleted: boolean | null = null;
+    let deleteError: PostgrestError | null = null;
+    try {
+      const authClient = await createClient(await cookies());
+      const result = await authClient.rpc("delete_board", {
+        p_board_id: input.boardId,
+        p_permanent: input.permanent,
+      });
+      deleted = result.data;
+      deleteError = result.error;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      console.error("[board-service] delete_board rpc failed:", message);
+      return { data: null, error: `Failed to delete board: ${message}`, status: 500 };
+    }
+
+    if (deleteError) {
+      console.error("[board-service] delete_board error:", {
+        code: deleteError.code,
+        message: deleteError.message,
+        boardId: input.boardId,
+        actorUserId,
+      });
+      if (deleteError.code === "42501") {
+        return {
+          data: null,
+          error: "You don't have permission to delete this board.",
+          status: 403,
+        };
+      }
+      return {
+        data: null,
+        error: `Failed to delete board: ${deleteError.message}`,
+        status: 500,
+      };
+    }
+
+    if (deleted !== true) {
+      console.warn(
+        `[board-service] delete_board deleted 0 rows: board=${input.boardId} actor=${actorUserId}`,
+      );
+      return { data: null, error: "Board not found or already deleted.", status: 404 };
     }
 
     await cleanupConnectedBoardReferences(input.boardId);

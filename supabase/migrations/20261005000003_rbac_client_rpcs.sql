@@ -458,6 +458,22 @@ begin
     return new;
   end if;
 
+  if v_mode = 'DELETE' and OLD.id is not null then
+    if public.can_edit_board(OLD.id) then
+      return old;
+    end if;
+
+    if exists (
+      select 1
+        from public.boards b
+        join public.workspaces w on w.id = b.workspace_id
+       where b.id = OLD.id
+         and w.owner_id = auth.uid()
+    ) then
+      return old;
+    end if;
+  end if;
+
   raise exception 'rbac: only an admin can create or delete boards'
     using errcode = '42501';
 end

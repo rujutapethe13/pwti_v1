@@ -160,7 +160,10 @@ drop policy if exists workspaces_delete_admin on public.workspaces;
 create policy workspaces_delete_admin on public.workspaces
   for delete
   using (
-    public.is_service_role() or public.is_super_admin() or public.current_role() = 'admin'
+    public.is_service_role()
+    or public.is_super_admin()
+    or public.current_role() = 'admin'
+    or owner_id = auth.uid()
   );
 
 -- ── workspace_members ──────────────────────────────────────────────────────

@@ -160,6 +160,7 @@ vi.mock("@/features/boards/engine/actions", () => ({
   renameBoard: vi.fn(),
   renameWorkspaceInDb: vi.fn(),
   deleteWorkspaceInDb: vi.fn(),
+  purgeDeletedWorkspaces: vi.fn(async () => ({ success: true, purged: 0 })),
 }));
 
 vi.mock("@/lib/workspace-events", () => ({

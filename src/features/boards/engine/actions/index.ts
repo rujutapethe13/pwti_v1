@@ -64,6 +64,7 @@ export {
   createOrganizationInDb,
   renameWorkspaceInDb,
   deleteWorkspaceInDb,
+  purgeDeletedWorkspaces,
 } from "./workspace-actions";
 
 export {

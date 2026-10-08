@@ -74,7 +74,7 @@ export function WorkspaceOptionsMenu({
       await onDeleteWorkspace();
       toast.success(`"${workspaceName}" deleted.`);
     } catch {
-      toast.error("Failed to delete workspace.");
+      // onDeleteWorkspace already surfaced the real reason.
     }
     setDeleteOpen(false);
     setDeleteValue("");

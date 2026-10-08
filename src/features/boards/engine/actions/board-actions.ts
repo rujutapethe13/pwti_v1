@@ -7,10 +7,32 @@
  * Returns typed ApiResponse for consistent client handling.
  */
 
+import { cookies } from "next/headers";
+
 import { createBoardSchema, renameBoardSchema, duplicateBoardSchema, archiveBoardSchema, deleteBoardSchema, favoriteBoardSchema } from "../schemas/board-schemas";
 import { BoardService } from "../services/board-service";
+import { createClient } from "@/lib/supabase/server";
 import type { ApiResponse } from "@/types";
 import type { BoardDefinition, MigrationPreview, MigrationResult } from "../types";
+
+/**
+ * Resolve the signed-in user for this server action. The id is
+ * passed to the service so deletes are authorized against the
+ * real caller in the database — never against a client-side
+ * flag or a "system" placeholder.
+ */
+async function currentActorUserId(): Promise<string> {
+  try {
+    const client = await createClient(await cookies());
+    const { data: { user } } = await client.auth.getUser();
+    if (user?.id) {
+      return user.id;
+    }
+  } catch (err) {
+    console.error("[board-actions] auth getUser failed:", err);
+  }
+  return "system";
+}
 
 export async function createBoard(formData: FormData): Promise<ApiResponse<BoardDefinition>> {
   const parsed = createBoardSchema.safeParse({
@@ -84,7 +106,7 @@ export async function deleteBoard(boardId: string, permanent = false): Promise<A
   if (!parsed.success) {
     return { data: null, error: "Invalid input", status: 400 };
   }
-  return BoardService.delete(parsed.data, "system");
+  return BoardService.delete(parsed.data, await currentActorUserId());
 }
 
 export async function favoriteBoard(boardId: string, favorite: boolean): Promise<ApiResponse<BoardDefinition>> {

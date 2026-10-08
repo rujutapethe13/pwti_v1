@@ -170,6 +170,9 @@ export async function loadBoardBySlug(
     .from("boards")
     .select("*")
     .eq("slug", boardSlug)
+    // Archived boards are soft-deleted: they are not viewable
+    // by URL, only through the archive/trash surface.
+    .neq("status", "archived")
     .maybeSingle();
 
   if (boardError) {

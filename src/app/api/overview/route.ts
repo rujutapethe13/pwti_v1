@@ -101,7 +101,8 @@ export async function GET(request: NextRequest) {
       const { data: boards } = await supabase
         .from("boards")
         .select("id, name")
-        .in("id", boardIds);
+        .in("id", boardIds)
+        .neq("status", "archived");
 
       const totalJobs = Array.from(boardVolumeMap.values()).reduce((a, b) => a + b, 0);
       if (boards) {

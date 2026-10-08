@@ -298,18 +298,128 @@ export async function renameWorkspaceInDb(workspaceId: string, name: string): Pr
   return { success: true };
 }
 
-export async function deleteWorkspaceInDb(workspaceId: string): Promise<{ success: boolean; error?: string }> {
-  const supabase = await createServiceClient();
+export async function deleteWorkspaceInDb(
+  workspaceId: string,
+): Promise<{ success: boolean; error?: string }> {
+  const DB_TIMEOUT_MS = 30000;
 
-  const { error } = await supabase
-    .from("workspaces")
-    .delete()
-    .eq("id", workspaceId);
-
-  if (error) {
-    console.error("Failed to delete workspace:", error);
-    return { success: false, error: error.message };
+  let client;
+  try {
+    client = await withTimeout(
+      createClient(await cookies()),
+      DB_TIMEOUT_MS,
+      "createClient",
+    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[deleteWorkspaceInDb] client init failed:`, message);
+    throw new Error(`DB client init failed: ${message}`);
   }
 
+  let user;
+  try {
+    const { data: { user: userData } } = await withTimeout(
+      client.auth.getUser(),
+      DB_TIMEOUT_MS,
+      "auth.getUser",
+    );
+    user = userData;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[deleteWorkspaceInDb] auth getUser failed:`, message);
+    user = null;
+  }
+  const userId = user?.id;
+
+  if (!userId) {
+    console.warn(
+      `[deleteWorkspaceInDb] no authenticated user — refusing delete of ${workspaceId}`,
+    );
+    return { success: false, error: "You must be signed in to delete a workspace." };
+  }
+
+  console.log(
+    `[deleteWorkspaceInDb] delete requested: workspace=${workspaceId} user=${userId}`,
+  );
+
+  // Authorization and the soft-delete happen inside one security-definer
+  // database function, delete_workspace(). It runs with the caller's
+  // identity, raises 42501 when the caller may not delete the
+  // workspace (regular members), and returns whether a row was
+  // actually updated — so a zero-row no-op (already deleted, or no
+  // matching workspace) can never be reported as success. The
+  // soft-delete is a single-row UPDATE (set deleted_at = now()),
+  // sub-millisecond regardless of child count, so it cannot time out
+  // the way a hard DELETE with ON DELETE CASCADE would have.
+  let deleted: boolean | null = null;
+  let rpcError: PostgrestError | null = null;
+  try {
+    const result = await withTimeout<{
+      data: boolean | null;
+      error: PostgrestError | null;
+    }>(
+      client.rpc("delete_workspace", { p_workspace_id: workspaceId }),
+      DB_TIMEOUT_MS,
+      "delete_workspace rpc",
+    );
+    deleted = result.data;
+    rpcError = result.error;
+  } catch (err) {
+    const message = toErrorMessage(err, "Unknown error");
+    console.error(`[deleteWorkspaceInDb] delete_workspace failed or timed out:`, message);
+    return { success: false, error: `Failed to delete workspace: ${message}` };
+  }
+
+  if (rpcError) {
+    console.error("[deleteWorkspaceInDb] delete_workspace error:", {
+      code: rpcError.code,
+      message: rpcError.message,
+      details: rpcError.details,
+      hint: rpcError.hint,
+      userId,
+      workspaceId,
+    });
+    if (rpcError.code === "42501") {
+      return {
+        success: false,
+        error: "You don't have permission to delete this workspace.",
+      };
+    }
+    return { success: false, error: `Failed to delete workspace: ${rpcError.message}` };
+  }
+
+  if (deleted !== true) {
+    console.warn(
+      `[deleteWorkspaceInDb] delete_workspace deleted 0 rows: workspace=${workspaceId} user=${userId}`,
+    );
+    return { success: false, error: "Workspace not found or already deleted." };
+  }
+
+  console.log(`[deleteWorkspaceInDb] soft-deleted workspace ${workspaceId} (user ${userId})`);
   return { success: true };
+}
+
+export async function purgeDeletedWorkspaces(
+  batchSize = 100,
+): Promise<{ success: boolean; purged?: number; error?: string }> {
+  const serviceClient = await createServiceClient();
+
+  try {
+    const { data, error } = await serviceClient.rpc("purge_deleted_workspaces", {
+      p_batch_size: batchSize,
+    });
+
+    if (error) {
+      console.error("[purgeDeletedWorkspaces] RPC error:", error);
+      return { success: false, error: error.message };
+    }
+
+    const purged = (data as number) ?? 0;
+    console.log(`[purgeDeletedWorkspaces] purged ${purged} workspace(s)`);
+    return { success: true, purged };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[purgeDeletedWorkspaces] failed:", message);
+    return { success: false, error: message };
+  }
 }
