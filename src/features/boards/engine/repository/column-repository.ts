@@ -50,6 +50,7 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
       order: this.asNumber(row.sort_order ?? row.order),
       createdAt: this.asString(row.created_at ?? row.createdAt),
       updatedAt: this.asString(row.updated_at ?? row.updatedAt),
+      deletedAt: this.asString(row.deleted_at ?? row.deletedAt) || undefined,
     };
   }
 
@@ -81,8 +82,13 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
   async findByBoard(
     boardId: string,
     options?: RepositoryOptions,
+    includeDeleted = false,
   ): Promise<ApiResponse<ColumnDefinition[]>> {
-    return this.findMany({ board_id: boardId }, { column: "sort_order", ascending: true }, options);
+    const filters: Record<string, unknown> = { board_id: boardId };
+    if (!includeDeleted) {
+      filters.deleted_at = null;
+    }
+    return this.findMany(filters, { column: "sort_order", ascending: true }, options);
   }
 
   async reorder(
@@ -129,6 +135,50 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     }
 
     return { data: null, error: null, status: 200 };
+  }
+
+  async softDelete(
+    columnId: string,
+    options?: RepositoryOptions,
+  ): Promise<ApiResponse<ColumnDefinition>> {
+    const client = await this.getClient(options);
+    const now = new Date().toISOString();
+
+    const { data: row, error } = await client
+      .from(this.tableName)
+      .update({ deleted_at: now, status: "archived", updated_at: now })
+      .eq(this.primaryKey, columnId)
+      .is("deleted_at", null)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message, status: 500 };
+    }
+
+    return { data: this.fromDatabase(row as DatabaseRow), error: null, status: 200 };
+  }
+
+  async restore(
+    columnId: string,
+    options?: RepositoryOptions,
+  ): Promise<ApiResponse<ColumnDefinition>> {
+    const client = await this.getClient(options);
+    const now = new Date().toISOString();
+
+    const { data: row, error } = await client
+      .from(this.tableName)
+      .update({ deleted_at: null, status: "active", updated_at: now })
+      .eq(this.primaryKey, columnId)
+      .not("deleted_at", "is", null)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message, status: 500 };
+    }
+
+    return { data: this.fromDatabase(row as DatabaseRow), error: null, status: 200 };
   }
 
   // ── Helpers ────────────────────────────────────────────

@@ -271,6 +271,7 @@ export interface ColumnDefinition {
   wrapText?: boolean;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string;
 }
 
 export interface ColumnPermissions {

@@ -43,12 +43,15 @@ import {
   buildInitialMappings,
   buildNewColumnsFromMappings,
   buildRecordFromRow,
+  computeImportColumnSets,
   CREATABLE_IMPORT_TYPES,
   findBestTitleColumn,
   findUnmatchedOptions,
   getColumnIdsToDelete,
+  getColumnsToRemoveInfo,
   getMappedExistingColumnIds,
   getMappableMappings,
+  ImportColumnSets,
   MAX_IMPORT_FILE_SIZE_BYTES,
   MAX_IMPORT_ROWS,
   parseFile,
@@ -62,6 +65,7 @@ import type {
   FileValidationError,
   OptionMapping,
   ParsedFile,
+  ColumnRemovalInfo,
 } from "@/features/boards/engine/lib/import-export";
 
 /* ─────────────────────────────────────────────────────────────
@@ -81,10 +85,11 @@ export interface ImportWizardProps {
     skippedRows: Array<{ rowIndex: number; reason: string; rawRow: Record<string, ColumnValue> }>;
     columnsToDelete: string[];
     targetGroupId: string | null;
+    keepUnmappedColumns: boolean;
   }) => Promise<{ createdCount: number; importErrors: Array<{ rowIndex: number; reason: string }> }> | { createdCount: number; importErrors: Array<{ rowIndex: number; reason: string }> };
 }
 
-type Step = "upload" | "preview" | "mapping" | "creating" | "summary";
+type Step = "upload" | "preview" | "mapping" | "confirm" | "creating" | "summary";
 
 interface ImportSummary {
   created: number;
@@ -135,6 +140,11 @@ export function ImportWizard({
   const [importProgress, setImportProgress] = useState({ done: 0, total: 0 });
   const [summary, setSummary] = useState<ImportSummary | null>(null);
 
+  // Confirmation state
+  const [keepUnmappedColumns, setKeepUnmappedColumns] = useState(false);
+  const [columnSets, setColumnSets] = useState<ImportColumnSets | null>(null);
+  const [columnsToRemoveInfo, setColumnsToRemoveInfo] = useState<ColumnRemovalInfo[]>([]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mappableMappings = useMemo(
     () => getMappableMappings(mappings, titleColumnFileHeader),
@@ -148,6 +158,14 @@ export function ImportWizard({
       ),
     [columns, mappings],
   );
+
+  // Compute column sets for confirmation
+  useEffect(() => {
+    const sets = computeImportColumnSets(columns, mappableMappings, newColumns);
+    setColumnSets(sets);
+    const removeInfo = getColumnsToRemoveInfo(columns, getMappedExistingColumnIds(mappableMappings));
+    setColumnsToRemoveInfo(removeInfo);
+  }, [columns, mappableMappings, newColumns]);
 
   // Reset state whenever the dialog is closed so the next open is clean.
   useEffect(() => {
@@ -329,6 +347,14 @@ export function ImportWizard({
   const startImport = useCallback(async () => {
     if (!parsed) return;
     if (!validation.valid) return;
+
+    // If there are columns to delete and user hasn't chosen to keep them,
+    // show confirmation step first
+    if (columnsToDelete.length > 0 && !keepUnmappedColumns) {
+      setStep("confirm");
+      return;
+    }
+
     setStep("creating");
     setImporting(true);
     setImportProgress({ done: 0, total: parsed.rows.length });
@@ -415,8 +441,9 @@ export function ImportWizard({
         updatedColumns,
         records: createdRecords,
         skippedRows: skipped,
-        columnsToDelete,
+        columnsToDelete: keepUnmappedColumns ? [] : columnsToDelete,
         targetGroupId,
+        keepUnmappedColumns,
       });
       setSummary({
         created: result.createdCount,
@@ -441,6 +468,7 @@ export function ImportWizard({
     titleColumnFileHeader,
     columnsToDelete,
     targetGroupId,
+    keepUnmappedColumns,
     onConfirm,
   ]);
 
@@ -573,6 +601,17 @@ export function ImportWizard({
             />
           )}
 
+          {step === "confirm" && parsed && columnSets && (
+            <ConfirmStep
+              columnSets={columnSets}
+              columnsToRemoveInfo={columnsToRemoveInfo}
+              keepUnmappedColumns={keepUnmappedColumns}
+              onKeepUnmappedChange={setKeepUnmappedColumns}
+              onBack={() => setStep("mapping")}
+              onConfirm={startImport}
+            />
+          )}
+
         {step === "creating" && (
           <CreatingStep progress={importProgress} total={parsed?.totalRowCount ?? 0} />
         )}
@@ -617,6 +656,17 @@ export function ImportWizard({
               </Button>
             </>
           )}
+          {step === "confirm" && (
+            <>
+              <Button variant="ghost" onClick={() => setStep("mapping")}>
+                <ChevronLeft className="mr-1 size-3.5" />
+                Back
+              </Button>
+              <Button onClick={startImport} disabled={!canProceedFromMapping}>
+                Confirm Import
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -632,6 +682,7 @@ function StepIndicator({ step }: { step: Step }) {
     { key: "upload", label: "Upload" },
     { key: "preview", label: "Preview" },
     { key: "mapping", label: "Map columns" },
+    { key: "confirm", label: "Confirm" },
     { key: "creating", label: "Import" },
     { key: "summary", label: "Done" },
   ];
@@ -1178,7 +1229,115 @@ function MappingRow({
 }
 
 /* ─────────────────────────────────────────────────────────────
- * Step 4 — Creating (progress)
+ * Step 4 — Confirm (column removal confirmation)
+ * ───────────────────────────────────────────────────────────── */
+
+interface ConfirmStepProps {
+  columnSets: ImportColumnSets;
+  columnsToRemoveInfo: ColumnRemovalInfo[];
+  keepUnmappedColumns: boolean;
+  onKeepUnmappedChange: (value: boolean) => void;
+  onBack: () => void;
+  onConfirm: () => void;
+}
+
+function ConfirmStep({
+  columnSets,
+  columnsToRemoveInfo,
+  keepUnmappedColumns,
+  onKeepUnmappedChange,
+  onBack,
+  onConfirm,
+}: ConfirmStepProps) {
+  const removeCount = columnsToRemoveInfo.length;
+  const protectedCount = columnSets.protected.length;
+  const keepCount = columnSets.keep.length;
+  const createCount = columnSets.create.length;
+
+  return (
+    <div className="space-y-3">
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+        <div className="flex items-center gap-1.5 font-medium mb-2">
+          <AlertCircle className="size-3.5" />
+          Confirm column changes
+        </div>
+        <div className="text-amber-900/80 mb-3">
+          This import will modify the board&apos;s column structure. Please review the changes below.
+        </div>
+
+        {/* Summary stats */}
+        <div className="grid grid-cols-4 gap-2 text-center mb-3 p-2 bg-white rounded border">
+          <div>
+            <div className="font-bold text-lg text-emerald-600">{keepCount}</div>
+            <div className="text-[10px] text-muted-foreground">Kept (mapped)</div>
+          </div>
+          <div>
+            <div className="font-bold text-lg text-blue-600">{createCount}</div>
+            <div className="text-[10px] text-muted-foreground">New columns</div>
+          </div>
+          <div>
+            <div className="font-bold text-lg text-amber-600">{protectedCount}</div>
+            <div className="text-[10px] text-muted-foreground">Protected</div>
+          </div>
+          <div>
+            <div className="font-bold text-lg text-destructive">{removeCount}</div>
+            <div className="text-[10px] text-muted-foreground">Will be removed</div>
+          </div>
+        </div>
+
+        {/* Columns to remove list */}
+        {removeCount > 0 && (
+          <div className="space-y-2 max-h-48 overflow-y-auto border border-amber-200 rounded p-2 bg-white">
+            <div className="font-medium text-amber-900 mb-1">
+              These {removeCount} column{removeCount === 1 ? "" : "s"} are not mapped and will be removed, along with their data:
+            </div>
+            <ul className="list-disc pl-4 space-y-1 text-amber-900/80">
+              {columnsToRemoveInfo.map((col) => (
+                <li key={col.id} className="flex items-center gap-1.5">
+                  <span className="font-mono text-xs">{col.label}</span>
+                  <span className="text-[10px] text-muted-foreground">({col.type})</span>
+                  {col.dependents.length > 0 && (
+                    <span className="text-[10px] text-amber-600">
+                      → affects: {col.dependents.join(", ")}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {/* Protected columns note */}
+        {protectedCount > 0 && (
+          <div className="text-[10px] text-amber-900/60 mt-2">
+            Protected columns (always kept): {columnSets.protected.map((c) => c.label).join(", ")}
+          </div>
+        )}
+
+        {/* Keep unmapped columns toggle */}
+        <label className="flex items-center gap-2 mt-3">
+          <input
+            type="checkbox"
+            checked={keepUnmappedColumns}
+            onChange={(e) => onKeepUnmappedChange(e.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+          />
+          <span className="text-sm text-amber-900">
+            Keep unmapped columns (don&apos;t remove them)
+          </span>
+        </label>
+        {keepUnmappedColumns && (
+          <div className="text-[10px] text-emerald-600 mt-1">
+            Unmapped columns will be preserved. They will not receive imported data.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Step 5 — Creating (progress)
  * ───────────────────────────────────────────────────────────── */
 
 function CreatingStep({

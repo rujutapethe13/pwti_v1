@@ -118,10 +118,28 @@ export function isProtectedImportColumn(column: ColumnDefinition): boolean {
   const label = column.label.trim().toLowerCase();
   const key = column.key.trim().toLowerCase();
   return (
+    // Title/name column (first column, usually the primary identifier)
+    column.order === 0 ||
+    // System columns
+    key === "id" ||
+    key === "created_at" ||
+    key === "updated_at" ||
+    key === "archived_at" ||
+    key === "status" ||
+    key === "assigned_to" ||
+    key === "group" ||
+    // Common label variations
+    label === "name" ||
+    label === "title" ||
+    label === "item name" ||
+    label === "record name" ||
     label === "status" ||
     label === "assigned to" ||
-    key === "status" ||
-    key === "assigned_to"
+    label === "assignee" ||
+    label === "group" ||
+    // Flags
+    (column.settings?.is_system as boolean) === true ||
+    (column.settings?.is_locked as boolean) === true
   );
 }
 
@@ -135,6 +153,64 @@ export function getColumnIdsToDelete(
       (column) => !mapped.has(column.id) && !isProtectedImportColumn(column),
     )
     .map((column) => column.id);
+}
+
+/** Detailed info about columns that will be removed for confirmation UI */
+export interface ColumnRemovalInfo {
+  id: string;
+  label: string;
+  type: ColumnTypeKey;
+  hasData: boolean;
+  dependents: string[]; // e.g., "views", "filters", "sorts", "formulas"
+}
+
+export function getColumnsToRemoveInfo(
+  columns: ColumnDefinition[],
+  mappedColumnIds: string[],
+): ColumnRemovalInfo[] {
+  const mapped = new Set(mappedColumnIds);
+  return columns
+    .filter(
+      (column) => !mapped.has(column.id) && !isProtectedImportColumn(column),
+    )
+    .map((column) => ({
+      id: column.id,
+      label: column.label,
+      type: column.type,
+      hasData: false, // TODO: check if column has cell values
+      dependents: [], // TODO: check views, filters, etc.
+    }));
+}
+
+/** Result of computing the three column sets for import */
+export interface ImportColumnSets {
+  keep: ColumnDefinition[];      // Existing columns that are mapped
+  create: ColumnDefinition[];    // New columns to be created
+  remove: ColumnDefinition[];    // Existing columns not mapped (non-protected)
+  protected: ColumnDefinition[]; // Protected columns (always kept)
+}
+
+export function computeImportColumnSets(
+  columns: ColumnDefinition[],
+  mappings: ColumnMapping[],
+  newColumns: ColumnDefinition[],
+): ImportColumnSets {
+  const mappedIds = new Set(getMappedExistingColumnIds(mappings));
+  const protectedCols: ColumnDefinition[] = [];
+  const keep: ColumnDefinition[] = [];
+  const remove: ColumnDefinition[] = [];
+
+  for (const column of columns) {
+    if (isProtectedImportColumn(column)) {
+      protectedCols.push(column);
+    } else if (mappedIds.has(column.id)) {
+      keep.push(column);
+    } else {
+      remove.push(column);
+    }
+  }
+
+  return { keep, create: newColumns, remove, protected: protectedCols };
 }
 
 export interface BuildRecordInput {
@@ -202,6 +278,45 @@ function normalizeCellValue(value: unknown): ColumnValue {
   return String(value);
 }
 
+/**
+ * A cell is "blank" when it carries no meaningful content: null, undefined,
+ * empty string, or whitespace-only text. Numbers (including 0), booleans
+ * (including false), dates, and objects are treated as real values so that
+ * genuinely populated cells are never mistaken for empty ones. Formulas
+ * that evaluate to an empty string come through as "" and are blank here.
+ */
+function isBlankValue(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim() === "";
+  if (Array.isArray(value)) return value.length === 0;
+  return false;
+}
+
+/**
+ * A row is "empty" when every cell in it is blank. Works on both the raw 2D
+ * matrix returned by SheetJS (an array) and the normalized
+ * Record<string, ColumnValue> rows used downstream.
+ *
+ * Blank rows appear in two places: spacer lines in the middle of the data,
+ * and leftover formatting / empty cells extending far beyond the real data
+ * (the common case where a sheet reports 999 rows but only 38 have content).
+ * They must never be turned into records, and they must not affect the
+ * preview or mapping row counts.
+ */
+export function isRowEmpty(row: unknown): boolean {
+  if (row === null || row === undefined) return true;
+  if (Array.isArray(row)) {
+    if (row.length === 0) return true;
+    return row.every((cell) => isBlankValue(cell));
+  }
+  if (row && typeof row === "object") {
+    const values = Object.values(row as Record<string, unknown>);
+    if (values.length === 0) return true;
+    return values.every((cell) => isBlankValue(cell));
+  }
+  return false;
+}
+
 /** Parse an in-memory workbook (parsed from any supported file type). */
 function parseWorkbook(workbook: XLSX.WorkBook): ParsedFile {
   const firstSheetName = workbook.SheetNames[0];
@@ -226,12 +341,10 @@ function parseWorkbook(workbook: XLSX.WorkBook): ParsedFile {
   if (dataRows.length === 0) {
     return { headers, rows: [], totalRowCount: 0 };
   }
-  if (dataRows.length > MAX_IMPORT_ROWS) {
-    throw new Error(
-      `File has too many rows (${dataRows.length}). Maximum is ${MAX_IMPORT_ROWS}.`,
-    );
-  }
-  const rows: Array<Record<string, ColumnValue>> = dataRows.map((row) => {
+
+  // Normalize every raw row into the Record<string, ColumnValue> shape used
+  // downstream. Blank cells become null here.
+  const normalizedRows: Array<Record<string, ColumnValue>> = dataRows.map((row) => {
     const arr = (Array.isArray(row) ? row : []) as unknown[];
     const out: Record<string, ColumnValue> = {};
     headers.forEach((header, idx) => {
@@ -239,6 +352,19 @@ function parseWorkbook(workbook: XLSX.WorkBook): ParsedFile {
     });
     return out;
   });
+
+  // Skip rows where every cell is blank. This is what makes the importer
+  // robust to leftover formatting / empty cells extending far beyond the
+  // real data (a sheet that reports 999 rows but only holds 38). Blank
+  // spacer rows in the middle of the data are skipped too, and a row with
+  // data in even a single column is always kept.
+  const rows = normalizedRows.filter((row) => !isRowEmpty(row));
+
+  if (rows.length > MAX_IMPORT_ROWS) {
+    throw new Error(
+      `File has too many rows (${rows.length}). Maximum is ${MAX_IMPORT_ROWS}.`,
+    );
+  }
   console.info(
     `[import] Parsed workbook: ${headers.length} headers, ${rows.length} rows`,
   );

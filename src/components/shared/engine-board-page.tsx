@@ -40,6 +40,7 @@ import {
   deleteColumn,
   updateBoardPrimaryLabel,
   loadRecordsPaginated,
+  importWithColumnCleanup,
 } from "@/features/boards/engine/actions";
 import { viewCatalog, getDefaultSettings } from "@/features/boards/engine";
 import {
@@ -51,11 +52,6 @@ import { MirrorDataProvider } from "@/features/boards/engine/connected-data/mirr
 import { useGroup } from "@/features/boards/engine/hooks/use-group";
 import { useExportToExcel } from "@/features/boards/engine/hooks/use-export-to-excel";
 import { ImportWizard } from "@/features/boards/engine/components/import-wizard";
-import {
-  isOptionColumn,
-  normalizeOptions,
-  resolveOptionIdForColumn,
-} from "@/features/boards/engine/lib/import-export";
 import type { ViewSettingsByType } from "@/features/boards/engine/types";
 
 registerAllCellRenderers();
@@ -866,281 +862,65 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
       }>;
       columnsToDelete: string[];
       targetGroupId: string | null;
+      keepUnmappedColumns: boolean;
     }): Promise<{
       createdCount: number;
       importErrors: Array<{ rowIndex: number; reason: string }>;
     }> => {
       setImporting(true);
-      const importErrors: Array<{ rowIndex: number; reason: string }> = [];
-      const createdRecords: BoardRecord[] = [];
-      const newCellValues: Array<[string, ColumnValue]> = [];
-      const deletedColumnIds = new Set(args.columnsToDelete);
-
-      console.warn("[IMPORT] stage=persist-start", {
-        newColumns: args.newColumns.map((column) => ({
-          id: column.id,
-          label: column.label,
-          type: column.type,
-        })),
-        updatedColumns: args.updatedColumns
-          .filter(isOptionColumn)
-          .map((column) => ({
-            id: column.id,
-            label: column.label,
-            options: normalizeOptions(column.settings?.options),
-          })),
-        recordCount: args.records.length,
-      });
-
       try {
-        const updatedColumnsById = new Map(
-          args.updatedColumns.map((column) => [column.id, column]),
-        );
-        const columnIdRemap = new Map<string, string>();
-        const persistedNewColumns: ColumnDefinition[] = [];
+        const formData = new FormData();
+        formData.set("input", JSON.stringify({
+          organizationId: data.board.organizationId,
+          workspaceId: data.board.workspaceId,
+          boardId: data.board.id,
+          newColumns: args.newColumns,
+          updatedColumns: args.updatedColumns,
+          records: args.records,
+          columnsToDelete: args.columnsToDelete,
+          targetGroupId: args.targetGroupId,
+          keepUnmappedColumns: args.keepUnmappedColumns,
+        }));
 
-        if (args.newColumns.length > 0) {
-          for (const nc of args.newColumns) {
-            const columnToPersist = updatedColumnsById.get(nc.id) ?? nc;
-            const fd = new FormData();
-            fd.set("organizationId", data.board.organizationId);
-            fd.set("workspaceId", data.board.workspaceId);
-            fd.set("boardId", data.board.id);
-            fd.set("key", columnToPersist.key);
-            fd.set("label", columnToPersist.label);
-            fd.set("type", columnToPersist.type);
-            fd.set("required", String(columnToPersist.required ?? false));
-            if (
-              columnToPersist.defaultValue !== undefined &&
-              columnToPersist.defaultValue !== null
-            ) {
-              fd.set("defaultValue", JSON.stringify(columnToPersist.defaultValue));
-            }
-            fd.set("settings", JSON.stringify(columnToPersist.settings ?? {}));
-            const response = await addColumn(fd);
-            if (response.error || !response.data) {
-              const reason = response.error ?? "Unknown error";
-              console.error("[IMPORT] failed to persist column", {
-                sourceColumnId: nc.id,
-                label: nc.label,
-                reason,
-              });
-              throw new Error(`Failed to persist imported column "${nc.label}": ${reason}`);
-            }
-            const persisted = { ...columnToPersist, ...response.data };
-            columnIdRemap.set(nc.id, persisted.id);
-            persistedNewColumns.push(persisted);
-          }
+        const response = await importWithColumnCleanup(formData);
+
+        if (response.error || !response.data) {
+          const errorMsg = response.error || "Import failed";
+          toast.error(errorMsg);
+          return { createdCount: 0, importErrors: [{ rowIndex: -1, reason: errorMsg }] };
         }
 
-        console.warn("[IMPORT] stage=columns-persisted", {
-          columnIdRemap: Object.fromEntries(columnIdRemap),
-          persistedNewColumns: persistedNewColumns.map((column) => ({
-            id: column.id,
-            label: column.label,
-            type: column.type,
-            options: normalizeOptions(column.settings?.options),
-          })),
-        });
-
-        const persistedUpdatedColumns: ColumnDefinition[] = [];
-        for (const updated of args.updatedColumns) {
-          if (!isOptionColumn(updated) || columnIdRemap.has(updated.id)) continue;
-          const options = normalizeOptions(updated.settings?.options);
-          if (options.length === 0) continue;
-          const response = await updateColumnOptions(updated.id, options);
-          if (response.error || !response.data) {
-            const reason = response.error ?? "Unknown error";
-            console.error("[IMPORT] failed to persist column options", {
-              columnId: updated.id,
-              label: updated.label,
-              reason,
-            });
-            throw new Error(
-              `Failed to persist imported options for "${updated.label}": ${reason}`,
-            );
-          }
-          persistedUpdatedColumns.push({ ...updated, ...response.data });
-        }
-
-        console.warn("[IMPORT] stage=options-persisted", {
-          columns: persistedUpdatedColumns.map((column) => ({
-            id: column.id,
-            label: column.label,
-            options: normalizeOptions(column.settings?.options),
-          })),
-        });
-
-        // Delete unmapped existing columns (excluding protected ones like
-        // Status / Assigned To). This runs before record creation so any
-        // cell references to deleted columns are already excluded from the
-        // records built by the wizard.
-        for (const columnId of args.columnsToDelete) {
-          try {
-            const response = await deleteColumn(columnId);
-            if (response.error) {
-              console.error("[IMPORT] failed to delete column", {
-                columnId,
-                error: response.error,
-              });
-            }
-          } catch (err) {
-            console.error("[IMPORT] failed to delete column", {
-              columnId,
-              error: err,
-            });
-          }
-        }
-
-        const effectiveColumnsById = new Map<string, ColumnDefinition>();
-        for (const column of columns) {
-          if (deletedColumnIds.has(column.id)) continue;
-          effectiveColumnsById.set(column.id, column);
-        }
-        for (const column of persistedUpdatedColumns) {
-          effectiveColumnsById.set(column.id, column);
-        }
-        for (const column of persistedNewColumns) {
-          effectiveColumnsById.set(column.id, column);
-        }
-
-        const resolveOptionId = (
-          columnId: string,
-          value: ColumnValue,
-        ): ColumnValue => {
-          const column = effectiveColumnsById.get(columnId);
-          return column ? resolveOptionIdForColumn(column, value) : value;
-        };
-
-        console.warn("[IMPORT] stage=option-values-resolved", {
-          columnCount: effectiveColumnsById.size,
-          columnIdRemap: Object.fromEntries(columnIdRemap),
-        });
-
-        // Verify all cell value column IDs can be resolved.
-        const allCellColumnIds = new Set<string>();
-        for (const rec of args.records) {
-          for (const columnId of Object.keys(rec.cellValues)) {
-            allCellColumnIds.add(columnId);
-          }
-        }
-        const unmappedIds: string[] = [];
-        for (const id of allCellColumnIds) {
-          if (columnIdRemap.has(id)) continue;
-          if (effectiveColumnsById.has(id)) continue;
-          unmappedIds.push(id);
-        }
-        if (unmappedIds.length > 0) {
-          console.error("[IMPORT] unmapped cell value column IDs", unmappedIds);
-        } else {
-          console.info("[IMPORT] all cell value column IDs resolved", {
-            totalIds: allCellColumnIds.size,
-            remapped: columnIdRemap.size,
-            existing: allCellColumnIds.size - columnIdRemap.size,
-          });
-        }
-
-        // Bulk-create all records and their cell values in batched
-        // multi-row inserts (single round-trip per batch of 500) instead
-        // of one server-action call per row.
-        const BATCH_SIZE = 500;
-        console.warn(
-          "[IMPORT] stage=records-start",
-          { recordCount: args.records.length, batchSize: BATCH_SIZE },
-        );
-
-        for (let i = 0; i < args.records.length; i += BATCH_SIZE) {
-          const batch = args.records.slice(i, i + BATCH_SIZE);
-
-          // Remap wizard-generated column IDs to persisted DB IDs and
-          // resolve option IDs for this slice of records.
-          const remappedBatch = batch.map((rec) => {
-            const remappedCellValues: Record<string, ColumnValue> = {};
-            for (const [columnId, value] of Object.entries(rec.cellValues)) {
-              const targetColumnId = columnIdRemap.get(columnId) ?? columnId;
-              remappedCellValues[targetColumnId] = resolveOptionId(targetColumnId, value);
-            }
-            return { title: rec.title, cellValues: remappedCellValues };
-          });
-
-          const response = await bulkCreateRecords({
-            organizationId: data.board.organizationId,
-            workspaceId: data.board.workspaceId,
-            boardId: data.board.id,
-            groupId: args.targetGroupId,
-            records: remappedBatch,
-          });
-
-          if (response.error || !response.data) {
-            for (let j = 0; j < batch.length; j++) {
-              importErrors.push({
-                rowIndex: i + j,
-                reason: response.error || "Failed to create item.",
-              });
-            }
-          } else {
-            for (let k = 0; k < response.data.createdRecords.length; k++) {
-              createdRecords.push(response.data.createdRecords[k]);
-              const remapped = remappedBatch[k];
-              if (remapped) {
-                for (const [columnId, value] of Object.entries(remapped.cellValues)) {
-                  newCellValues.push([`${response.data.createdRecords[k].id}:${columnId}`, value]);
-                }
-              }
-            }
-            for (const err of response.data.importErrors) {
-              importErrors.push(err);
-            }
-          }
-
-        }
-
-        console.warn("[IMPORT] stage=records-done", {
-          createdCount: createdRecords.length,
-          errorCount: importErrors.length,
-          errors: importErrors,
-        });
-
-        if (createdRecords.length > 0) {
-          setRecords((prev) => {
-            const isOnlyPlaceholder =
-              prev.length === 1 &&
-              prev[0].title === "New Item" &&
-              prev[0].status === "active";
-            return isOnlyPlaceholder ? createdRecords : [...prev, ...createdRecords];
-          });
-          setCellValues((prev) => {
-            const next = new Map(prev);
-            for (const [key, value] of newCellValues) {
-              next.set(key, value);
-            }
-            return next;
-          });
-        }
+        const { createdCount, importErrors, deletedColumns } = response.data;
 
         // Update local column state: remove deleted columns and append
         // newly-created ones so the board reflects the post-import layout.
-        if (args.columnsToDelete.length > 0 || persistedNewColumns.length > 0) {
+        if (deletedColumns.length > 0 || args.newColumns.length > 0) {
           setColumns((prev) => {
-            const next = prev.filter((c) => !deletedColumnIds.has(c.id));
-            for (const nc of persistedNewColumns) {
-              if (!next.some((c) => c.id === nc.id)) {
-                next.push(nc);
-              }
-            }
+            const next = prev.filter((c) => !deletedColumns.includes(c.id));
+            // Note: new columns will be refetched from the server via real-time or manual refresh
+            // For now, we just remove the deleted ones
             return next;
           });
         }
+
         const skippedCount = importErrors.length;
         toast.success(
-          `Imported ${createdRecords.length.toLocaleString()} item${createdRecords.length === 1 ? "" : "s"}${skippedCount > 0 ? `, ${skippedCount.toLocaleString()} row${skippedCount === 1 ? "" : "s"} failed` : ""}.`,
+          `Imported ${createdCount.toLocaleString()} item${createdCount === 1 ? "" : "s"}${skippedCount > 0 ? `, ${skippedCount.toLocaleString()} row${skippedCount === 1 ? "" : "s"} failed` : ""}${deletedColumns.length > 0 ? ` · ${deletedColumns.length} column${deletedColumns.length === 1 ? "" : "s"} removed` : ""}.`,
         );
-        return { createdCount: createdRecords.length, importErrors };
+
+        // TODO: Trigger a board refresh to get the new columns from the server
+        // This could be done via a real-time subscription or a manual refetch
+
+        return { createdCount, importErrors };
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Import failed";
+        toast.error(message);
+        return { createdCount: 0, importErrors: [{ rowIndex: -1, reason: message }] };
       } finally {
         setImporting(false);
       }
-    },
-    [columns, data.board],
+},
+    [data.board],
   );
 
   // ── View management ──────────────────────────────────

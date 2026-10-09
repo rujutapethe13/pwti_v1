@@ -20,6 +20,7 @@ import {
   getColumnIdsToDelete,
   getMappedExistingColumnIds,
   getMappableMappings,
+  isRowEmpty,
   normalizeOptions,
   parseBuffer,
   reconcileDropdownColumnOptions,
@@ -1329,5 +1330,107 @@ describe("buildExportWorkbook — primary column & ordering (Bug 2)", () => {
       expect.stringContaining('Column ID "ghost-id"'),
     );
     consoleWarnSpy.mockRestore();
+  });
+});
+
+describe("isRowEmpty", () => {
+  it("treats a fully null/empty row as empty", () => {
+    expect(isRowEmpty([null, null, null])).toBe(true);
+    expect(isRowEmpty(["", "", ""])).toBe(true);
+    expect(isRowEmpty(["   ", "\t", " "])).toBe(true);
+  });
+
+  it("treats a row with data in one column as non-empty", () => {
+    expect(isRowEmpty(["Acme", null, ""])).toBe(false);
+    expect(isRowEmpty([null, "Working", ""])).toBe(false);
+  });
+
+  it("treats zero and false as real values, not blank", () => {
+    expect(isRowEmpty([0, false, ""])).toBe(false);
+    expect(isRowEmpty([0, false, null])).toBe(false);
+  });
+
+  it("treats an empty array and null as empty", () => {
+    expect(isRowEmpty([])).toBe(true);
+    expect(isRowEmpty(null)).toBe(true);
+    expect(isRowEmpty(undefined)).toBe(true);
+  });
+
+  it("treats an empty object row as empty and a populated one as non-empty", () => {
+    expect(isRowEmpty({})).toBe(true);
+    expect(isRowEmpty({ a: null, b: "" })).toBe(true);
+    expect(isRowEmpty({ a: "x", b: null })).toBe(false);
+  });
+});
+
+describe("parseBuffer blank-row filtering", () => {
+  it("skips trailing blank rows so only real data is counted", () => {
+    const buffer = makeXlsxBuffer([
+      ["Client", "Status"],
+      ["Acme", "Done"],
+      ["Beta", "Working"],
+      ["", ""],
+      ["", ""],
+      ["", ""],
+    ]);
+    const parsed = parseBuffer(buffer);
+    expect(parsed.headers).toEqual(["Client", "Status"]);
+    expect(parsed.totalRowCount).toBe(2);
+    expect(parsed.rows).toHaveLength(2);
+    expect(parsed.rows[0]).toEqual({ Client: "Acme", Status: "Done" });
+    expect(parsed.rows[1]).toEqual({ Client: "Beta", Status: "Working" });
+  });
+
+  it("skips blank rows in the middle of the data without stopping the import", () => {
+    const buffer = makeXlsxBuffer([
+      ["Client", "Status"],
+      ["Acme", "Done"],
+      ["", ""],
+      ["Beta", "Working"],
+      ["Gamma", "Done"],
+    ]);
+    const parsed = parseBuffer(buffer);
+    expect(parsed.totalRowCount).toBe(3);
+    expect(parsed.rows.map((r) => r.Client)).toEqual(["Acme", "Beta", "Gamma"]);
+  });
+
+  it("keeps a row that has data in only one column", () => {
+    const buffer = makeXlsxBuffer([
+      ["Client", "Status"],
+      ["Acme", ""],
+      ["", "Done"],
+    ]);
+    const parsed = parseBuffer(buffer);
+    expect(parsed.totalRowCount).toBe(2);
+    expect(parsed.rows[0]).toEqual({ Client: "Acme", Status: null });
+    expect(parsed.rows[1]).toEqual({ Client: null, Status: "Done" });
+  });
+
+  it("returns zero rows when every data row is blank", () => {
+    const buffer = makeXlsxBuffer([
+      ["Client", "Status"],
+      ["", ""],
+      ["", ""],
+    ]);
+    const parsed = parseBuffer(buffer);
+    expect(parsed.totalRowCount).toBe(0);
+    expect(parsed.rows).toHaveLength(0);
+  });
+
+  it("still enforces the max-row limit after filtering blanks", () => {
+    const aoa: unknown[][] = [["Client"], ["r1"]];
+    for (let i = 0; i < 10_001; i++) aoa.push(["r" + i]);
+    const buffer = makeXlsxBuffer(aoa);
+    expect(() => parseBuffer(buffer)).toThrow(/too many rows/i);
+  });
+
+  it("does not count blank rows toward the max-row limit", () => {
+    // 10_000 real rows + trailing blanks must pass (blanks are filtered first).
+    const aoa: unknown[][] = [["Client"]];
+    for (let i = 0; i < 10_000; i++) aoa.push(["r" + i]);
+    aoa.push([""], [""], [""]);
+    const buffer = makeXlsxBuffer(aoa);
+    const parsed = parseBuffer(buffer);
+    expect(parsed.totalRowCount).toBe(10_000);
   });
 });
