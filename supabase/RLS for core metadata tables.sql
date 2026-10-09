@@ -220,7 +220,7 @@ set search_path = public
 as $$
 declare
   v_owner_role_id uuid;
-  v_user_id uuid := auth.uid();
+  v_user_id       uuid := auth.uid();
 begin
   if v_user_id is null then
     raise exception 'not authenticated';
@@ -234,30 +234,58 @@ begin
     raise exception 'not the workspace creator';
   end if;
 
+  -- Record the owner on the workspace itself so ownership survives even when the
+  -- membership row is later edited or missing. Every access layer keys off this.
+  update public.workspaces
+     set owner_id = v_user_id
+   where id = p_workspace_id
+     and owner_id is distinct from v_user_id;
+
+  -- RBAC membership: the owner is an administrator (edit) on the workspace.
+  -- resolve_workspace_access() returns 'owner' via the owner_id check, so this
+  -- role keeps the two layers in agreement instead of one downgrading the other.
+  insert into public.workspace_members (user_id, workspace_id, role, can_view, can_edit)
+  values (v_user_id, p_workspace_id, 'admin'::public.app_role, true, true)
+  on conflict (user_id, workspace_id) do update
+   set role = excluded.role,
+       can_view = true,
+       can_edit = true;
+
+  -- Configurable board-admin model: the owner shows up as an owner admin so the
+  -- legacy canManageWorkspace / board_admins lookups recognize them too.
+  insert into public.board_admins (workspace_id, user_id, role, created_by)
+  values (p_workspace_id, v_user_id, 'owner', v_user_id)
+  on conflict (workspace_id, user_id) do nothing;
+
+  -- Legacy permission model (check_permission_manage / permission_grants), kept so
+  -- older endpoints that still read those tables keep recognizing the owner.
   select id into v_owner_role_id
-  from public.roles
-  where name = 'Owner' and is_system_role = true
-  limit 1;
+    from public.roles
+   where name = 'Owner' and is_system_role
+   limit 1;
 
-  if v_owner_role_id is null then
-    raise exception 'Owner role not found';
+  if v_owner_role_id is not null then
+    insert into public.workspace_members (user_id, workspace_id, role_id)
+    values (v_user_id, p_workspace_id, v_owner_role_id)
+    on conflict (user_id, workspace_id) do nothing;
+
+    if exists (
+      select 1
+        from pg_class c
+        join pg_namespace n on n.oid = c.relnamespace
+       where n.nspname = 'public'
+         and c.relname = 'permission_grants'
+         and c.relkind = 'r'
+    ) then
+      insert into public.permission_grants (workspace_id, role_id, resource_type, resource_id, action, effect)
+      select p_workspace_id, v_owner_role_id, rt, null, 'manage', 'allow'
+      from unnest(
+        array['workspace','board','group','column','record','view','dashboard',
+              'widget','relationship','formula','automation','ai']::public.resource_type[]
+      ) as rt
+      on conflict do nothing;
+    end if;
   end if;
-
-  insert into public.workspace_members (user_id, workspace_id, role_id)
-  values (v_user_id, p_workspace_id, v_owner_role_id)
-  on conflict (user_id, workspace_id) do nothing;
-
--- NOTE: 'folder' is intentionally NOT included here. It is added to the
-  -- resource_type enum in a separate migration, and PostgreSQL forbids using
-  -- a newly-added enum value in the same transaction. The core grants below
-  -- (workspace, board, etc.) are sufficient for workspace/board creation.
-  insert into public.permission_grants (workspace_id, role_id, resource_type, resource_id, action, effect)
-  select p_workspace_id, v_owner_role_id, rt, null, 'manage', 'allow'
-  from unnest(
-    array['workspace','board','group','column','record','view','dashboard',
-          'widget','relationship','formula','automation','ai']::public.resource_type[]
-  ) as rt
-  on conflict do nothing;
 end;
 $$;
 

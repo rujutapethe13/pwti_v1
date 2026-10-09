@@ -151,7 +151,7 @@ export function MembersAccessModal({
   const [searching, setSearching] = useState(false);
   const [highlighted, setHighlighted] = useState(0);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
-  const [access, setAccess] = useState<GrantableAccess>("view");
+  const [access, setAccess] = useState<GrantableAccess>("edit");
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);

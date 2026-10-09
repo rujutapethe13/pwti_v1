@@ -104,7 +104,9 @@ export async function createWorkspaceInDb(
           slug,
           description: "",
           status: "active",
+          type: "standard",
           created_by: userId ?? null,
+          owner_id: userId ?? null,
           created_at: now,
           updated_at: now,
         })

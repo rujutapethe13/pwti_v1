@@ -64,14 +64,37 @@ export async function resolveCallerAccess(
   return toAccessLevel(data);
 }
 
-/** Owner and edit can change memberships; view cannot. */
+/** Owner and edit can change memberships; view cannot. A workspace admin can
+ * always manage members too, even on a board whose board-level grant is view,
+ * so an admin is never locked out of the Members dialog by an inherited default. */
 export async function canManageMembers(
   userId: string,
   workspaceId: string,
   boardId?: string | null,
 ): Promise<boolean> {
   const level = await resolveCallerAccess(userId, workspaceId, boardId);
-  return level === "owner" || level === "edit";
+  if (level === "owner" || level === "edit") return true;
+  return canManageWorkspaceMembers(userId, workspaceId);
+}
+
+/**
+ * Whether the caller is an owner/admin of the workspace itself (independent of any
+ * board-level override). Backed by the `can_manage_workspace_members` RPC so the
+ * SQL and the UI stay in agreement.
+ */
+export async function canManageWorkspaceMembers(
+  userId: string,
+  workspaceId: string,
+): Promise<boolean> {
+  const db = (await createClient()) as unknown as UserScopedClient;
+  const { data, error } = await db.rpc("can_manage_workspace_members", {
+    p_workspace_id: workspaceId,
+  });
+  if (error) {
+    console.warn("[members-access] can_manage_workspace_members failed:", error.message);
+    return false;
+  }
+  return data === true;
 }
 
 /**

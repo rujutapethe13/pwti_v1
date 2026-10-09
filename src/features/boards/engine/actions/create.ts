@@ -1,6 +1,7 @@
 "use server";
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { cookies } from "next/headers";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { boardTemplates } from "../registry";
 
 import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, Group, BoardTemplate } from "../types";
@@ -28,6 +29,64 @@ function toAppError(error: unknown): Error {
   const message = anyErr?.message ?? 'Unknown database error';
   const detail = [anyErr?.details, anyErr?.hint].filter(Boolean).join(' — ');
   return new Error(detail ? `${message} (${detail})` : message);
+}
+
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  const anyErr = error as { message?: string } | null | undefined;
+  return anyErr?.message ?? fallback;
+}
+
+/**
+ * The board creator is automatically an Owner of the board they created, and that
+ * ownership overrides anything inherited from the workspace. Without it the
+ * creator's board-level role is whatever their workspace role is, so an admin who
+ * created a board could be downgraded to a viewer's access on their own board.
+ *
+ * Uses the caller's session to find the creator; if there is no caller (an
+ * automated creation path) it falls back to the workspace owner. Never throws —
+ * a board must not fail to be created because the owner assignment could not be
+ * written.
+ */
+async function ensureBoardCreatorIsOwner(
+  supabase: Awaited<ReturnType<typeof createServiceClient>>,
+  boardId: string,
+  workspaceId: string,
+): Promise<void> {
+  let creatorId: string | null = null;
+  try {
+    const client = await createClient(await cookies());
+    const { data: { user } } = await client.auth.getUser();
+    creatorId = user?.id ?? null;
+  } catch {
+    creatorId = null;
+  }
+
+  let ownerId = creatorId;
+  if (!ownerId) {
+    const { data: ws, error } = await supabase
+      .from("workspaces")
+      .select("owner_id")
+      .eq("id", workspaceId)
+      .maybeSingle();
+    if (error || !ws) return;
+    ownerId = (ws.owner_id as string | null) ?? null;
+  }
+  if (!ownerId) return;
+
+  try {
+    await supabase
+      .from("board_member_overrides")
+      .upsert(
+        { board_id: boardId, user_id: ownerId, access: "owner", granted_by: ownerId },
+        { onConflict: "board_id,user_id" },
+      );
+  } catch (err) {
+    console.warn(
+      `[ensureBoardCreatorIsOwner] could not assign board owner for board ${boardId}:`,
+      toErrorMessage(err, "Unknown error"),
+    );
+  }
 }
 
 export async function createBoardWithDefaults(
@@ -264,6 +323,8 @@ export async function createBoardWithDefaults(
 
   if (boardError) throw toAppError(boardError);
 
+  await ensureBoardCreatorIsOwner(supabase, board.id, workspaceId);
+
   for (const group of groups) {
     const { error: groupError } = await supabase.from("groups").insert({
       id: group.id,
@@ -419,6 +480,8 @@ export async function createBoardFromTemplate(
   });
 
   if (boardError) throw toAppError(boardError);
+
+  await ensureBoardCreatorIsOwner(supabase, board.id, workspaceId);
 
   const groups: Group[] = [];
   const groupIdMap = new Map<string, string>();
@@ -620,6 +683,8 @@ export async function createMultiLevelBoard(
   });
 
   if (boardError) throw toAppError(boardError);
+
+  await ensureBoardCreatorIsOwner(supabase, board.id, workspaceId);
 
   const topLevelGroups = [
     { name: "Backlog", color: "#64748b" },
@@ -962,6 +1027,8 @@ export async function createDashboardBoard(
   });
 
   if (boardError) throw toAppError(boardError);
+
+  await ensureBoardCreatorIsOwner(supabase, board.id, workspaceId);
 
   const { error: viewError } = await supabase.from("views").insert({
     id: viewId,
