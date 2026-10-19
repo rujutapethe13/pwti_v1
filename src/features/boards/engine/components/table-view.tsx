@@ -992,6 +992,9 @@ export function TableView({
     const frozen: ColumnDefinition[] = [];
     const nonFrozen: ColumnDefinition[] = [];
     for (const col of columns) {
+      // The primary/title column (key "name") is rendered by its own header
+      // cell above; skip it here so its column id is never duplicated.
+      if (col.key === "name") continue;
       if (col.frozen) {
         frozen.push(col);
       } else {
@@ -1409,12 +1412,24 @@ export function TableView({
                        <MoreHorizontal className="size-3.5" />
                      </button>
                    </DropdownMenuTrigger>
-                   <DropdownMenuContent align="end" className="w-44">
-                     <DropdownMenuItem onSelect={() => setPrimaryColumnRenameOpen(true)}>
-                       <Pencil className="mr-2 size-3.5" />
-                       Rename
-                     </DropdownMenuItem>
-                   </DropdownMenuContent>
+                    <DropdownMenuContent align="end" className="w-44">
+                      <DropdownMenuItem onSelect={() => setPrimaryColumnRenameOpen(true)}>
+                        <Pencil className="mr-2 size-3.5" />
+                        Rename
+                      </DropdownMenuItem>
+                      {onColumnDelete && columns.find((c) => c.key === "name") && (
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onSelect={() => {
+                            const col = columns.find((c) => c.key === "name");
+                            if (col) onColumnDelete(col.id);
+                          }}
+                        >
+                          <Trash2 className="mr-2 size-3.5" />
+                          Delete column
+                        </DropdownMenuItem>
+                      )}
+                    </DropdownMenuContent>
                  </DropdownMenu>
                  <div
                    className="absolute right-0 top-0 z-20 h-full w-1.5 cursor-col-resize"

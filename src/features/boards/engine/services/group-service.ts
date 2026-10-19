@@ -23,13 +23,6 @@ import type {
   DeleteGroupInput,
 } from "../schemas/group-schemas";
 
-const DEFAULT_STATUS_OPTIONS: DropdownOption[] = [
-  { id: "opt-not-started", label: "Not Started", color: "#94a3b8" },
-  { id: "opt-working-on-it", label: "Working on it", color: "#EBAD54" },
-  { id: "opt-stuck", label: "Stuck", color: "#C5434E" },
-  { id: "opt-done", label: "Done", color: "#68C37D" },
-];
-
 const groupRepo = new GroupRepository();
 const recordRepo = new RecordRepository();
 

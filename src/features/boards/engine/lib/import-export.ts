@@ -152,7 +152,10 @@ export function getColumnIdsToDelete(
   const mapped = new Set(mappedColumnIds);
   return columns
     .filter(
-      (column) => !mapped.has(column.id) && !isProtectedImportColumn(column),
+      (column) =>
+        column.settings?.is_default === true &&
+        !mapped.has(column.id) &&
+        !isProtectedImportColumn(column),
     )
     .map((column) => column.id);
 }
@@ -205,10 +208,15 @@ export function computeImportColumnSets(
   for (const column of columns) {
     if (isProtectedImportColumn(column)) {
       protectedCols.push(column);
+    } else if (column.settings?.is_default === true && mappedIds.has(column.id)) {
+      keep.push(column);
+    } else if (column.settings?.is_default === true && !mappedIds.has(column.id)) {
+      remove.push(column);
     } else if (mappedIds.has(column.id)) {
       keep.push(column);
     } else {
-      remove.push(column);
+      // User-added / non-default columns are never auto-deleted.
+      protectedCols.push(column);
     }
   }
 

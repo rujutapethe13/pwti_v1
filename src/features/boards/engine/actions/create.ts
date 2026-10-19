@@ -192,8 +192,8 @@ export async function createBoardWithDefaults(
       required: false,
       hidden: false,
       frozen: false,
-      defaultValue: "",
-      settings: {},
+defaultValue: "",
+       settings: { is_default: true },
       permissions: {
         view: ["owner", "editor", "commenter", "viewer"],
         edit: ["owner", "editor"],
@@ -217,6 +217,7 @@ export async function createBoardWithDefaults(
       frozen: false,
       defaultValue: "",
       settings: {
+        is_default: true,
         options: [
           { id: "opt-retouching", label: "Retouching" },
           { id: "opt-compositing", label: "Compositing" },
@@ -247,6 +248,7 @@ export async function createBoardWithDefaults(
       frozen: false,
       defaultValue: "Not Started",
       settings: {
+        is_default: true,
         options: [
           { id: "opt-not-started", label: "Not Started", color: "#94a3b8" },
           { id: "opt-working-on-it", label: "Working on it", color: "#f59e0b" },
@@ -803,8 +805,8 @@ export async function createMultiLevelBoard(
       required: true,
       hidden: false,
       frozen: false,
-      defaultValue: "",
-      settings: {},
+defaultValue: "",
+       settings: { is_default: true },
       permissions: {
         view: ["owner", "editor", "commenter", "viewer"],
         edit: ["owner", "editor"],
@@ -827,6 +829,7 @@ export async function createMultiLevelBoard(
       frozen: false,
       defaultValue: "Not Started",
       settings: {
+        is_default: true,
         options: ["Not Started", "In Progress", "In Review", "Done"],
       },
       permissions: {
@@ -871,8 +874,8 @@ export async function createMultiLevelBoard(
       required: false,
       hidden: false,
       frozen: false,
-      defaultValue: "",
-      settings: {},
+defaultValue: "",
+       settings: { is_default: true },
       permissions: {
         view: ["owner", "editor", "commenter", "viewer"],
         edit: ["owner", "editor"],

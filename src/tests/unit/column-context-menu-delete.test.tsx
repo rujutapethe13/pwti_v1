@@ -167,11 +167,12 @@ describe("ColumnContextMenu — Delete column", () => {
     expect(deleteItem).toBeDisabled();
   });
 
-  it("disables the delete menu item for the protected Name column", async () => {
+  it("keeps the delete menu item enabled for the primary Name column", async () => {
     const onDelete = vi.fn();
     render(<ColumnContextMenu column={nameColumn} onDelete={onDelete} />);
 
     const deleteItem = findDeleteItem();
-    expect(deleteItem).toBeDisabled();
+    expect(deleteItem).toBeDefined();
+    expect(deleteItem).not.toBeDisabled();
   });
 });

@@ -63,7 +63,7 @@ function clearColumnRefsFromRecord(
   for (const key of Object.keys(record)) {
     const value = record[key];
     if (value === columnId) {
-      record[key] = "";
+      delete record[key];
     } else if (Array.isArray(value)) {
       record[key] = value.filter((item) => item !== columnId);
     } else if (value && typeof value === "object") {
@@ -404,13 +404,27 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     if (!targetColumn) return;
 
     const isNameColumn = targetColumn.key === "name";
-    if (isNameColumn) {
-      toast.error("This column can't be deleted");
+    const remainingColumns = columns.filter((c) => c.id !== columnId);
+
+    // Never leave a board with zero columns. If the user deletes the last
+    // remaining column, refuse with a clear message instead of crashing views.
+    if (remainingColumns.length === 0) {
+      toast.error("Cannot delete the last column. Add another column first.");
       return;
     }
 
     setDeletingColumnId(columnId);
     const prevColumns = columns;
+
+    // When the primary/title column (key "name") is deleted, promote another
+    // column to be the record-title column so views never lose their title.
+    // Preference: first remaining text-type column, else the first column.
+    let nextPrimaryLabel: string | null = null;
+    if (isNameColumn) {
+      const nextPrimary =
+        remainingColumns.find((c) => c.type === "text") ?? remainingColumns[0];
+      nextPrimaryLabel = nextPrimary?.label ?? null;
+    }
 
     // Optimistic UI update — remove the column and its cell values
     setColumns((prev) => prev.filter((c) => c.id !== columnId));
@@ -460,13 +474,28 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     );
 
     try {
+      // When the primary/title column is deleted, promote another column to be
+      // the record-title column so views never lose their title. Preference:
+      // first remaining text-type column, else the first column.
+      if (isNameColumn && nextPrimaryLabel) {
+        try {
+          await updateBoardPrimaryLabel(board.id, nextPrimaryLabel);
+        } catch {
+          // Non-fatal: the column still deletes; the label just stays stale.
+        }
+      }
+
       const response = await deleteColumn(columnId);
       if (response.error) {
         // Restore columns on failure
         setColumns(prevColumns);
         toast.error(response.error);
       } else {
-        toast.success(`Column "${targetColumn.label}" deleted.`);
+        toast.success(
+          nextPrimaryLabel
+            ? `Column deleted. "${nextPrimaryLabel}" is now the item name column.`
+            : `Column "${targetColumn.label}" deleted.`,
+        );
       }
     } catch (err) {
       setColumns(prevColumns);

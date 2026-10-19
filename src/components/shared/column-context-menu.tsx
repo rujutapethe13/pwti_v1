@@ -650,7 +650,7 @@ export function ColumnContextMenu({
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => setDeleteConfirmOpen(true)}
-              disabled={column.key === "name" || deleteLoading}
+              disabled={deleteLoading}
             >
               <Trash2 className="mr-2 size-3.5" />
               Delete column

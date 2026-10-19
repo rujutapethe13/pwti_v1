@@ -73,10 +73,10 @@ const STATUS_OPTIONS = [
 ];
 
 const COLUMNS: ColumnDefinition[] = [
-  makeColumn("col-client", "Client Name", "text", 0),
-  makeColumn("col-status", "Status", "status", 1, { options: STATUS_OPTIONS }),
-  makeColumn("col-date", "Date", "date", 2),
-  makeColumn("col-assigned", "Assigned To", "person", 3),
+  makeColumn("col-client", "Client Name", "text", 0, { is_default: true }),
+  makeColumn("col-status", "Status", "status", 1, { options: STATUS_OPTIONS, is_default: true }),
+  makeColumn("col-date", "Date", "date", 2, { is_default: true }),
+  makeColumn("col-assigned", "Assigned To", "person", 3, { is_default: true }),
 ];
 
 const GROUPS: Group[] = [
@@ -1448,7 +1448,7 @@ describe("buildImportColumnPlan", () => {
   // Mirrors createBoardWithDefaults: Client Name (protected), Job Type,
   // Status, Date, Assigned To.
   const PLAN_COLUMNS: ColumnDefinition[] = [
-    makeColumn("col-client", "Client Name", "text", 0),
+    makeColumn("col-client", "Client Name", "text", 0, { is_default: true }),
     makeColumn("col-jobtype", "Job Type", "dropdown", 1, {
       options: [{ id: "opt-retouching", label: "Retouching" }],
     }),
@@ -1571,3 +1571,4 @@ describe("buildImportColumnPlan", () => {
     ]);
   });
 });
+
