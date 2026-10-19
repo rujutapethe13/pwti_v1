@@ -11,6 +11,7 @@ import { columnTypeKeys } from "../types";
 // ── Reusable Primitives ─────────────────────────────────────
 
 const entityId = z.string().min(1, "ID is required");
+const uuidId = z.string().uuid("A valid UUID is required");
 const organizationId = z.string().min(1, "Organization ID is required");
 const workspaceId = z.string().min(1, "Workspace ID is required");
 const boardId = z.string().min(1, "Board ID is required");
@@ -184,7 +185,7 @@ export type DuplicateColumnInput = z.infer<typeof duplicateColumnSchema>;
 // ── Delete Column ──────────────────────────────────────────
 
 export const deleteColumnSchema = z.object({
-  columnId: entityId,
+  columnId: uuidId,
   /** If true, also clean up cell values for this column */
   cascade: z.boolean().default(true),
   /** If true, permanently delete */
@@ -243,4 +244,13 @@ export const updateColumnOptionsSchema = z.object({
 });
 
 export type UpdateColumnOptionsInput = z.infer<typeof updateColumnOptionsSchema>;
+
+// ── Delete Board Columns (Bulk) ──────────────────────────────
+
+export const deleteBoardColumnsSchema = z.object({
+  boardId,
+  columnIds: z.array(uuidId).min(1, "At least one column ID is required"),
+});
+
+export type DeleteBoardColumnsInput = z.infer<typeof deleteBoardColumnsSchema>;
 

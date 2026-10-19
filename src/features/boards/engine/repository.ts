@@ -437,3 +437,28 @@ export async function checkBoardAccessBySlug(
 
   return { allowed: false, reason: "access_denied" };
 }
+
+/**
+ * Load the live columns for a board from the database, ordered by sort_order.
+ *
+ * This is the source of truth for what columns actually exist after an
+ * import has persisted new columns. It is used by the import cleanup so we
+ * never delete based on stale client-side ids.
+ */
+export async function loadColumnsByBoard(
+  boardId: string,
+): Promise<ColumnDefinition[]> {
+  const supabase = await createServiceClient();
+  const { data, error } = await supabase
+    .from("columns")
+    .select("*")
+    .eq("board_id", boardId)
+    .is("deleted_at", null)
+    .order("sort_order", { ascending: true });
+
+  if (error) {
+    throw new Error(`Failed to load columns for board ${boardId}: ${error.message}`);
+  }
+
+  return (data ?? []).map(toColumnDefinition);
+}

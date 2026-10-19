@@ -67,9 +67,12 @@ class DefaultPluginRegistry implements PluginRegistry {
   }
 
   getViewPlugin(viewType: string): ViewPlugin | undefined {
+    const normalized = String(viewType).trim().toLowerCase();
     return Array.from(this.plugins.values()).find(
       (p): p is ViewPlugin =>
-        p.category === "view" && p.enabled && p.viewType === viewType,
+        p.category === "view" &&
+        p.enabled &&
+        p.viewType.trim().toLowerCase() === normalized,
     );
   }
 

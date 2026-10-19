@@ -40,6 +40,7 @@ import type {
 } from "@/features/boards/engine/types";
 import {
   applyOptionMappingsToColumns,
+  buildImportColumnPlan,
   buildInitialMappings,
   buildNewColumnsFromMappings,
   buildRecordFromRow,
@@ -51,6 +52,7 @@ import {
   getColumnsToRemoveInfo,
   getMappedExistingColumnIds,
   getMappableMappings,
+  ImportColumnPlanEntry,
   ImportColumnSets,
   MAX_IMPORT_FILE_SIZE_BYTES,
   MAX_IMPORT_ROWS,
@@ -86,6 +88,16 @@ export interface ImportWizardProps {
     columnsToDelete: string[];
     targetGroupId: string | null;
     keepUnmappedColumns: boolean;
+    /**
+     * Explicit post-import column plan built before any backend writes.
+     * `finalColumns` is the ordered list of columns that must exist after the
+     * import (in file order); `columnsToDelete` are the live ColumnDefinition
+     * objects for the unmapped defaults that must be removed.
+     */
+    columnPlan: {
+      finalColumns: ColumnDefinition[];
+      columnsToDelete: ColumnDefinition[];
+    };
   }) => Promise<{ createdCount: number; importErrors: Array<{ rowIndex: number; reason: string }> }> | { createdCount: number; importErrors: Array<{ rowIndex: number; reason: string }> };
 }
 
@@ -307,7 +319,12 @@ export function ImportWizard({
       columns.length,
       columns,
     );
-    setNewColumns(built);
+    // Assign real UUIDs to all new columns (since they are new)
+    const withUUIDs = built.map(col => ({
+      ...col,
+      id: crypto.randomUUID(),
+    }));
+    setNewColumns(withUUIDs);
   }, [mappableMappings, columns.length, columns]);
 
   const validation = useMemo(
@@ -371,7 +388,39 @@ export function ImportWizard({
       optionMappings,
       parsed.rows,
     );
-    const updatedColumns = [...updatedExisting, ...updatedNew];
+    // Deduplicate by column id. A column that was mapped to an existing
+    // column must not also be re-created here; otherwise the same column
+    // id ends up twice in `updatedColumns` and the board renders it twice.
+    const updatedColumnsById = new Map<string, ColumnDefinition>();
+    for (const col of [...updatedExisting, ...updatedNew]) {
+      if (!updatedColumnsById.has(col.id)) {
+        updatedColumnsById.set(col.id, col);
+      }
+    }
+    const updatedColumns = Array.from(updatedColumnsById.values());
+
+    // Build the explicit post-import column plan from the option-mapped
+    // columns and the user's mappings. This is the single source of truth for
+    // what the board looks like after a successful import: it decides which
+    // columns exist, in what order, and which unmapped defaults get deleted.
+    // It is computed BEFORE any backend writes so a failure mid-flight cannot
+    // leave the board in a half-migrated state.
+    const columnPlan = buildImportColumnPlan(
+      columns,
+      mappableMappings,
+      updatedColumns,
+    );
+    console.warn("[IMPORT] stage=column-plan", {
+      plan: columnPlan.plan.map((entry) => ({
+        fileColumn: entry.fileColumn,
+        fileColumnIndex: entry.fileColumnIndex,
+        targetColumnId: entry.targetColumnId,
+        position: entry.position,
+      })),
+      finalColumns: columnPlan.finalColumns.map((c) => ({ id: c.id, label: c.label, type: c.type })),
+      columnsToDelete: columnPlan.columnsToDelete.map((c) => ({ id: c.id, label: c.label })),
+    });
+
     const createdRecords: Array<{
       title: string;
       cellValues: Record<string, ColumnValue>;
@@ -441,9 +490,16 @@ export function ImportWizard({
         updatedColumns,
         records: createdRecords,
         skippedRows: skipped,
+        // The wizard's string-id list is kept for backwards compat, but the
+        // page component now relies on the live ColumnDefinition[] in the plan
+        // so the delete call uses real backend ids.
         columnsToDelete: keepUnmappedColumns ? [] : columnsToDelete,
         targetGroupId,
         keepUnmappedColumns,
+        columnPlan: {
+          finalColumns: columnPlan.finalColumns,
+          columnsToDelete: keepUnmappedColumns ? [] : columnPlan.columnsToDelete,
+        },
       });
       setSummary({
         created: result.createdCount,
@@ -644,29 +700,47 @@ export function ImportWizard({
               </Button>
             </>
           )}
-          {step === "mapping" && (
-            <>
-              <Button variant="ghost" onClick={() => setStep("preview")}>
-                <ChevronLeft className="mr-1 size-3.5" />
-                Back
-              </Button>
-              <Button onClick={startImport} disabled={!canProceedFromMapping}>
-                Import {parsed?.totalRowCount ?? 0} row
-                {(parsed?.totalRowCount ?? 0) === 1 ? "" : "s"}
-              </Button>
-            </>
-          )}
-          {step === "confirm" && (
-            <>
-              <Button variant="ghost" onClick={() => setStep("mapping")}>
-                <ChevronLeft className="mr-1 size-3.5" />
-                Back
-              </Button>
-              <Button onClick={startImport} disabled={!canProceedFromMapping}>
-                Confirm Import
-              </Button>
-            </>
-          )}
+{step === "mapping" && (
+  <>
+    <Button variant="ghost" onClick={() => setStep("preview")}>
+      <ChevronLeft className="mr-1 size-3.5" />
+      Back
+    </Button>
+    <Button onClick={startImport} disabled={!canProceedFromMapping || importing}>
+      {importing ? (
+        <>
+          <Loader2 className="mr-1 h-3 w-3" />
+          Importing...
+        </>
+      ) : (
+        <>
+          Import {parsed?.totalRowCount ?? 0} row
+          {(parsed?.totalRowCount ?? 0) === 1 ? "" : "s"}
+        </>
+      )}
+    </Button>
+  </>
+)}
+{step === "confirm" && (
+  <>
+    <Button variant="ghost" onClick={() => setStep("mapping")}>
+      <ChevronLeft className="mr-1 size-3.5" />
+      Back
+    </Button>
+    <Button onClick={startImport} disabled={!canProceedFromMapping || importing}>
+      {importing ? (
+        <>
+          <Loader2 className="mr-1 h-3 w-3" />
+          Importing...
+        </>
+      ) : (
+        <>
+          Confirm Import
+        </>
+      )}
+    </Button>
+  </>
+)}
         </DialogFooter>
       </DialogContent>
     </Dialog>

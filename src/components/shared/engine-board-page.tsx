@@ -1,1438 +1,972 @@
-"use client";
+﻿"use client";
 
-import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
-import { BoardLayout } from "@/components/shared/board-layout";
-import { TableView } from "@/features/boards/engine";
-import { CalendarView } from "@/features/boards/engine/view-engine/views/calendar-view";
-import { KanbanView } from "@/features/boards/engine/view-engine/views/kanban-view";
-import { DashboardView } from "@/features/boards/engine/view-engine/views/dashboard/dashboard-view";
-import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
-import { createColumn } from "@/features/boards/engine/demo-data";
-import type {
-  BoardRecord,
-  BoardView,
-  ColumnDefinition,
-  ColumnTypeKey,
-  ColumnValue,
-  ConnectedBoardColumnSettings,
-  DropdownOption,
-  Group,
-  MirrorColumnSettings,
-} from "@/features/boards/engine/types";
-import { columnTypeRegistry } from "@/features/boards/engine/column-registry";
-import { registerAllCellRenderers } from "@/features/boards/engine";
-import {
-  updateCell,
-  reorderColumns,
-  moveRecord,
-  editRecord,
-  createRecord,
-  bulkCreateRecords,
-  renameView,
-  updateViewSettings,
-  duplicateView,
-  deleteView,
-  ensureBoardViews,
-  updateColumnOptions,
-  addColumn,
-  renameColumn,
-  deleteColumn,
-  updateBoardPrimaryLabel,
-  loadRecordsPaginated,
-  importWithColumnCleanup,
-} from "@/features/boards/engine/actions";
-import { viewCatalog, getDefaultSettings } from "@/features/boards/engine";
-import {
-  applyConnectBoardTwoWaySync,
-  extractLinkedItems,
-} from "@/features/boards/engine/connected-data/two-way-sync";
-import { MirrorSettingsModal } from "@/features/boards/engine/components/mirror-settings-modal";
-import { MirrorDataProvider } from "@/features/boards/engine/connected-data/mirror-data-context";
-import { useGroup } from "@/features/boards/engine/hooks/use-group";
-import { useExportToExcel } from "@/features/boards/engine/hooks/use-export-to-excel";
+import "@/features/boards/engine/view-engine/views";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ViewEngine } from "@/features/boards/engine/view-engine/view-engine";
 import { ImportWizard } from "@/features/boards/engine/components/import-wizard";
-import type { ViewSettingsByType } from "@/features/boards/engine/types";
-
-registerAllCellRenderers();
-
-class RenderErrorBoundary extends Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: Error | null }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error("[RENDER_CRASH]", error?.message, error?.stack, info?.componentStack);
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ padding: 40, color: "red" }}>
-          <h2>Render Error</h2>
-          <pre>{this.state.error?.message}</pre>
-          <pre>{this.state.error?.stack}</pre>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
+import { BoardLayout } from "@/components/shared/board-layout";
+import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
+import { toast } from "sonner";
+import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
+import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey } from "@/features/boards/engine/types";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, freezeColumn, hideColumns, updateBoardPrimaryLabel } from "@/features/boards/engine/actions";
+import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
+import { refreshClient360Snapshot } from "@/features/client-360/actions/snapshot-actions";
+import { workbookToArrayBuffer } from "@/features/boards/engine/lib/import-export";
 
 interface EngineBoardPageProps {
   data: DemoBoardPageData;
 }
 
-const DEMO_GROUPS: Omit<Group, "boardId">[] = [
-  {
-    id: "group-all",
-    name: "All Tasks",
-    color: "#94a3b8",
-    collapsed: false,
-    order: 0,
-    status: "active",
-    statusOptions: [],
-    organizationId: "",
-    workspaceId: "",
-  },
-];
+function cellValuesArrayToMap(cellValues: Array<[string, ColumnValue]>): Map<string, ColumnValue> {
+  return new Map(cellValues);
+}
 
-function ensureDefaultView(
-  boardId: string,
-  organizationId: string,
-  workspaceId: string,
-): BoardView {
-  return {
-    id: `view-${boardId}-table`,
-    boardId,
-    organizationId,
-    workspaceId,
-    name: "Table",
-    type: "table",
-    visibility: "shared",
-    filters: [],
-    sorting: [],
-    grouping: [],
-    visibleColumnIds: [],
-    columnWidths: {},
-    rowHeight: 44,
-    settings: {},
-    sharedWith: ["owner", "editor", "viewer"],
-    isDefault: true,
-    order: 0,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+function cellValuesMapToArray(cellValues: Map<string, ColumnValue>): Array<[string, ColumnValue]> {
+  return Array.from(cellValues.entries());
+}
+
+/**
+ * Strip every reference to a deleted column id out of a view's settings.
+ *
+ * `BoardView.settings` is a discriminated union (KanbanViewSettings |
+ * CalendarViewSettings | TimelineViewSettings | ...) whose fields are typed
+ * specifically, so `settings[key]` does not satisfy an index signature and the
+ * naive `for (const key of Object.keys(settings))` loop fails to typecheck.
+ *
+ * This walks the settings object recursively and, for each value:
+ *  - a string equal to the deleted column id  → replaced with "" (keeps the
+ *    field present so the per-view-type interface stays valid; the view simply
+ *    has no column to point at anymore).
+ *  - a string[]                              → the id is filtered out.
+ *  - a nested object (groupBy, divideBy, ...) → recursed into.
+ *
+ * It is safe to walk generically because every string field in these settings
+ * is either a column id, a group id, or a literal union member ("asc"/"desc",
+ * "month"/"week", "status"/"person", ...). A column id can only ever match a
+ * column-id field, never a group id or a literal, so nothing is cleared by
+ * accident. Group-id arrays such as `groupBy.collapsedGroupIds` live in a
+ * different UUID namespace and are unaffected.
+ */
+function clearColumnRefsFromViewSettings(
+  settings: BoardView["settings"],
+  columnId: string,
+): BoardView["settings"] {
+  const record = { ...settings } as Record<string, unknown>;
+  return clearColumnRefsFromRecord(record, columnId) as BoardView["settings"];
+}
+
+function clearColumnRefsFromRecord(
+  record: Record<string, unknown>,
+  columnId: string,
+): Record<string, unknown> {
+  for (const key of Object.keys(record)) {
+    const value = record[key];
+    if (value === columnId) {
+      record[key] = "";
+    } else if (Array.isArray(value)) {
+      record[key] = value.filter((item) => item !== columnId);
+    } else if (value && typeof value === "object") {
+      record[key] = clearColumnRefsFromRecord(
+        value as Record<string, unknown>,
+        columnId,
+      );
+    }
+  }
+  return record;
 }
 
 export function EngineBoardPage({ data }: EngineBoardPageProps) {
-  console.warn(`[EngineBoardPage] Rendering board: ${data.board.name} (${data.board.id})`, {
-    columns: data.columns.length,
-    records: data.records.length,
-    views: data.views.length,
-    groups: data.groups.length,
-  });
+  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, views, groups } = data;
 
-  const effectiveColumns = useMemo<ColumnDefinition[]>(() => data.columns.length > 0
-    ? data.columns
-    : [
-        {
-          id: `col-${data.board.id}-name`,
-          boardId: data.board.id,
-          key: "name",
-          label: "Name",
-          type: "text" as ColumnDefinition["type"],
-          required: false,
-          hidden: false,
-          frozen: false,
-          defaultValue: "",
-          settings: {},
-          permissions: { view: ["owner", "editor", "commenter", "viewer"], edit: ["owner", "editor"], configure: ["owner"] },
-          validation: [],
-          version: 1,
-          order: 0,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ],
-  [data.columns, data.board.id]);
+  const [columns, setColumns] = useState<ColumnDefinition[]>(initialColumns);
+  const [records, setRecords] = useState<BoardRecord[]>(initialRecords);
+  const [cellValues, setCellValues] = useState<Map<string, ColumnValue>>(cellValuesArrayToMap(initialCellValues));
+  const [boardViews, setBoardViews] = useState<BoardView[]>(views);
+  const [activeViewId, setActiveViewId] = useState<string>(views[0]?.id ?? "");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [importWizardOpen, setImportWizardOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
+   const [bulkArchiveLoading, setBulkArchiveLoading] = useState(false);
+   const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null);
 
-  const effectiveGroups = useMemo<Group[]>(() => data.groups.length > 0
-    ? data.groups
-    : [
-        {
-          id: `group-${data.board.id}-default`,
-          boardId: data.board.id,
-          organizationId: data.board.organizationId,
-          workspaceId: data.board.workspaceId,
-          name: "Group Title",
-          color: "#94a3b8",
-          collapsed: false,
-          order: 0,
-          status: "active" as const,
-          parentGroupId: null,
-          permissions: undefined,
-          statusOptions: [],
-        },
-      ],
-  [data.groups, data.board.id, data.board.organizationId, data.board.workspaceId]);
-
-  const effectiveViews = useMemo<BoardView[]>(() => data.views && data.views.length > 0
-    ? data.views
-    : [
-        ensureDefaultView(
-          data.board.id,
-          data.board.organizationId,
-          data.board.workspaceId,
-        ),
-      ],
-  [data.views, data.board.id, data.board.organizationId, data.board.workspaceId]);
-
-  console.warn(`[EngineBoardPage] Effective data after defaults:`, {
-    columns: effectiveColumns.length,
-    records: data.records.length,
-    views: effectiveViews.length,
-    groups: effectiveGroups.length,
-  });
-
-  const [columns, setColumns] = useState<ColumnDefinition[]>(effectiveColumns);
-  const [records, setRecords] = useState<BoardRecord[]>(data.records);
-  const [recordTotal, setRecordTotal] = useState<number>(data.recordCount ?? data.records.length);
-  const [recordOffset, setRecordOffset] = useState<number>(data.recordOffset ?? 0);
-  const [hasMoreRecords, setHasMoreRecords] = useState<boolean>(
-    (data.recordCount ?? data.records.length) > data.records.length,
-  );
-  const [loadingMoreRecords, setLoadingMoreRecords] = useState(false);
-  const [cellValues, setCellValues] = useState<Map<string, ColumnValue>>(
-    new Map(data.cellValues),
-  );
-
-  const PAGE_SIZE = 100;
-
-  const loadMoreRecords = useCallback(async () => {
-    if (loadingMoreRecords || !hasMoreRecords) return;
-    setLoadingMoreRecords(true);
-    try {
-      const result = await loadRecordsPaginated(data.board.id, PAGE_SIZE, recordOffset + records.length);
-      const pageData = result.data;
-      if (pageData) {
-        setRecords((prev) => [...prev, ...pageData.records]);
-        setRecordTotal(pageData.total);
-        setHasMoreRecords(pageData.hasMore);
-      }
-    } catch (err) {
-      console.error("Failed to load more records:", err);
-    } finally {
-      setLoadingMoreRecords(false);
-    }
-  }, [data.board.id, recordOffset, records.length, hasMoreRecords, loadingMoreRecords]);
-
-  // Infinite scroll handler
-  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.currentTarget;
-    const { scrollTop, scrollHeight, clientHeight } = target;
-    if (scrollHeight - scrollTop - clientHeight < 200) {
-      loadMoreRecords();
-    }
-  }, [loadMoreRecords]);
-
-  const [views, setViews] = useState<BoardView[]>(effectiveViews);
-  const [activeViewId, setActiveViewId] = useState<string>(
-    effectiveViews[0]?.id ?? "table",
-  );
-  const [viewSettings, setViewSettings] = useState<Record<string, ViewSettingsByType>>(
-    {},
-  );
-
-  console.warn(`[EngineBoardPage] Views initialized:`, effectiveViews.map(v => ({ id: v.id, type: v.type, name: v.name })));
-  console.warn(`[EngineBoardPage] Active view ID: ${activeViewId}`);
-
-  // Mirror column creation (shared settings step for both the manual "+"
-  // flow and the prompted "link → create mirror" flow).
-  const [mirrorModalOpen, setMirrorModalOpen] = useState(false);
-  const [mirrorAfterColumnId, setMirrorAfterColumnId] = useState<string | null>(null);
-  const [mirrorSourceColumnId, setMirrorSourceColumnId] = useState<string | null>(null);
+  const columnMapRef = useRef(new Map(columns.map((c) => [c.id, c])));
+  const recordMapRef = useRef(new Map(records.map((r) => [r.id, r])));
+  // Guards the import cleanup so it runs exactly once per import, even if the
+  // component re-renders or StrictMode double-invokes effects while the
+  // import is in flight. Reset when the wizard closes.
+  const importCleanupDoneRef = useRef(false);
 
   useEffect(() => {
-    const handler = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      if (!detail?.columnId || !detail?.options) return;
-      setColumns((prev) =>
-        prev.map((col) =>
-          col.id === detail.columnId
-            ? { ...col, settings: { ...col.settings, options: detail.options } }
-            : col,
-        ),
-      );
-    };
-    window.addEventListener("column-options-updated", handler as EventListener);
-    return () =>
-      window.removeEventListener("column-options-updated", handler as EventListener);
-  }, []);
-
-  const syncedViewIdsRef = useRef<Set<string>>(new Set());
+    columnMapRef.current = new Map(columns.map((c) => [c.id, c]));
+  }, [columns]);
 
   useEffect(() => {
-    const viewsToSync = effectiveViews;
-    const viewIds = new Set(viewsToSync.map((v) => v.id));
-
-    const needsSync = [...viewIds].some((id) => !syncedViewIdsRef.current.has(id));
-    if (!needsSync) return;
-
-    console.warn(`[EngineBoardPage] Syncing ${viewIds.size} views to database...`);
-    ensureBoardViews(viewsToSync)
-      .then((result) => {
-        if (result.error) {
-          console.error(`[EngineBoardPage] Failed to sync views:`, result.error);
-          toast.error(`Failed to sync views: ${result.error}`);
-        } else {
-          console.warn(`[EngineBoardPage] Views synced successfully`);
-          syncedViewIdsRef.current = viewIds;
-        }
-      })
-      .catch((err) => {
-        console.error("[EngineBoardPage] Failed to ensure board views:", err);
-        toast.error("Failed to sync views to database.");
-      });
-  }, [data.board.id, effectiveViews]);
-
-  const handleColumnAdd = useCallback(
-    async (
-      type: ColumnTypeKey,
-      afterColumnId?: string,
-      settings?: Record<string, unknown>,
-    ) => {
-      if (type === "mirror") {
-        setMirrorSourceColumnId(null);
-        setMirrorAfterColumnId(afterColumnId ?? null);
-        setMirrorModalOpen(true);
-        return;
-      }
-      const definition = columnTypeRegistry[type];
-      const columnId = `col-${Date.now()}`;
-      const columnKey = `column-${columns.length + 1}`;
-      const newColumn = createColumn(
-        data.board.id,
-        columnId,
-        columnKey,
-        "New Column",
-        type,
-        columns.length,
-        definition.defaultValue,
-        settings ?? {},
-      );
-
-      setColumns((prev) => {
-        if (!afterColumnId) return [...prev, newColumn];
-        const idx = prev.findIndex((c) => c.id === afterColumnId);
-        if (idx === -1) return prev;
-        const next = [...prev];
-        next.splice(idx + 1, 0, newColumn);
-        return next;
-      });
-
-      try {
-        const fd = new FormData();
-        fd.set("organizationId", data.board.organizationId);
-        fd.set("workspaceId", data.board.workspaceId);
-        fd.set("boardId", data.board.id);
-        fd.set("key", columnKey);
-        fd.set("label", "New Column");
-        fd.set("type", type);
-        fd.set("required", "false");
-        if (definition.defaultValue !== undefined && definition.defaultValue !== null) {
-          fd.set("defaultValue", JSON.stringify(definition.defaultValue));
-        }
-        fd.set("settings", JSON.stringify(settings ?? {}));
-        const response = await addColumn(fd);
-        if (response.error) {
-          toast.error(response.error);
-        }
-      } catch {
-        toast.error("Failed to create column.");
-      }
-    },
-    [data.board.id, data.board.organizationId, data.board.workspaceId, columns.length],
-  );
-
-  const handleMirrorConfirm = useCallback(
-    (settings: MirrorColumnSettings) => {
-      const type = "mirror" as const;
-      const definition = columnTypeRegistry[type];
-      const order = !mirrorAfterColumnId
-        ? columns.length
-        : (() => {
-            const idx = columns.findIndex((c) => c.id === mirrorAfterColumnId);
-            return idx === -1 ? columns.length : idx + 1;
-          })();
-      const newColumn = createColumn(
-        data.board.id,
-        `col-mirror-${Date.now()}`,
-        `column-${columns.length + 1}`,
-        "New Mirror",
-        type,
-        order,
-        definition.defaultValue,
-        settings as unknown as Record<string, unknown>,
-      );
-
-      setColumns((prev) => {
-        if (!mirrorAfterColumnId) return [...prev, newColumn];
-        const idx = prev.findIndex((c) => c.id === mirrorAfterColumnId);
-        if (idx === -1) return prev;
-        const next = [...prev];
-        next.splice(idx + 1, 0, newColumn);
-        return next;
-      });
-
-      setMirrorModalOpen(false);
-      setMirrorAfterColumnId(null);
-      setMirrorSourceColumnId(null);
-      toast.success("Mirror column created.");
-    },
-    [data.board.id, columns, mirrorAfterColumnId],
-  );
-
-  const handleColumnRename = useCallback(
-    async (columnId: string, label: string) => {
-      setColumns((prev) =>
-        prev.map((c) => (c.id === columnId ? { ...c, label } : c)),
-      );
-      try {
-        const response = await renameColumn(columnId, label);
-        if (response.error) {
-          toast.error(response.error);
-        } else {
-          toast.success("Column renamed.");
-        }
-      } catch {
-        toast.error("Failed to rename column.");
-      }
-    },
-    [toast],
-  );
-
-  const handlePrimaryColumnRename = useCallback(
-    async (label: string) => {
-      try {
-        const response = await updateBoardPrimaryLabel(
-          data.board.id,
-          label,
-        );
-        if (response.error) {
-          toast.error(response.error);
-        }
-      } catch {
-        toast.error("Failed to rename column.");
-      }
-    },
-    [data.board.id, toast],
-  );
-
-  const handleColumnDelete = useCallback((columnId: string) => {
-    setColumns((prev) => prev.filter((c) => c.id !== columnId));
-  }, []);
-
-  const handleColumnChangeType = useCallback((columnId: string, type: ColumnTypeKey) => {
-    setColumns((prev) =>
-      prev.map((c) => {
-        if (c.id !== columnId) return c;
-        const typeDef = columnTypeRegistry[type];
-        const currentOptions =
-          (c.settings?.options as DropdownOption[] | undefined) ?? [];
-        const options =
-          typeDef?.defaultOptions && currentOptions.length === 0
-            ? typeDef.defaultOptions.map((opt) => ({ ...opt }))
-            : c.settings?.options;
-        return {
-          ...c,
-          type,
-          settings: {
-            ...c.settings,
-            ...(options !== c.settings?.options ? { options } : {}),
-          },
-        };
-      }),
-    );
-  }, []);
-
-  const handleColumnDuplicate = useCallback((columnId: string, withValues: boolean) => {
-    const newId = `col-${Date.now()}`;
-    setColumns((prev) => {
-      const idx = prev.findIndex((c) => c.id === columnId);
-      if (idx === -1) return prev;
-      const source = prev[idx];
-      const newColumn: ColumnDefinition = {
-        ...source,
-        id: newId,
-        key: `column-${prev.length + 1}`,
-        label: `${source.label} (copy)`,
-        order: source.order + 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      const next = [...prev];
-      next.splice(idx + 1, 0, newColumn);
-      return next;
-    });
-    if (withValues) {
-      setCellValues((prev) => {
-        const next = new Map(prev);
-        for (const [key, value] of prev.entries()) {
-          if (key.endsWith(`:${columnId}`)) {
-            const recordId = key.slice(0, key.length - columnId.length - 1);
-            next.set(`${recordId}:${newId}`, value);
-          }
-        }
-        return next;
-      });
-    }
-  }, []);
-
-  const handleColumnDuplicateOnly = useCallback(
-    (columnId: string) => handleColumnDuplicate(columnId, false),
-    [handleColumnDuplicate],
-  );
-
-  const handleColumnDuplicateWithValues = useCallback(
-    (columnId: string) => handleColumnDuplicate(columnId, true),
-    [handleColumnDuplicate],
-  );
-
-  const handleColumnUpdateDescription = useCallback(
-    (columnId: string, description: string) => {
-      setColumns((prev) =>
-        prev.map((c) => (c.id === columnId ? { ...c, description } : c)),
-      );
-    },
-    [],
-  );
-
-  const handleColumnUpdateSettings = useCallback(
-    (columnId: string, patch: Partial<ColumnDefinition>) => {
-      setColumns((prev) =>
-        prev.map((c) =>
-          c.id === columnId
-            ? {
-                ...c,
-                ...patch,
-                settings: { ...c.settings, ...(patch.settings ?? {}) },
-                updatedAt: new Date().toISOString(),
-              }
-            : c,
-        ),
-      );
-    },
-    [],
-  );
-
-  const creatingRef = useRef(false);
-
-  const handleNewItem = useCallback(
-    async (groupId?: string | null) => {
-      if (creatingRef.current) return;
-      creatingRef.current = true;
-
-      const tempId = `record-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const targetGroupId = groupId ?? null;
-      const newRecord = {
-        id: tempId,
-        organizationId: data.board.organizationId,
-        workspaceId: data.board.workspaceId,
-        boardId: data.board.id,
-        groupId: targetGroupId,
-        title: `New ${data.board.name === "Production" ? "batch" : data.board.name === "Video" ? "cut" : data.board.name === "CGI" ? "shot" : data.board.name === "Retouching" ? "item" : "item"}`,
-        status: "active" as const,
-        version: 1,
-        archivedAt: null,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      setRecords((prev) => {
-        const next = [...prev];
-        let insertAt = next.length;
-        for (let i = next.length - 1; i >= 0; i--) {
-          if ((next[i].groupId ?? null) === targetGroupId) {
-            insertAt = i + 1;
-            break;
-          }
-        }
-        next.splice(insertAt, 0, newRecord);
-        return next;
-      });
-
-      try {
-        const fd = new FormData();
-        fd.set("organizationId", data.board.organizationId);
-        fd.set("workspaceId", data.board.workspaceId);
-        fd.set("boardId", data.board.id);
-        fd.set("groupId", targetGroupId ?? "");
-        fd.set("title", newRecord.title);
-        const response = await createRecord(fd);
-        if (response.error || !response.data) {
-          setRecords((prev) => prev.filter((r) => r.id !== tempId));
-          toast.error(response.error || "Failed to create item.");
-          return;
-        }
-
-        setRecords((prev) => prev.map((r) => (r.id === tempId ? response.data! : r)));
-        toast.success("Item created.");
-      } catch {
-        setRecords((prev) => prev.filter((r) => r.id !== tempId));
-        toast.error("Failed to create item.");
-      } finally {
-        creatingRef.current = false;
-      }
-    },
-    [data.board, toast],
-  );
+    recordMapRef.current = new Map(records.map((r) => [r.id, r]));
+  }, [records]);
 
   const handleCellChange = useCallback(
-    async (args: { recordId: string; columnId: string; value: ColumnValue }) => {
-      const key = `${args.recordId}:${args.columnId}`;
+    async ({ recordId, columnId, value }: { recordId: string; columnId: string; value: ColumnValue }) => {
+      const key = `${recordId}:${columnId}`;
       const prevValue = cellValues.get(key) ?? null;
-      const prevRecord = records.find((r) => r.id === args.recordId);
+      const prevRecord = records.find((r) => r.id === recordId);
+
+      // Optimistic update
       setCellValues((prev) => {
         const next = new Map(prev);
-        next.set(key, args.value);
+        next.set(key, value);
         return next;
       });
       setRecords((prev) =>
-        prev.map((r) =>
-          r.id === args.recordId ? { ...r, updatedAt: new Date().toISOString() } : r,
-        ),
+        prev.map((r) => (r.id === recordId ? { ...r, updatedAt: new Date().toISOString() } : r)),
       );
+
       try {
         const response = await updateCell(
-          data.board.organizationId,
-          data.board.workspaceId,
-          data.board.id,
-          args.recordId,
-          args.columnId,
-          args.value,
+          board.organizationId,
+          board.workspaceId,
+          board.id,
+          recordId,
+          columnId,
+          value,
         );
         if (response.error) {
+          // Rollback on server error
           setCellValues((prev) => {
             const next = new Map(prev);
-            if (prevValue === null) {
-              next.delete(key);
-            } else {
-              next.set(key, prevValue);
-            }
+            if (prevValue === null) next.delete(key);
+            else next.set(key, prevValue);
             return next;
           });
           setRecords((prev) =>
             prev.map((r) =>
-              r.id === args.recordId && prevRecord
-                ? { ...r, updatedAt: prevRecord.updatedAt }
-                : r,
+              r.id === recordId && prevRecord ? { ...r, updatedAt: prevRecord.updatedAt } : r,
             ),
           );
           toast.error(response.error);
-          return;
         }
       } catch {
+        // Rollback on thrown error
         setCellValues((prev) => {
           const next = new Map(prev);
-          if (prevValue === null) {
-            next.delete(key);
-          } else {
-            next.set(key, prevValue);
-          }
+          if (prevValue === null) next.delete(key);
+          else next.set(key, prevValue);
           return next;
         });
         setRecords((prev) =>
           prev.map((r) =>
-            r.id === args.recordId && prevRecord
-              ? { ...r, updatedAt: prevRecord.updatedAt }
-              : r,
+            r.id === recordId && prevRecord ? { ...r, updatedAt: prevRecord.updatedAt } : r,
           ),
         );
         toast.error("Failed to save cell value.");
       }
-
-      // ── Two-way sync (Part 5) ──────────────────────────
-      const column = columns.find((c) => c.id === args.columnId);
-      if (column?.type === "connected_board") {
-        const settings = column.settings as unknown as ConnectedBoardColumnSettings;
-        if (settings?.two_way_sync) {
-          const prevItems = extractLinkedItems(prevValue);
-          const nextItems = extractLinkedItems(args.value);
-          const added = nextItems.filter(
-            (n) =>
-              !prevItems.some(
-                (p) => p.board_id === n.board_id && p.item_id === n.item_id,
-              ),
-          );
-          const removed = prevItems.filter(
-            (p) =>
-              !nextItems.some(
-                (n) => n.board_id === p.board_id && n.item_id === n.item_id,
-              ),
-          );
-          if (added.length > 0 || removed.length > 0) {
-            const result = applyConnectBoardTwoWaySync({
-              sourceBoardId: data.board.id,
-              sourceColumnId: column.id,
-              sourceRecordId: args.recordId,
-              added,
-              removed,
-              sourceAllowMultiple: settings.allow_multiple_items,
-            });
-            if (result.sourceColumnSettingsPatch) {
-              const patch = result.sourceColumnSettingsPatch;
-              setColumns((prev) =>
-                prev.map((c) =>
-                  c.id === column.id
-                    ? { ...c, settings: { ...c.settings, ...patch } }
-                    : c,
-                ),
-              );
-            }
-          }
-        }
-
-        // ── Prompted Mirror creation ──────────────────────────
-        // Immediately after a user links an item via a Connect Boards cell,
-        // offer to create a Mirror column that rides on this column.
-        if (column?.type === "connected_board") {
-          const prevItems = extractLinkedItems(prevValue);
-          const nextItems = extractLinkedItems(args.value);
-          const added = nextItems.filter(
-            (n) =>
-              !prevItems.some(
-                (p) => p.board_id === n.board_id && p.item_id === n.item_id,
-              ),
-          );
-          if (added.length > 0) {
-            const sourceColumn = column;
-            toast("Create a mirror column?", {
-              description: "Mirror a column from the linked record into this board.",
-              duration: Infinity,
-              action: {
-                label: "Set up",
-                onClick: () => {
-                  setMirrorSourceColumnId(sourceColumn.id);
-                  setMirrorAfterColumnId(null);
-                  setMirrorModalOpen(true);
-                },
-              },
-              cancel: "Dismiss",
-            });
-          }
-        }
-      }
     },
-    [data.board, cellValues, columns, records],
+    [board, cellValues, records],
   );
 
-  const handleRecordTitleChange = useCallback(
-    async (recordId: string, newTitle: string) => {
-      const prev = records.find((r) => r.id === recordId);
-      setRecords((p) =>
-        p.map((r) =>
-          r.id === recordId
-            ? { ...r, title: newTitle, updatedAt: new Date().toISOString() }
-            : r,
+   const handleBulkDelete = useCallback(
+     async (recordIds: string[]) => {
+       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+       const validIds = recordIds.filter(id => uuidRegex.test(id));
+       const invalidIds = recordIds.filter(id => !uuidRegex.test(id));
+
+       if (invalidIds.length > 0) {
+         // Remove records with invalid IDs from UI state (they were never in the DB)
+         const invalidRecords = records.filter(r => !uuidRegex.test(r.id));
+         if (invalidRecords.length > 0) {
+           setRecords(prev => prev.filter(r => uuidRegex.test(r.id)));
+           toast.warning(`Removed ${invalidRecords.length} invalid record(s) from the board.`);
+         }
+         // Also, we might want to remove the invalid IDs from the recordIds array for the API call, but we already have validIds.
+       }
+
+       if (validIds.length === 0) {
+         toast.error("No valid record IDs to delete.");
+         setBulkDeleteLoading(false);
+         return;
+       }
+
+       const prevRecords = records.filter((r) => validIds.includes(r.id));
+       setRecords((prev) => prev.filter((r) => !validIds.includes(r.id)));
+       setBulkDeleteLoading(true);
+       try {
+         const response = await bulkDeleteRecords(validIds);
+         if (response.error) {
+           setRecords((prev) => [...prev, ...prevRecords]);
+           toast.error(response.error);
+         } else {
+           toast.success(`${validIds.length} record${validIds.length !== 1 ? "s" : ""} deleted.`);
+         }
+       } catch {
+         setRecords((prev) => [...prev, ...prevRecords]);
+         toast.error("Failed to delete records.");
+       } finally {
+         setBulkDeleteLoading(false);
+       }
+     },
+     [records],
+   );
+
+  const handleBulkArchive = useCallback(
+    async (recordIds: string[]) => {
+      const prevRecords = records.filter((r) => recordIds.includes(r.id));
+      setRecords((prev) =>
+        prev.map((r) =>
+          recordIds.includes(r.id) ? { ...r, status: "archived" as const, archivedAt: new Date().toISOString() } : r,
         ),
       );
+      setBulkArchiveLoading(true);
       try {
-        const fd = new FormData();
-        fd.set("recordId", recordId);
-        fd.set("title", newTitle);
-        const response = await editRecord(fd);
-        if (response.error) {
-          if (prev) setRecords((p) => p.map((r) => (r.id === recordId ? prev : r)));
-          toast.error(response.error);
+        // Archive records one by one (no bulk archive action yet)
+        for (const recordId of recordIds) {
+          const response = await archiveRecord(recordId);
+          if (response.error) {
+            throw new Error(response.error);
+          }
         }
-      } catch {
-        if (prev) setRecords((p) => p.map((r) => (r.id === recordId ? prev : r)));
+        toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} archived.`);
+      } catch (err) {
+        setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+        toast.error(err instanceof Error ? err.message : "Failed to archive records.");
+      } finally {
+        setBulkArchiveLoading(false);
       }
     },
     [records],
   );
 
-  const handleColumnReorder = useCallback(
-    async (activeId: string, overId: string, _columns: ColumnDefinition[]) => {
-      const activeIdx = columns.findIndex((c) => c.id === activeId);
-      const overIdx = columns.findIndex((c) => c.id === overId);
-      if (activeIdx === -1 || overIdx === -1) return;
+   const handleRowDelete = useCallback(
+     async (recordId: string) => {
+       const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+       if (!uuidRegex.test(recordId)) {
+         // Remove the record from UI state if it's invalid
+         const prevRecord = records.find((r) => r.id === recordId);
+         if (prevRecord) {
+           setRecords(prev => prev.filter(r => r.id !== recordId));
+           toast.warning("Removed invalid record from the board.");
+         }
+         toast.error("Invalid record ID.");
+         return;
+       }
 
-      const reordered = [...columns];
-      const [moved] = reordered.splice(activeIdx, 1);
-      reordered.splice(overIdx, 0, moved);
+       const prevRecord = records.find((r) => r.id === recordId);
+       setRecords((prev) => prev.filter((r) => r.id !== recordId));
+       try {
+         const response = await bulkDeleteRecords([recordId]);
+         if (response.error) {
+           if (prevRecord) setRecords((prev) => [...prev, prevRecord]);
+           toast.error(response.error);
+         } else {
+           toast.success("Record deleted.");
+         }
+       } catch {
+         if (prevRecord) setRecords((prev) => [...prev, prevRecord]);
+         toast.error("Failed to delete record.");
+       }
+     },
+     [records],
+   );
 
-      setColumns(reordered);
-
+  const handleRowDuplicate = useCallback(
+    async (recordId: string) => {
+      const record = records.find((r) => r.id === recordId);
+      if (!record) return;
       try {
-        await reorderColumns(
-          data.board.id,
-          reordered.map((c, idx) => ({ id: c.id, order: idx })),
-        );
+        const response = await fetch("/api/boards/records/duplicate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordId }),
+        });
+        const data = await response.json();
+        if (data.error) {
+          toast.error(data.error);
+        } else if (data.data) {
+          const newRecord = data.data;
+          setRecords((prev) => [...prev, newRecord]);
+          // Copy cell values
+          const newCellValues: Array<[string, ColumnValue]> = [];
+          for (const [key, value] of cellValues.entries()) {
+            if (key.startsWith(`${recordId}:`)) {
+              const columnId = key.split(":")[1];
+              newCellValues.push([`${newRecord.id}:${columnId}`, value]);
+            }
+          }
+          if (newCellValues.length > 0) {
+            await upsertBoardCellValues(board.id, board.organizationId, board.workspaceId, newCellValues);
+            setCellValues((prev) => {
+              const next = new Map(prev);
+              newCellValues.forEach(([k, v]) => next.set(k, v));
+              return next;
+            });
+          }
+          toast.success("Record duplicated.");
+        }
       } catch {
-        setColumns(columns);
+        toast.error("Failed to duplicate record.");
       }
     },
-    [columns, data.board.id],
+    [board, cellValues, records],
   );
 
-  const {
-    groups,
-    loading: groupsLoading,
-    createGroup: createGroupAction,
-    renameGroup: renameGroupAction,
-    reorderGroups: reorderGroupsAction,
-    moveGroup: moveGroupAction,
-    duplicateGroup: duplicateGroupAction,
-    collapseGroup: collapseGroupAction,
-    deleteGroup: deleteGroupAction,
-    updateGroupColor: updateGroupColorAction,
-    updateGroupStatusOptions: updateGroupStatusOptionsAction,
-  } = useGroup(
-    effectiveGroups.map((g) => ({
-      ...g,
-      boardId: data.board.id,
-      organizationId: data.board.organizationId,
-      workspaceId: data.board.workspaceId,
-      parentGroupId: g.parentGroupId ?? null,
-      permissions: {},
-    })),
+  const handleMoveToGroup = useCallback(
+    async (recordIds: string[], targetGroupId: string) => {
+      const prevRecords = records.filter((r) => recordIds.includes(r.id));
+      setRecords((prev) =>
+        prev.map((r) => (recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r)),
+      );
+      try {
+        // Use bulkUpdate to move records to group
+        const response = await fetch("/api/boards/records/bulk-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordIds, targetGroupId }),
+        });
+        const data = await response.json();
+        if (data.error) {
+          setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+          toast.error(data.error);
+        } else {
+          toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`);
+        }
+      } catch {
+        setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+        toast.error("Failed to move records.");
+      }
+    },
+    [records],
   );
 
-  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const handleMoveToStatus = useCallback(
+    async (recordIds: string[], statusName: string) => {
+      const prevRecords = records.filter((r) => recordIds.includes(r.id));
+      setRecords((prev) =>
+        prev.map((r) => (recordIds.includes(r.id) ? { ...r, status: statusName as EntityStatus } : r)),
+      );
+      try {
+        const response = await fetch("/api/boards/records/bulk-update", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ recordIds, cellValues: { status: statusName } }),
+        });
+        const data = await response.json();
+        if (data.error) {
+          setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+          toast.error(data.error);
+        } else {
+          toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} updated.`);
+        }
+      } catch {
+        setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+        toast.error("Failed to update records.");
+      }
+    },
+    [records],
+  );
 
-  // ── Import / Export state ─────────────────────────────
-  const [importOpen, setImportOpen] = useState(false);
-  const [importing, setImporting] = useState(false);
-
-  // Records currently visible on the board (after sort/filter).
-  // Used for the "Export to Excel" feature — it only exports what the
-  // user can see on the board.
-  const visibleRecords = records;
-
-  const exportView = views.find((v) => v.id === activeViewId) ?? views[0];
-  const exportColumnOrder =
-    exportView?.visibleColumnIds.length > 0
-      ? exportView.visibleColumnIds
-      : columns.map((c) => c.id);
-
-  const { exportToExcel } = useExportToExcel({
-    board: data.board,
-    columns,
-    columnOrder: exportColumnOrder,
-    primaryColumnLabel: data.board.primaryColumnLabel ?? "Name",
-    groups,
-    visibleCellValues: cellValues,
-    visibleRecordIds: visibleRecords.map((r) => r.id),
-    records: visibleRecords.map((r) => ({
-      id: r.id,
-      title: r.title,
-      groupId: r.groupId ?? null,
-    })),
-  });
-
-  useEffect(() => {
-    const handleOpenImport = () => setImportOpen(true);
-    const handleExport = () => exportToExcel();
-
-    window.addEventListener("board:open-import", handleOpenImport);
-    window.addEventListener("board:export-excel", handleExport);
-
-    return () => {
-      window.removeEventListener("board:open-import", handleOpenImport);
-      window.removeEventListener("board:export-excel", handleExport);
+const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string, settings?: Record<string, unknown>) => {
+     const newColumn: ColumnDefinition = {
+       id: crypto.randomUUID(),
+      boardId: board.id,
+      key: `col_${Date.now()}`,
+      label: `New ${type}`,
+      type: type as ColumnDefinition["type"],
+      required: false,
+      hidden: false,
+      frozen: false,
+      defaultValue: null,
+      settings: settings ?? {},
+      permissions: { view: ["owner", "editor", "commenter", "viewer"], edit: ["owner", "editor"], configure: ["owner"] },
+      validation: [],
+      version: 1,
+      order: columns.length,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     };
-  }, [exportToExcel]);
+    setColumns((prev) => [...prev, newColumn]);
+    try {
+      await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, [...columns, newColumn]);
+    } catch (err) {
+      toast.error("Failed to create column");
+      console.error(err);
+    }
+  }, [board, columns]);
+
+  const handleColumnDelete = useCallback(async (columnId: string) => {
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(columnId)) {
+      toast.error("Invalid column ID");
+      return;
+    }
+
+    const targetColumn = columns.find((c) => c.id === columnId);
+    if (!targetColumn) return;
+
+    const isNameColumn = targetColumn.key === "name";
+    if (isNameColumn) {
+      toast.error("This column can't be deleted");
+      return;
+    }
+
+    setDeletingColumnId(columnId);
+    const prevColumns = columns;
+
+    // Optimistic UI update — remove the column and its cell values
+    setColumns((prev) => prev.filter((c) => c.id !== columnId));
+    setCellValues((prev) => {
+      const next = new Map(prev);
+      for (const key of next.keys()) {
+        if (key.endsWith(`:${columnId}`)) next.delete(key);
+      }
+      return next;
+    });
+
+    // Clean up view config references in local state
+    setBoardViews((prevViews) =>
+      prevViews.map((view) => {
+        if (!view.visibleColumnIds?.includes(columnId) &&
+            !view.columnWidths?.[columnId] &&
+            !(view.filters || []).some((f) => f.columnId === columnId) &&
+            !(view.sorting || []).some((s) => s.columnId === columnId) &&
+            !(view.grouping || []).some((g) => g.columnId === columnId)) {
+          return view;
+        }
+        const nextFilters = (view.filters || []).filter((f) => f.columnId !== columnId);
+        const nextSorting = (view.sorting || []).filter((s) => s.columnId !== columnId);
+        const nextGrouping = (view.grouping || []).filter((g) => g.columnId !== columnId);
+        const nextVisibleColumnIds = (view.visibleColumnIds || []).filter((id) => id !== columnId);
+        const nextColumnWidths = { ...(view.columnWidths || {}) };
+        delete nextColumnWidths[columnId];
+        // Clear view-type-specific refs to this column. Walks the settings
+        // object generically so it works for every view type (kanban groupBy,
+        // calendar dateColumnId, timeline startDateColumnId, chart valueColumnId,
+        // cardFields, collapsedColumns, ...).
+        const nextSettings = clearColumnRefsFromViewSettings(
+          view.settings ?? ({} as BoardView["settings"]),
+          columnId,
+        );
+        return {
+          ...view,
+          filters: nextFilters,
+          sorting: nextSorting,
+          grouping: nextGrouping,
+          visibleColumnIds: nextVisibleColumnIds,
+          columnWidths: nextColumnWidths,
+          settings: nextSettings,
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    );
+
+    try {
+      const response = await deleteColumn(columnId);
+      if (response.error) {
+        // Restore columns on failure
+        setColumns(prevColumns);
+        toast.error(response.error);
+      } else {
+        toast.success(`Column "${targetColumn.label}" deleted.`);
+      }
+    } catch (err) {
+      setColumns(prevColumns);
+      const message = err instanceof Error ? err.message : "Failed to delete column";
+      toast.error(message);
+    } finally {
+      setDeletingColumnId(null);
+    }
+  }, [columns]);
+
+  const handleColumnRename = useCallback(async (columnId: string, label: string) => {
+    setColumns((prev) => prev.map((c) => (c.id === columnId ? { ...c, label, updatedAt: new Date().toISOString() } : c)));
+    try {
+      await renameColumn(columnId, label);
+      toast.success(`Column renamed to "${label}".`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to rename column";
+      toast.error(message);
+    }
+  }, []);
+
+  const handleColumnDuplicate = useCallback(async (columnId: string) => {
+    try {
+      const response = await duplicateColumn(columnId);
+      if (response.error) {
+        toast.error(response.error);
+      } else if (response.data) {
+        setColumns((prev) => [...prev, response.data!]);
+        toast.success(`Column duplicated.`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to duplicate column";
+      toast.error(message);
+    }
+  }, []);
+
+  const handleColumnDuplicateWithValues = useCallback(async (columnId: string) => {
+    try {
+      const response = await duplicateColumn(columnId);
+      if (response.error) {
+        toast.error(response.error);
+      } else if (response.data) {
+        setColumns((prev) => [...prev, response.data!]);
+        toast.success(`Column and values duplicated.`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to duplicate column";
+      toast.error(message);
+    }
+  }, []);
+
+  const handleColumnToggleHidden = useCallback(async (columnId: string) => {
+    setColumns((prev) =>
+      prev.map((c) => (c.id === columnId ? { ...c, hidden: !c.hidden, updatedAt: new Date().toISOString() } : c)),
+    );
+    try {
+      // Toggle the hidden flag. If the column isn't found locally (e.g. it was
+      // just removed), default to un-hiding it so the toggle is a no-op rather
+      // than a hard error.
+      const currentHidden = columns.find((c) => c.id === columnId)?.hidden ?? false;
+      await hideColumns([columnId], !currentHidden);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update column";
+      toast.error(message);
+    }
+  }, [columns]);
+
+  const handleColumnToggleFrozen = useCallback(async (columnId: string) => {
+    const current = columns.find((c) => c.id === columnId);
+    if (!current) return;
+    setColumns((prev) =>
+      prev.map((c) => (c.id === columnId ? { ...c, frozen: !c.frozen, updatedAt: new Date().toISOString() } : c)),
+    );
+    try {
+      await freezeColumn(columnId, !current.frozen);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to update column";
+      toast.error(message);
+    }
+  }, [columns]);
+
+  const handleColumnChangeType = useCallback(async (columnId: string, newType: ColumnTypeKey) => {
+    try {
+      const response = await changeColumnType(columnId, newType);
+      if (response.error) {
+        toast.error(response.error);
+      } else {
+        toast.success("Column type changed.");
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to change column type";
+      toast.error(message);
+    }
+  }, []);
+
+  const handleColumnUpdateSettings = useCallback(async (columnId: string, patch: Partial<ColumnDefinition>) => {
+    const prevColumns = columns;
+    setColumns((prev) => prev.map((c) => (c.id === columnId ? { ...c, ...patch, updatedAt: new Date().toISOString() } : c)));
+    try {
+      await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, columns.map((c) => (c.id === columnId ? { ...c, ...patch, updatedAt: new Date().toISOString() } : c)));
+    } catch (err) {
+      setColumns(prevColumns);
+      toast.error("Failed to update column");
+      console.error(err);
+    }
+  }, [board, columns]);
+
+  const handleColumnUpdateDescription = useCallback(async (columnId: string, description: string) => {
+    handleColumnUpdateSettings(columnId, { description });
+  }, [handleColumnUpdateSettings]);
+
+  const handleColumnToggleRestrictEditing = useCallback((columnId: string) => {
+    setColumns((prev) =>
+      prev.map((c) => (c.id === columnId ? { ...c, restrictEditing: !c.restrictEditing, updatedAt: new Date().toISOString() } : c)),
+    );
+  }, []);
+
+  const handleColumnToggleRestrictView = useCallback((columnId: string) => {
+    setColumns((prev) =>
+      prev.map((c) => (c.id === columnId ? { ...c, restrictView: !c.restrictView, updatedAt: new Date().toISOString() } : c)),
+    );
+  }, []);
+
+  const handleColumnToggleWrapText = useCallback((columnId: string) => {
+    setColumns((prev) =>
+      prev.map((c) =>
+        c.id === columnId ? { ...c, wrapText: !c.wrapText, updatedAt: new Date().toISOString() } : c,
+      ),
+    );
+  }, []);
+
+  const handleColumnResize = useCallback((columnId: string, newWidth: number) => {
+    setBoardViews((prev) =>
+      prev.map((v) =>
+        v.id === activeViewId
+          ? { ...v, columnWidths: { ...(v.columnWidths || {}), [columnId]: newWidth } }
+          : v,
+      ),
+    );
+  }, [activeViewId]);
+
+  const handleColumnReorder = useCallback(async (activeId: string, overId: string) => {
+    const oldIndex = columns.findIndex((c) => c.id === activeId);
+    const newIndex = columns.findIndex((c) => c.id === overId);
+    if (oldIndex === -1 || newIndex === -1) return;
+    const newColumns = Array.from(columns);
+    const [moved] = newColumns.splice(oldIndex, 1);
+    newColumns.splice(newIndex, 0, moved);
+    newColumns.forEach((c, i) => {
+      c.order = i;
+      c.updatedAt = new Date().toISOString();
+    });
+    setColumns(newColumns);
+    try {
+      await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, newColumns);
+    } catch (err) {
+      toast.error("Failed to reorder columns");
+    }
+  }, [columns, board]);
 
   const handleImportConfirm = useCallback(
     async (args: {
       newColumns: ColumnDefinition[];
       updatedColumns: ColumnDefinition[];
       records: Array<{ title: string; cellValues: Record<string, ColumnValue> }>;
-      skippedRows: Array<{
-        rowIndex: number;
-        reason: string;
-        rawRow: Record<string, ColumnValue>;
-      }>;
+      skippedRows: Array<{ rowIndex: number; reason: string; rawRow: Record<string, ColumnValue> }>;
       columnsToDelete: string[];
       targetGroupId: string | null;
       keepUnmappedColumns: boolean;
-    }): Promise<{
-      createdCount: number;
-      importErrors: Array<{ rowIndex: number; reason: string }>;
-    }> => {
-      setImporting(true);
+      columnPlan: {
+        finalColumns: ColumnDefinition[];
+        columnsToDelete: ColumnDefinition[];
+      };
+    }) => {
+setImporting(true);
       try {
-        const formData = new FormData();
-        formData.set("input", JSON.stringify({
-          organizationId: data.board.organizationId,
-          workspaceId: data.board.workspaceId,
-          boardId: data.board.id,
-          newColumns: args.newColumns,
-          updatedColumns: args.updatedColumns,
-          records: args.records,
-          columnsToDelete: args.columnsToDelete,
-          targetGroupId: args.targetGroupId,
-          keepUnmappedColumns: args.keepUnmappedColumns,
+        // The final column set comes from the explicit column plan built in
+        // the wizard BEFORE any backend writes. It is ordered to match the
+        // source file's left-to-right layout, it contains each imported column
+        // exactly once (mapped defaults keep their id/type/settings, unmapped
+        // defaults are excluded), and the unmapped defaults are listed in
+        // `columnsToDelete` as live ColumnDefinition objects with real backend
+        // ids. Persisting this list (not a concat of updated+new) is what makes
+        // the order survive a page refresh.
+        const finalColumns = args.columnPlan.finalColumns;
+        const columnsToDelete = args.columnPlan.columnsToDelete;
+
+        const newRecords: BoardRecord[] = args.records.map((r, idx) => ({
+          id: crypto.randomUUID(),
+          organizationId: board.organizationId,
+          workspaceId: board.workspaceId,
+          boardId: board.id,
+          groupId: args.targetGroupId,
+          title: r.title,
+          status: "active" as const,
+          version: 1,
+          archivedAt: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         }));
 
-        const response = await importWithColumnCleanup(formData);
-
-        if (response.error || !response.data) {
-          const errorMsg = response.error || "Import failed";
-          toast.error(errorMsg);
-          return { createdCount: 0, importErrors: [{ rowIndex: -1, reason: errorMsg }] };
-        }
-
-        const { createdCount, importErrors, deletedColumns } = response.data;
-
-        // Update local column state: remove deleted columns and append
-        // newly-created ones so the board reflects the post-import layout.
-        if (deletedColumns.length > 0 || args.newColumns.length > 0) {
-          setColumns((prev) => {
-            const next = prev.filter((c) => !deletedColumns.includes(c.id));
-            // Note: new columns will be refetched from the server via real-time or manual refresh
-            // For now, we just remove the deleted ones
-            return next;
+        const newCellValues: Array<[string, ColumnValue]> = [];
+        args.records.forEach((r, recordIdx) => {
+          const recordId = newRecords[recordIdx].id;
+          Object.entries(r.cellValues).forEach(([colId, value]) => {
+            if (value !== null && value !== undefined && value !== "") {
+              newCellValues.push([`${recordId}:${colId}`, value]);
+            }
           });
+        });
+
+        // (a) Create the new columns and (c) set the final order for ALL
+        // remaining columns in one pass. Each column's `order` is assigned
+        // 0..n-1 following the file order from the column plan, so the order
+        // is persisted in the backend (columns.sort_order) and survives a
+        // page refresh. Inserting columns one-by-one is what caused the
+        // random placement before.
+        const orderedFinalColumns = finalColumns.map((col, index) => ({
+          ...col,
+          order: index,
+          updatedAt: new Date().toISOString(),
+        }));
+        await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, orderedFinalColumns);
+
+        if (newRecords.length > 0) {
+          await upsertBoardRecords(board.id, board.organizationId, board.workspaceId, newRecords);
         }
 
-        const skippedCount = importErrors.length;
-        toast.success(
-          `Imported ${createdCount.toLocaleString()} item${createdCount === 1 ? "" : "s"}${skippedCount > 0 ? `, ${skippedCount.toLocaleString()} row${skippedCount === 1 ? "" : "s"} failed` : ""}${deletedColumns.length > 0 ? ` · ${deletedColumns.length} column${deletedColumns.length === 1 ? "" : "s"} removed` : ""}.`,
-        );
+        if (newCellValues.length > 0) {
+          await upsertBoardCellValues(board.id, board.organizationId, board.workspaceId, newCellValues);
+        }
 
-        // TODO: Trigger a board refresh to get the new columns from the server
-        // This could be done via a real-time subscription or a manual refetch
+        // (d) Delete the unmapped default columns. Runs ONCE, after the import
+        // has succeeded. Only the unmapped default columns are removed; mapped
+        // default columns stay and hold the imported data. If the import had
+        // failed above, this block is never reached and nothing is deleted.
+        //
+        // The delete list comes from the column plan built in the wizard, so it
+        // contains live ColumnDefinition objects with real backend ids. A stale
+        // id (non-UUID demo placeholder, an id that no longer exists after the
+        // upsert, or a leftover from a previous run) would make the
+        // deleteBoardColumns endpoint reject the whole batch with
+        // "invalid column id" and leave every unmapped default column behind.
+        if (!importCleanupDoneRef.current) {
+          importCleanupDoneRef.current = true;
+          try {
+            // Log the id AND its type right before each delete call so any
+            // "invalid column id" regression is traceable to a specific id.
+            if (columnsToDelete.length > 0) {
+              console.warn("[EngineBoardPage] import cleanup delete batch", {
+                boardId: board.id,
+                count: columnsToDelete.length,
+                ids: columnsToDelete.map((c) => c.id),
+                idsWithType: columnsToDelete.map((c) => ({ id: c.id, type: typeof c.id, label: c.label })),
+              });
+              await deleteBoardColumns(
+                board.id,
+                columnsToDelete.map((c) => c.id),
+              );
+            }
 
-        return { createdCount, importErrors };
+            // (e) Refetch the board columns from the backend and replace local
+            // state with that result. This guarantees the UI matches the
+            // source of truth (including the new `order` values written above)
+            // rather than trusting the in-memory plan.
+            const freshColumnsResult = await loadBoardColumns(board.id);
+            let freshColumns: ColumnDefinition[] = [];
+            if (freshColumnsResult.error || !freshColumnsResult.data) {
+              throw new Error(freshColumnsResult.error ?? "Failed to load columns");
+            }
+            freshColumns = freshColumnsResult.data;
+
+            setColumns(freshColumns);
+            setBoardViews((prevViews) =>
+              prevViews.map((view) => ({
+                ...view,
+                visibleColumnIds: freshColumns.map((c) => c.id),
+                columnWidths: Object.fromEntries(
+                  Object.entries(view.columnWidths ?? {}).filter(([id]) =>
+                    freshColumns.some((c) => c.id === id),
+                  ),
+                ),
+                filters: (view.filters ?? []).filter((f) =>
+                  freshColumns.some((c) => c.id === f.columnId),
+                ),
+                sorting: (view.sorting ?? []).filter((s) =>
+                  freshColumns.some((c) => c.id === s.columnId),
+                ),
+                grouping: (view.grouping ?? []).filter((g) =>
+                  freshColumns.some((c) => c.id === g.columnId),
+                ),
+              })),
+            );
+          } catch (cleanupErr) {
+            // The import itself succeeded; a cleanup failure must not roll it
+            // back or lose the imported data. Surface it and let the user
+            // retry the cleanup from the board UI.
+            console.error("[EngineBoardPage] import cleanup failed:", cleanupErr);
+            toast.error("Import finished, but some unmapped columns could not be removed. You can delete them manually.");
+          }
+        }
+
+        setRecords((prev) => [...prev, ...newRecords]);
+        setCellValues((prev) => {
+          const next = new Map(prev);
+          newCellValues.forEach(([key, value]) => next.set(key, value));
+          return next;
+        });
+
+        // Update the active view to include all remaining columns and set the column order (via visibleColumnIds)
+        // Use the post-cleanup remaining ids so removed columns stay out of the view.
+        setBoardViews((prevViews) => {
+          const activeView = prevViews.find((v) => v.id === activeViewId);
+          if (!activeView) return prevViews;
+
+          const remainingColumns = finalColumns.filter((c) => !columnsToDelete.some((d) => d.id === c.id));
+          const newVisibleColumnIds = remainingColumns.map((c) => c.id);
+          // Set the visible column ids to the remaining column ids (all columns visible, in the order of finalColumns)
+          const updatedView = {
+            ...activeView,
+            visibleColumnIds: newVisibleColumnIds,
+            updatedAt: new Date().toISOString(),
+          };
+
+          return prevViews.map((v) => (v.id === activeViewId ? updatedView : v));
+        });
+
+        try {
+          const result = await refreshClient360Snapshot();
+          if (!result.success) {
+            console.warn("[EngineBoardPage] Client 360 snapshot refresh failed:", result.error);
+          }
+        } catch (err) {
+          console.warn("[EngineBoardPage] Client 360 snapshot refresh failed:", err);
+        }
+
+        setImportWizardOpen(false);
+        return { createdCount: newRecords.length, importErrors: args.skippedRows.map((s) => ({ rowIndex: s.rowIndex, reason: s.reason })) };
       } catch (err) {
         const message = err instanceof Error ? err.message : "Import failed";
         toast.error(message);
-        return { createdCount: 0, importErrors: [{ rowIndex: -1, reason: message }] };
+        throw err;
       } finally {
         setImporting(false);
       }
-},
-    [data.board],
-  );
-
-  // ── View management ──────────────────────────────────
-
-  const getSettings = useCallback(
-    (viewId: string): ViewSettingsByType => {
-      const view = views.find((v) => v.id === viewId);
-      const viewType = view?.type ?? "table";
-      return {
-        ...getDefaultSettings(viewType),
-        ...view?.settings,
-        ...viewSettings[viewId],
-      } as ViewSettingsByType;
     },
-    [viewSettings, views],
+    [board, columns, activeViewId],
   );
 
-  const handleViewSettingsChange = useCallback(
-    (viewId: string, newSettings: Partial<ViewSettingsByType>) => {
-      const updated = { ...getSettings(viewId), ...newSettings } as ViewSettingsByType;
-      setViewSettings((prev) => ({ ...prev, [viewId]: updated }));
-      setViews((prev) =>
-        prev.map((v) =>
-          v.id === viewId
-            ? { ...v, settings: updated as unknown as BoardView["settings"] }
-            : v,
-        ),
-      );
-      void updateViewSettings(
-        viewId,
-        updated as unknown as Record<string, unknown>,
-      ).catch((err) => {
-        console.error("Failed to persist view settings:", err);
-      });
-    },
-    [getSettings],
-  );
-
-  const handleViewChange = useCallback((viewId: string) => {
-    setActiveViewId(viewId);
+  const handleOpenImport = useCallback(() => {
+    setImportWizardOpen(true);
   }, []);
 
-  const handleCreateView = useCallback(
-    (input: { type: string; name?: string; settings?: Record<string, unknown> }) => {
-      const catalogEntry = viewCatalog.find((v) => v.id === input.type);
-      const newView: BoardView = {
-        id: `view-${data.board.id}-${input.type}-${Date.now()}`,
-        boardId: data.board.id,
-        organizationId: data.board.organizationId,
-        workspaceId: data.board.workspaceId,
-        name: input.name ?? catalogEntry?.label ?? input.type,
-        type: input.type as BoardView["type"],
-        visibility: "shared",
-        filters: [],
-        sorting: [],
-        grouping: [],
-        visibleColumnIds: [],
-        columnWidths: {},
-        rowHeight: 44,
-        settings: {
-          ...getDefaultSettings(input.type),
-          ...(input.settings ?? {}),
-        } as BoardView["settings"],
-        sharedWith: ["owner", "editor", "viewer"],
-        isDefault: views.length === 0,
-        order: views.length,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      setViews((prev) => [...prev, newView]);
-      setActiveViewId(newView.id);
-
-      ensureBoardViews([newView]).catch((err) => {
-        console.error("Failed to persist new view:", err);
-        toast.error("Failed to save new view.");
+  const handleExportExcel = useCallback(async () => {
+    setExporting(true);
+    try {
+      const { buildExportWorkbook } = await import("@/features/boards/engine/lib/import-export");
+      const workbook = buildExportWorkbook({
+        boardName: board.name,
+        columns,
+        columnOrder: columns.map((c) => c.id),
+        primaryColumnLabel: board.primaryColumnLabel ?? "Name",
+        records: records.map((r) => ({
+          record: { id: r.id, title: r.title, groupId: r.groupId ?? null },
+          cellValues: Object.fromEntries(
+            Array.from(cellValues.entries())
+              .filter(([key]) => key.startsWith(`${r.id}:`))
+              .map(([key, value]) => [key.split(":")[1], value]),
+          ),
+        })),
+        groups,
       });
-    },
-    [
-      data.board.id,
-      data.board.organizationId,
-      data.board.workspaceId,
-      views.length,
-      toast,
-    ],
-  );
-
-  const handleRenameView = useCallback(
-    async (viewId: string, name: string) => {
-      const prev = views.find((v) => v.id === viewId);
-      const sourceView = views.find((v) => v.id === viewId);
-
-      setViews((p) => p.map((v) => (v.id === viewId ? { ...v, name } : v)));
-      try {
-        const response = await renameView(viewId, name);
-        if (response.error) {
-          if (prev) setViews((p) => p.map((v) => (v.id === viewId ? prev : v)));
-
-          if (response.error === "views not found" && sourceView) {
-            const syncResult = await ensureBoardViews([sourceView]);
-            if (!syncResult.error) {
-              const retryResponse = await renameView(viewId, name);
-              if (retryResponse.error) {
-                toast.error(retryResponse.error);
-              } else {
-                toast.success("View renamed.");
-              }
-              return;
-            }
-            toast.error(syncResult.error);
-            return;
-          }
-
-          toast.error(response.error);
-        } else {
-          toast.success("View renamed.");
-        }
-      } catch {
-        if (prev) setViews((p) => p.map((v) => (v.id === viewId ? prev : v)));
-        toast.error("Failed to rename view.");
-      }
-    },
-    [views],
-  );
-
-  const handleDuplicateView = useCallback(
-    async (viewId: string) => {
-      const source = views.find((v) => v.id === viewId);
-      if (!source) return;
-
-      const newView: BoardView = {
-        ...source,
-        id: `view-${data.board.id}-${source.type}-${Date.now()}`,
-        name: `${source.type.charAt(0).toUpperCase() + source.type.slice(1)} copy`,
-        isDefault: false,
-        order: views.length,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-
-      const sourceSettings = viewSettings[viewId];
-
-      setViews((prev) => [...prev, newView]);
-      if (sourceSettings) {
-        setViewSettings((prev) => ({ ...prev, [newView.id]: sourceSettings }));
-      }
-      setActiveViewId(newView.id);
-
-      try {
-        const response = await duplicateView(viewId);
-        if (response.error) {
-          setViews((prev) => prev.filter((v) => v.id !== newView.id));
-          if (sourceSettings) {
-            setViewSettings((prev) => {
-              const next = { ...prev };
-              delete next[newView.id];
-              return next;
-            });
-          }
-          setActiveViewId(viewId);
-          toast.error(response.error);
-        } else if (response.data) {
-          setViews((prev) => prev.map((v) => (v.id === newView.id ? response.data! : v)));
-          setViewSettings((prev) => {
-            const next = { ...prev };
-            if (sourceSettings) {
-              next[response.data!.id] = sourceSettings;
-            }
-            delete next[newView.id];
-            return next;
-          });
-          setActiveViewId(response.data.id);
-          toast.success("View duplicated.");
-        }
-      } catch {
-        setViews((prev) => prev.filter((v) => v.id !== newView.id));
-        if (sourceSettings) {
-          setViewSettings((prev) => {
-            const next = { ...prev };
-            delete next[newView.id];
-            return next;
-          });
-        }
-        setActiveViewId(viewId);
-        toast.error("Failed to duplicate view.");
-      }
-    },
-    [views, data.board.id, viewSettings],
-  );
-
-  const handleDeleteView = useCallback(
-    async (viewId: string) => {
-      if (views.length <= 1) {
-        toast.error(
-          "Cannot delete the last view on a board. A board must have at least one view.",
-        );
-        return;
-      }
-
-      const prevViews = views;
-      const prevSettings = viewSettings[viewId];
-      const deletedView = views.find((v) => v.id === viewId);
-      const remainingViews = views.filter((v) => v.id !== viewId);
-
-      setViews(remainingViews);
-      setViewSettings((prev) => {
-        const next = { ...prev };
-        delete next[viewId];
-        return next;
-      });
-      if (activeViewId === viewId) {
-        setActiveViewId(remainingViews[0]?.id ?? "");
-      }
-
-      try {
-        const response = await deleteView(viewId);
-        if (response.error) {
-          setViews(prevViews);
-          if (prevSettings) {
-            setViewSettings((prev) => ({ ...prev, [viewId]: prevSettings }));
-          }
-          if (deletedView && activeViewId === viewId) {
-            setActiveViewId(deletedView.id);
-          }
-
-          if (
-            (response.error === "views not found" ||
-              response.error === "View not found") &&
-            deletedView
-          ) {
-            const syncResult = await ensureBoardViews([deletedView]);
-            if (!syncResult.error) {
-              const retryResponse = await deleteView(viewId);
-              if (retryResponse.error) {
-                toast.error(retryResponse.error);
-              } else {
-                toast.success("View deleted.");
-              }
-              return;
-            }
-          }
-
-          toast.error(response.error);
-        } else {
-          toast.success("View deleted.");
-        }
-      } catch {
-        setViews(prevViews);
-        if (prevSettings) {
-          setViewSettings((prev) => ({ ...prev, [viewId]: prevSettings }));
-        }
-        if (deletedView && activeViewId === viewId) {
-          setActiveViewId(deletedView.id);
-        }
-        toast.error("Failed to delete view.");
-      }
-    },
-    [views, activeViewId, viewSettings],
-  );
-
-  const handleColumnResize = useCallback((columnId: string, newWidth: number) => {
-    setColumnWidths((prev) => ({ ...prev, [columnId]: newWidth }));
-  }, []);
-
-  const handleMoveToGroup = useCallback(
-    async (recordIds: string[], targetGroupId: string) => {
-      setRecords((prev) =>
-        prev.map((r) =>
-          recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r,
-        ),
-      );
-      for (const recordId of recordIds) {
-        await moveRecord(recordId, targetGroupId);
-      }
-      toast.success(
-        `${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`,
-      );
-    },
-    [],
-  );
-
-  const handleMoveToStatus = useCallback(
-    async (recordIds: string[], statusName: string) => {
-      let targetGroupId = groups.find((g) => g.name === statusName)?.id ?? null;
-
-      if (!targetGroupId) {
-        const newGroupId = await createGroupAction({
-          boardId: data.board.id,
-          organizationId: data.board.organizationId,
-          workspaceId: data.board.workspaceId,
-          name: statusName,
-        });
-        if (!newGroupId) {
-          toast.error(`Failed to create "${statusName}" group.`);
-          return;
-        }
-        targetGroupId = newGroupId;
-      }
-
-      setRecords((prev) =>
-        prev.map((r) =>
-          recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r,
-        ),
-      );
-      for (const recordId of recordIds) {
-        await moveRecord(recordId, targetGroupId);
-      }
-      toast.success(
-        `${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved to ${statusName}.`,
-      );
-    },
-    [
-      groups,
-      createGroupAction,
-      data.board.id,
-      data.board.organizationId,
-      data.board.workspaceId,
-    ],
-  );
-
-  const handleMoveGroupToBoard = useCallback(
-    (groupId: string, _targetBoardId: string) => {
-      deleteGroupAction(groupId);
-      toast.success("Group moved to another board.");
-    },
-    [deleteGroupAction],
-  );
-
-  const handleMoveGroupToTop = useCallback(
-    (groupId: string) => {
-      const ordered = groups.map((g) => ({ ...g })).sort((a, b) => a.order - b.order);
-      const idx = ordered.findIndex((g) => g.id === groupId);
-      if (idx <= 0) return;
-      const [moved] = ordered.splice(idx, 1);
-      ordered.unshift(moved);
-      reorderGroupsAction(
-        data.board.id,
-        ordered.map((g, i) => ({ id: g.id, order: i })),
-      );
-      toast.success("Group moved to top.");
-    },
-    [groups, reorderGroupsAction, data.board.id],
-  );
-
-  // ── Render the active view ──────────────────────────
-  const activeView = views.find((v) => v.id === activeViewId) ?? views[0];
-
-  console.warn(`[EngineBoardPage] Active view:`, activeView ? { id: activeView.id, type: activeView.type, name: activeView.name } : 'none');
-
-  const renderActiveView = () => {
-    if (!activeView) {
-      console.warn(`[EngineBoardPage] No active view found, returning fallback`);
-      return (
-        <div className="flex items-center justify-center py-20 text-muted-foreground">
-          <div className="text-center">
-            <p className="font-medium">No view available</p>
-            <p className="mt-1 text-xs">This board has no views configured.</p>
-          </div>
-        </div>
-      );
+      const arrayBuffer = workbookToArrayBuffer(workbook);
+      const blob = new Blob([arrayBuffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${board.name}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Export downloaded");
+    } catch (err) {
+      toast.error("Export failed");
+      console.error(err);
+    } finally {
+      setExporting(false);
     }
+  }, [board, columns, records, cellValues, groups]);
 
-    const viewProps = {
-      board: data.board,
-      view: activeView,
+   useEffect(() => {
+     const handleImportEvent = () => handleOpenImport();
+     const handleExportEvent = () => handleExportExcel();
+     window.addEventListener("board:open-import", handleImportEvent);
+     window.addEventListener("board:export-excel", handleExportEvent);
+     return () => {
+       window.removeEventListener("board:open-import", handleImportEvent);
+       window.removeEventListener("board:export-excel", handleExportEvent);
+     };
+}, [handleOpenImport, handleExportExcel]);
+
+   const boardData = useMemo(
+    () => ({
+      board,
       columns,
+      groups,
       records,
       cellValues,
-      groups,
-      settings: getSettings(activeView.id),
-      onCellChange: handleCellChange,
-      onSettingsChange: (newSettings: Partial<ViewSettingsByType>) =>
-        handleViewSettingsChange(activeView.id, newSettings),
-      isActive: true,
-    };
-
-    switch (activeView.type) {
-      case "calendar":
-        return <CalendarView {...viewProps} />;
-      case "kanban":
-        return <KanbanView {...viewProps} />;
-      case "table":
-        return (
-          <TableView
-            board={data.board}
-            columns={columns}
-            records={records}
-            cellValues={cellValues}
-            groups={groups}
-            columnWidths={columnWidths}
-            onColumnResize={handleColumnResize}
-            onCellChange={handleCellChange}
-            onColumnAdd={handleColumnAdd}
-            onColumnRename={handleColumnRename}
-            onPrimaryColumnRename={handlePrimaryColumnRename}
-            primaryColumnLabel={data.board.primaryColumnLabel ?? "Name"}
-            onColumnDelete={handleColumnDelete}
-            onColumnChangeType={handleColumnChangeType}
-            onColumnReorder={handleColumnReorder}
-            onColumnUpdateDescription={handleColumnUpdateDescription}
-            onUpdateColumnSettings={handleColumnUpdateSettings}
-            onColumnDuplicate={handleColumnDuplicateOnly}
-            onColumnDuplicateWithValues={handleColumnDuplicateWithValues}
-            onNewItem={handleNewItem}
-            onRecordTitleChange={handleRecordTitleChange}
-            onBulkDelete={(ids) =>
-              setRecords((prev) => prev.filter((r) => !ids.includes(r.id)))
-            }
-            onRowDelete={(id) => setRecords((prev) => prev.filter((r) => r.id !== id))}
-            onRowDuplicate={(id) => {
-              const record = records.find((r) => r.id === id);
-              if (record) {
-                const newRecord = {
-                  id: `record-${Date.now()}`,
-                  organizationId: data.board.organizationId,
-                  workspaceId: data.board.workspaceId,
-                  boardId: data.board.id,
-                  groupId: record.groupId,
-                  title: `${record.title} (copy)`,
-                  status: "active" as const,
-                  version: records.length + 1,
-                  archivedAt: null,
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString(),
-                };
-                setRecords((prev) => [...prev, newRecord]);
-              }
-            }}
-            onMoveToGroup={handleMoveToGroup}
-            onMoveToStatus={handleMoveToStatus}
-            onMoveGroupToBoard={handleMoveGroupToBoard}
-            onMoveGroupToTop={handleMoveGroupToTop}
-            onRenameGroup={renameGroupAction}
-            onDeleteGroup={deleteGroupAction}
-            onUpdateGroupColor={updateGroupColorAction}
-            onUpdateGroupStatusOptions={updateGroupStatusOptionsAction}
-            onAddGroup={(name) =>
-              createGroupAction({
-                boardId: data.board.id,
-                organizationId: data.board.organizationId,
-                workspaceId: data.board.workspaceId,
-                name,
-                statusOptions: [],
-              })
-            }
-            onScrollBottom={loadMoreRecords}
-            loadingMore={loadingMoreRecords}
-            hasMore={hasMoreRecords}
-            recordTotal={recordTotal}
-          />
-        );
-      case "dashboard":
-        return <DashboardView {...viewProps} />;
-      // ── Planned but not yet built views ──
-      default:
-        return (
-          <div className="border-border bg-card flex min-h-[400px] flex-col items-center justify-center rounded-xl border border-dashed p-12">
-            <div className="text-center">
-              <p className="text-foreground text-sm font-medium">
-                {activeView.type.charAt(0).toUpperCase() + activeView.type.slice(1)} view
-              </p>
-              <p className="text-muted-foreground mt-1 text-xs">
-                This view type is coming soon. Stay tuned!
-              </p>
-            </div>
-          </div>
-        );
-    }
-  };
+      totalRecords: records.length,
+      filteredRecordCount: records.length,
+      page: 1,
+      pageSize: records.length,
+      totalPages: 1,
+    }),
+    [board, columns, groups, records, cellValues],
+  );
 
   return (
-    <RenderErrorBoundary>
-      <MirrorDataProvider boardId={data.board.id} cellValues={cellValues}>
-        <BoardLayout
-          boardId={data.board.id}
-          board={data.board}
-          description={data.description}
-          onNewItem={handleNewItem}
-          onImport={() => setImportOpen(true)}
-          onExport={exportToExcel}
-          importing={importing}
-          views={views}
-          activeViewId={activeViewId}
-          onViewChange={handleViewChange}
-          onCreateView={handleCreateView}
-          onRenameView={handleRenameView}
-          onDuplicateView={handleDuplicateView}
-          onDeleteView={handleDeleteView}
-          columns={columns}
-        >
-          <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            {renderActiveView()}
-          </div>
-
-          <MirrorSettingsModal
-            open={mirrorModalOpen}
-            onOpenChange={setMirrorModalOpen}
-            boardId={data.board.id}
-            columns={columns}
-            sourceConnectColumnId={mirrorSourceColumnId}
-            onConfirm={handleMirrorConfirm}
+    <>
+      <BoardLayout
+        boardId={board.id}
+        board={board}
+        description={description}
+        onNewItem={() => {}}
+        onImport={handleOpenImport}
+        onExport={handleExportExcel}
+        importing={importing}
+        exporting={exporting}
+        views={views}
+        activeViewId={activeViewId}
+        onViewChange={setActiveViewId}
+        columns={columns}
+      >
+          <ViewEngine
+            boardData={boardData}
+            view={boardViews.find((v) => v.id === activeViewId) ?? boardViews[0]}
+            views={boardViews}
+            onViewChange={setActiveViewId}
+            onCellChange={handleCellChange}
+            columnOps={{
+              onColumnRename: handleColumnRename,
+              onColumnDuplicate: handleColumnDuplicate,
+              onColumnDuplicateWithValues: handleColumnDuplicateWithValues,
+              onColumnToggleHidden: handleColumnToggleHidden,
+              onColumnToggleFrozen: handleColumnToggleFrozen,
+              onColumnChangeType: handleColumnChangeType,
+              onColumnDelete: handleColumnDelete,
+              deletingColumnId,
+              onColumnAdd: handleColumnAdd,
+              onUpdateColumnSettings: handleColumnUpdateSettings,
+              onColumnUpdateDescription: handleColumnUpdateDescription,
+              onColumnToggleRestrictEditing: handleColumnToggleRestrictEditing,
+              onColumnToggleRestrictView: handleColumnToggleRestrictView,
+               onColumnToggleWrapText: handleColumnToggleWrapText,
+               onColumnResize: handleColumnResize,
+               onColumnReorder: handleColumnReorder,
+               columnWidths: boardViews.find((v) => v.id === activeViewId)?.columnWidths ?? {},
+              primaryColumnLabel: board.primaryColumnLabel ?? "Name",
+              onPrimaryColumnRename: (label: string) => {
+                try {
+                  updateBoardPrimaryLabel(board.id, label);
+                  toast.success("Column label updated.");
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : "Failed to update label";
+                  toast.error(message);
+                }
+              },
+            }}
+            onBulkArchive={handleBulkArchive}
+            onBulkDelete={handleBulkDelete}
+            onRowDelete={handleRowDelete}
+            onRowDuplicate={handleRowDuplicate}
+            onMoveToGroup={handleMoveToGroup}
+            onMoveToStatus={handleMoveToStatus}
+            bulkArchiveLoading={bulkArchiveLoading}
+            bulkDeleteLoading={bulkDeleteLoading}
           />
-        </BoardLayout>
+      </BoardLayout>
 
-        <ImportWizard
-          open={importOpen}
-          onOpenChange={setImportOpen}
-          boardName={data.board.name}
-          columns={columns}
-          groups={groups}
-          onConfirm={handleImportConfirm}
-        />
-      </MirrorDataProvider>
-    </RenderErrorBoundary>
+      <BoardSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        boardId={board.id}
+        workspaceId={board.workspaceId}
+        boardName={board.name}
+        description={description}
+      />
+
+      <ImportWizard
+        open={importWizardOpen}
+        onOpenChange={(open) => {
+          // Reset the per-import cleanup guard when the wizard closes so a
+          // later import can run its cleanup again.
+          if (!open) importCleanupDoneRef.current = false;
+          setImportWizardOpen(open);
+        }}
+        boardName={board.name}
+        columns={columns}
+        groups={groups}
+        onConfirm={handleImportConfirm}
+      />
+    </>
   );
 }

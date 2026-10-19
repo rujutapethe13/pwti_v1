@@ -6,8 +6,17 @@ import { boardTemplates } from "../registry";
 
 import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, Group, BoardTemplate } from "../types";
 
-function generateId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+/**
+ * Every board/group/column/view/record id must be a real UUID. The
+ * `columns` / `records` / `cell_values` tables accept `text` primary keys,
+ * so a non-UUID id like `col-1727000000000-abc1234` inserts fine — but the
+ * EngineBoardPage mount effect strips any id that fails a UUID regex,
+ * which silently deleted every default column on a freshly created board.
+ *
+ * Use crypto.randomUUID() everywhere; never a timestamp-prefixed id.
+ */
+function generateId(): string {
+  return crypto.randomUUID();
 }
 
 function generateSlug(name: string): string {
@@ -134,7 +143,7 @@ export async function createBoardWithDefaults(
     throw new Error(msg);
   }
 
-  const boardId = generateId("board");
+  const boardId = generateId();
   const slug = generateSlug(name);
   const now = new Date().toISOString();
 
@@ -157,7 +166,7 @@ export async function createBoardWithDefaults(
   // Phase 1: Single default group
   const groups: Group[] = [
     {
-      id: generateId("group"),
+      id: generateId(),
       organizationId,
       workspaceId,
       boardId,
@@ -175,7 +184,7 @@ export async function createBoardWithDefaults(
     // Item/Client Name (primary text column) - this is handled specially in TableView as the record title
     // We still create a "name" column for the primary text field
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "name",
       label: "Item Name",
@@ -198,7 +207,7 @@ export async function createBoardWithDefaults(
     },
     // Job Type (dropdown)
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "job_type",
       label: "Job Type",
@@ -228,7 +237,7 @@ export async function createBoardWithDefaults(
     },
     // Status (status-type with Not Started/Working on it/Done - grey/orange/green)
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "status",
       label: "Status",
@@ -257,7 +266,7 @@ export async function createBoardWithDefaults(
     },
     // Date (date picker)
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "date",
       label: "Date",
@@ -280,7 +289,7 @@ export async function createBoardWithDefaults(
     },
     // Assigned To (person)
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "assigned_to",
       label: "Assigned To",
@@ -303,7 +312,7 @@ export async function createBoardWithDefaults(
     },
   ];
 
-  const viewId = generateId("view");
+  const viewId = generateId();
 
   const { error: boardError } = await supabase.from("boards").insert({
     id: board.id,
@@ -443,7 +452,7 @@ export async function createBoardFromTemplate(
     throw new Error(`Template "${templateId}" not found`);
   }
 
-  const boardId = generateId("board");
+  const boardId = generateId();
   const slug = generateSlug(name);
   const now = new Date().toISOString();
 
@@ -488,7 +497,7 @@ export async function createBoardFromTemplate(
 
   for (let i = 0; i < template.seed.groups.length; i++) {
     const g = template.seed.groups[i];
-    const groupId = generateId("group");
+    const groupId = generateId();
     if (g.name) groupIdMap.set(g.name, groupId);
     const group: Group = {
       id: groupId,
@@ -526,7 +535,7 @@ export async function createBoardFromTemplate(
   const columns: ColumnDefinition[] = [];
   for (let i = 0; i < template.seed.columns.length; i++) {
     const c = template.seed.columns[i];
-    const columnId = generateId("col");
+    const columnId = generateId();
     const column: ColumnDefinition = {
       id: columnId,
       boardId,
@@ -579,7 +588,7 @@ export async function createBoardFromTemplate(
     if (columnsError) throw toAppError(columnsError);
   }
 
-  const viewId = generateId("view");
+  const viewId = generateId();
   const defaultView = template.seed.views[0];
   const { error: viewError } = await supabase.from("views").insert({
     id: viewId,
@@ -646,7 +655,7 @@ export async function createMultiLevelBoard(
     throw new Error(msg);
   }
 
-  const boardId = generateId("board");
+  const boardId = generateId();
   const slug = generateSlug(name);
   const now = new Date().toISOString();
 
@@ -698,7 +707,7 @@ export async function createMultiLevelBoard(
 
   for (let i = 0; i < topLevelGroups.length; i++) {
     const g = topLevelGroups[i];
-    const groupId = generateId("group");
+    const groupId = generateId();
     groupIdMap.set(g.name, groupId);
     const group: Group = {
       id: groupId,
@@ -750,7 +759,7 @@ export async function createMultiLevelBoard(
     const parentGroupId = groupIdMap.get(sg.parent);
     if (!parentGroupId) continue;
 
-    const subGroupId = generateId("group");
+    const subGroupId = generateId();
     const subGroup: Group = {
       id: subGroupId,
       organizationId,
@@ -786,7 +795,7 @@ export async function createMultiLevelBoard(
 
   const columns: ColumnDefinition[] = [
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "title",
       label: "Title",
@@ -808,7 +817,7 @@ export async function createMultiLevelBoard(
       updatedAt: now,
     },
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "status",
       label: "Status",
@@ -832,7 +841,7 @@ export async function createMultiLevelBoard(
       updatedAt: now,
     },
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "priority",
       label: "Priority",
@@ -854,7 +863,7 @@ export async function createMultiLevelBoard(
       updatedAt: now,
     },
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "assigned_to",
       label: "Assigned To",
@@ -876,7 +885,7 @@ export async function createMultiLevelBoard(
       updatedAt: now,
     },
     {
-      id: generateId("col"),
+      id: generateId(),
       boardId,
       key: "due_date",
       label: "Due Date",
@@ -924,7 +933,7 @@ export async function createMultiLevelBoard(
   );
   if (columnsError) throw toAppError(columnsError);
 
-  const viewId = generateId("view");
+  const viewId = generateId();
   const { error: viewError } = await supabase.from("views").insert({
     id: viewId,
     organization_id: organizationId,
@@ -988,7 +997,7 @@ export async function createDashboardBoard(
     throw new Error(msg);
   }
 
-  const boardId = generateId("board");
+  const boardId = generateId();
   const slug = generateSlug(name);
   const now = new Date().toISOString();
 
@@ -1008,7 +1017,7 @@ export async function createDashboardBoard(
     updatedAt: now,
   };
 
-  const viewId = generateId("view");
+  const viewId = generateId();
 
   const { error: boardError } = await supabase.from("boards").insert({
     id: board.id,

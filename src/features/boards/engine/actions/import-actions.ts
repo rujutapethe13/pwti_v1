@@ -7,24 +7,24 @@
  * - Creates new columns
  * - Imports records and cell values
  * - Soft-deletes unmapped columns
+ * - Updates default view's visible_column_ids
  * - Cleans up dependents
  * - Audit logging
  */
 
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/server";
 import type { ApiResponse } from "@/types";
 import type { ColumnDefinition, ColumnValue } from "../types";
 import { ColumnRepository } from "../repository/column-repository";
-import { CellRepository } from "../repository/cell-repository";
-import { RecordRepository } from "../repository/record-repository";
-import { ColumnService } from "../services/column-service";
+import { ViewRepository } from "../repository/view-repository";
+import { metadataCache } from "../cache/metadata-cache";
 import { eventBus } from "../events/event-bus";
 import type { DomainEventPayload } from "../events/event-types";
 
 const columnRepo = new ColumnRepository();
-const cellRepo = new CellRepository();
-const recordRepo = new RecordRepository();
+const viewRepo = new ViewRepository();
 
 interface ImportRecordInput {
   title: string;

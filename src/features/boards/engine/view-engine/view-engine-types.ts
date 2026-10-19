@@ -17,11 +17,42 @@ import type {
   BoardView,
   ColumnDefinition,
   ColumnValue,
+  Group,
+  ColumnTypeKey,
   ViewSettingsByType,
 } from "../types";
 import type { BoardQueryResult } from "../query/query-service";
 
 // ── View Renderer Props ────────────────────────────────────
+
+export interface ColumnOperations {
+  onColumnRename?: (columnId: string, label: string) => void;
+  onColumnDuplicate?: (columnId: string) => void;
+  onColumnDuplicateWithValues?: (columnId: string) => void;
+  onColumnToggleHidden?: (columnId: string) => void;
+  onColumnToggleFrozen?: (columnId: string) => void;
+  onColumnChangeType?: (columnId: string, type: ColumnTypeKey) => void;
+  onColumnDelete?: (columnId: string) => void;
+  onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
+  /** ID of the column currently being deleted (for loading state in headers) */
+  deletingColumnId?: string | null;
+  onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
+  onColumnUpdateDescription?: (columnId: string, description: string) => void;
+  onColumnToggleRestrictEditing?: (columnId: string) => void;
+  onColumnToggleRestrictView?: (columnId: string) => void;
+  onColumnToggleWrapText?: (columnId: string) => void;
+  columnWidths?: Record<string, number>;
+  onColumnResize?: (columnId: string, newWidth: number) => void;
+  onColumnReorder?: (activeId: string, overId: string, columns: ColumnDefinition[]) => void;
+  /** Primary (record-title) column label */
+  primaryColumnLabel?: string;
+  /** Rename the primary (record-title) column */
+  onPrimaryColumnRename?: (label: string) => void;
+  /** Sort */
+  sortColumnId?: string;
+  sortDirection?: "asc" | "desc";
+  onSort?: (columnId: string, direction: "asc" | "desc") => void;
+}
 
 export interface ViewRendererProps {
   /** The board being rendered */
@@ -53,6 +84,21 @@ export interface ViewRendererProps {
 
   /** Whether this is the active view (controls lazy-loading) */
   isActive?: boolean;
+
+  /** Column operations */
+  columnOps?: ColumnOperations;
+
+  /** Bulk record operations */
+  onBulkArchive?: (recordIds: string[]) => void;
+  onBulkDelete?: (recordIds: string[]) => void;
+  onRowDelete?: (recordId: string) => void;
+  onRowDuplicate?: (recordId: string) => void;
+  onMoveToGroup?: (recordIds: string[], targetGroupId: string) => void;
+  onMoveToStatus?: (recordIds: string[], statusName: string) => void;
+
+  /** Loading states for bulk operations */
+  bulkArchiveLoading?: boolean;
+  bulkDeleteLoading?: boolean;
 }
 
 // ── View Renderer Component ────────────────────────────────
@@ -97,6 +143,21 @@ export interface ViewEngineProps {
 
   /** Callback when a cell value changes */
   onCellChange?: (args: { recordId: string; columnId: string; value: ColumnValue }) => void;
+
+  /** Column operations passed through to the active view renderer */
+  columnOps?: ColumnOperations;
+
+  /** Bulk record operations */
+  onBulkArchive?: (recordIds: string[]) => void;
+  onBulkDelete?: (recordIds: string[]) => void;
+  onRowDelete?: (recordId: string) => void;
+  onRowDuplicate?: (recordId: string) => void;
+  onMoveToGroup?: (recordIds: string[], targetGroupId: string) => void;
+  onMoveToStatus?: (recordIds: string[], statusName: string) => void;
+
+  /** Loading states for bulk operations */
+  bulkArchiveLoading?: boolean;
+  bulkDeleteLoading?: boolean;
 }
 
 // ── Default Settings Factory ───────────────────────────────

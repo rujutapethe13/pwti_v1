@@ -43,7 +43,16 @@ export {
   freezeColumn,
   changeColumnType,
   updateColumnOptions,
+  deleteBoardColumns,
+  loadBoardColumns,
 } from "./column-actions";
+
+export {
+  upsertBoard,
+  upsertBoardColumns,
+  upsertBoardRecords,
+  upsertBoardCellValues,
+} from "./bulk-upsert-actions";
 
 export {
   createRecord,

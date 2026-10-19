@@ -137,6 +137,29 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     return { data: null, error: null, status: 200 };
   }
 
+  async batchSoftDelete(
+    columnIds: string[],
+    options?: RepositoryOptions,
+  ): Promise<ApiResponse<null>> {
+    const client = await this.getClient(options);
+    const now = new Date().toISOString();
+
+    const updates = columnIds.map((id) => ({
+      id,
+      deleted_at: now,
+      status: "archived",
+      updated_at: now,
+    }));
+
+    const { error } = await client.from(this.tableName).upsert(updates);
+
+    if (error) {
+      return { data: null, error: error.message, status: 500 };
+    }
+
+    return { data: null, error: null, status: 200 };
+  }
+
   async softDelete(
     columnId: string,
     options?: RepositoryOptions,

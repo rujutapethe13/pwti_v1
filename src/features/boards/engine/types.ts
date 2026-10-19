@@ -232,6 +232,13 @@ export interface BoardDefinition {
   primaryColumnLabel?: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * Soft-delete timestamp. Set by delete_board() when the non-permanent path
+   * runs (status = 'archived', archived_at = now()). NULL means the board has
+   * never been soft-deleted. Mirrors records.archived_at and
+   * workspaces.deleted_at.
+   */
+  archivedAt?: string | null;
 }
 
 export interface Group {

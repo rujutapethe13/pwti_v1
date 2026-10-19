@@ -118,26 +118,28 @@ export function isProtectedImportColumn(column: ColumnDefinition): boolean {
   const label = column.label.trim().toLowerCase();
   const key = column.key.trim().toLowerCase();
   return (
-    // Title/name column (first column, usually the primary identifier)
+    // The record-title "Name" column is structural — it is rendered as the
+    // sticky first column by the table view and is NOT a regular board column.
+    // It must never be deleted by an import. Every other default column
+    // (Status, Assigned To, Date, Job Type, etc.) is fair game: if it is not
+    // mapped to an imported column it is removed.
+    //
+    // order === 0 is the record-title position; combined with the name/key
+    // checks below it guards against a non-name column accidentally sitting at
+    // order 0 after a prior import.
     column.order === 0 ||
-    // System columns
-    key === "id" ||
-    key === "created_at" ||
-    key === "updated_at" ||
-    key === "archived_at" ||
-    key === "status" ||
-    key === "assigned_to" ||
-    key === "group" ||
-    // Common label variations
     label === "name" ||
     label === "title" ||
     label === "item name" ||
     label === "record name" ||
-    label === "status" ||
-    label === "assigned to" ||
-    label === "assignee" ||
-    label === "group" ||
-    // Flags
+    key === "name" ||
+    key === "title" ||
+    // System columns that are not part of the board's user-facing column set.
+    key === "id" ||
+    key === "created_at" ||
+    key === "updated_at" ||
+    key === "archived_at" ||
+    // Explicit system/locked flags.
     (column.settings?.is_system as boolean) === true ||
     (column.settings?.is_locked as boolean) === true
   );
@@ -591,8 +593,9 @@ export function buildNewColumnsFromMappings(
       slugSuffix += 1;
     }
     usedSlugs.add(slugifiedKey);
+    const idSlug = slugifiedKey;
     const column: ColumnDefinition = {
-      id: `col-import-${slugifiedKey}`,
+      id: crypto.randomUUID(),
       boardId,
       key: slugifiedKey,
       label: m.action.label.trim(),
@@ -1453,6 +1456,146 @@ export function buildExportWorkbook(input: ExportInput): XLSX.WorkBook {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, input.boardName.slice(0, 31) || "Board");
   return workbook;
+}
+
+/**
+ * A single entry in the post-import column plan. One entry is produced for
+ * every imported file column, in file order, so the final table matches the
+ * source file's left-to-right layout exactly.
+ */
+export interface ImportColumnPlanEntry {
+  /** 0-based index of the column in the source file. */
+  fileColumnIndex: number;
+  /** Header text from the source file. */
+  fileColumn: string;
+  /**
+   * The column that will hold this data after the import.
+   * - An existing board column id when the mapping is "existing".
+   * - The new column's id when the mapping is "create".
+   * - null when the mapping is "skip" (the column is dropped).
+   */
+  targetColumnId: string | null;
+  /** Final position (0-based) in the board's column order. null when skipped. */
+  position: number | null;
+  /** The ColumnDefinition that should exist at this position (existing or newly created). */
+  column: ColumnDefinition | null;
+}
+
+/**
+ * Build the explicit post-import column plan from the import mapping.
+ *
+ * This is the single source of truth for what the board looks like after a
+ * successful import. It is computed up-front, before any backend writes, so
+ * that:
+ *
+ * 1. Every imported column appears in EXACTLY the same left-to-right order as
+ *    in the source file (the "Name"/record-title column stays first).
+ * 2. A column mapped to an existing default column keeps that column's id,
+ *    type and settings — no second column is created for it.
+ * 3. An imported column not mapped to a default column is created as a new
+ *    column at its file-order position.
+ * 4. Every default column that was NOT mapped to any imported column is
+ *    slated for deletion.
+ *
+ * The returned `columnsToDelete` contains real, live ColumnDefinition objects
+ * (not stale ids captured before the wizard opened) so the delete call can be
+ * made with backend ids that still exist.
+ *
+ * @param existingColumns  The board's current columns (defaults + any prior imports).
+ * @param mappings        The user's column mappings, in file order.
+ * @param newColumns      The new columns the wizard has already built for "create" mappings.
+ */
+export function buildImportColumnPlan(
+  existingColumns: ColumnDefinition[],
+  mappings: ColumnMapping[],
+  newColumns: ColumnDefinition[],
+): {
+  plan: ImportColumnPlanEntry[];
+  columnsToDelete: ColumnDefinition[];
+  finalColumns: ColumnDefinition[];
+} {
+  // Index the new columns by their source file column so we can pair each
+  // "create" mapping with the ColumnDefinition the wizard built for it.
+  const newByFileColumn = new Map<string, ColumnDefinition>();
+  for (const nc of newColumns) {
+    // The wizard builds new columns in mapping order; pair them back to the
+    // mapping by label so the plan is stable even if the array order shifts.
+    newByFileColumn.set(nc.label.trim().toLowerCase(), nc);
+  }
+
+  const existingById = new Map<string, ColumnDefinition>();
+  for (const c of existingColumns) existingById.set(c.id, c);
+
+  // Which existing columns are referenced by at least one "existing" mapping.
+  const mappedExistingIds = new Set<string>();
+  for (const m of mappings) {
+    if (m.action.kind === "existing") mappedExistingIds.add(m.action.columnId);
+  }
+
+  const plan: ImportColumnPlanEntry[] = [];
+  let position = 0;
+
+  for (const m of mappings) {
+    if (m.action.kind === "skip") {
+      plan.push({
+        fileColumnIndex: plan.length,
+        fileColumn: m.fileColumn,
+        targetColumnId: null,
+        position: null,
+        column: null,
+      });
+      continue;
+    }
+
+    let column: ColumnDefinition | undefined;
+    if (m.action.kind === "existing") {
+      column = existingById.get(m.action.columnId);
+    } else {
+      column = newByFileColumn.get(m.action.label.trim().toLowerCase());
+    }
+
+    if (!column) {
+      // Mapping points at a column that doesn't exist (e.g. a stale id).
+      // Skip it rather than inventing a position.
+      plan.push({
+        fileColumnIndex: plan.length,
+        fileColumn: m.fileColumn,
+        targetColumnId: null,
+        position: null,
+        column: null,
+      });
+      continue;
+    }
+
+    plan.push({
+      fileColumnIndex: plan.length,
+      fileColumn: m.fileColumn,
+      targetColumnId: column.id,
+      position,
+      column,
+    });
+    position += 1;
+  }
+
+  // Final column list = the plan's columns in file order. Each column's
+  // `order` is assigned 0..n-1 following the file order so the order is
+  // persisted in the backend (columns.sort_order) and survives a page
+  // refresh. The record-title "Name" column is rendered separately by the
+  // table view and is NOT part of this list.
+  const finalColumns = plan
+    .filter((entry) => entry.column !== null)
+    .map((entry, index) => {
+      const col = entry.column!;
+      return { ...col, order: index };
+    });
+
+  // Unmapped default columns = every existing column that is neither mapped
+  // to an imported column nor protected (system / record-title / locked).
+  const columnsToDelete = existingColumns.filter(
+    (c) => !mappedExistingIds.has(c.id) && !isProtectedImportColumn(c),
+  );
+
+  return { plan, columnsToDelete, finalColumns };
 }
 
 export function buildExportFilename(boardName: string, now: Date = new Date()): string {

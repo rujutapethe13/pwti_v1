@@ -133,7 +133,9 @@ export interface TableViewProps {
   onColumnToggleFrozen?: (columnId: string) => void;
   onColumnChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onColumnToggleWrapText?: (columnId: string) => void;
-  onColumnDelete?: (columnId: string) => void;
+   onColumnDelete?: (columnId: string) => void;
+  /** ID of the column currently being deleted (for loading state) */
+  deletingColumnId?: string | null;
   onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
   onColumnUpdateDescription?: (columnId: string, description: string) => void;
@@ -150,6 +152,9 @@ export interface TableViewProps {
   /** Bulk record operations */
   onBulkArchive?: (recordIds: string[]) => void;
   onBulkDelete?: (recordIds: string[]) => void;
+  /** Loading states for bulk operations */
+  bulkArchiveLoading?: boolean;
+  bulkDeleteLoading?: boolean;
   /** Row-level operations */
   onRowDelete?: (recordId: string) => void;
   onRowDuplicate?: (recordId: string) => void;
@@ -243,6 +248,7 @@ function SortableColumnHeaderWrapper({
   isFiltered?: boolean;
   isCollapsed?: boolean;
   isWrapped?: boolean;
+  deleteLoading?: boolean;
 }) {
   const {
     attributes,
@@ -683,6 +689,7 @@ export function TableView({
   onColumnToggleFrozen,
   onColumnChangeType,
   onColumnDelete,
+  deletingColumnId,
   onColumnAdd,
   onUpdateColumnSettings,
   onColumnUpdateDescription,
@@ -695,6 +702,8 @@ export function TableView({
   onSort,
   onBulkArchive,
   onBulkDelete,
+  bulkArchiveLoading,
+  bulkDeleteLoading,
   groups,
   onNewItem,
   onRecordTitleChange,
@@ -1144,6 +1153,102 @@ export function TableView({
     [onScrollBottom],
   );
 
+  // â”€â”€ Keyboard event listener â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable
+      ) {
+        return;
+      }
+      if (!focusedCell) return;
+      const { rowIdx, colIdx } = focusedCell;
+      const maxRow = visibleRecords.length - 1;
+      const maxCol = visibleColumns.length + 1; // +1 for title column
+
+      let newRow = rowIdx;
+      let newCol = colIdx;
+
+      switch (e.key) {
+        case "ArrowUp":
+          newRow = Math.max(0, rowIdx - 1);
+          e.preventDefault();
+          break;
+        case "ArrowDown":
+          newRow = Math.min(maxRow, rowIdx + 1);
+          e.preventDefault();
+          break;
+        case "ArrowLeft":
+          newCol = Math.max(0, colIdx - 1);
+          e.preventDefault();
+          break;
+        case "ArrowRight":
+          newCol = Math.min(maxCol, colIdx + 1);
+          e.preventDefault();
+          break;
+        case "Home":
+          if (e.ctrlKey || e.metaKey) {
+            newRow = 0;
+          }
+          newCol = 0;
+          e.preventDefault();
+          break;
+        case "End":
+          if (e.ctrlKey || e.metaKey) {
+            newRow = maxRow;
+          }
+          newCol = maxCol;
+          e.preventDefault();
+          break;
+        case " ":
+          // Space to toggle selection
+          if (visibleRecords[rowIdx]) {
+            selection.toggle(visibleRecords[rowIdx].id);
+          }
+          e.preventDefault();
+          break;
+        case "Enter":
+          // Focus the cell input
+          if (visibleRecords[rowIdx]) {
+            const cell = document.querySelector(
+              `[data-cell-row="${rowIdx}"][data-cell-col="${colIdx}"] input, [data-cell-row="${rowIdx}"][data-cell-col="${colIdx}"] textarea`,
+            );
+            (cell as HTMLElement)?.focus();
+          }
+          e.preventDefault();
+          break;
+        case "Escape":
+          setFocusedCell(null);
+          tableRef.current?.focus();
+          break;
+      }
+
+      if (newRow !== rowIdx || newCol !== colIdx) {
+        setFocusedCell({ rowIdx: newRow, colIdx: newCol });
+        // Scroll into view
+        const cellEl = document.querySelector(
+          `[data-cell-row="${newRow}"][data-cell-col="${newCol}"]`,
+        );
+        cellEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    };
+
+    const tableElement = tableRef.current;
+    if (tableElement) {
+      tableElement.addEventListener("keydown", handleKeyDown);
+    }
+
+    return () => {
+      const tableElement = tableRef.current;
+      if (tableElement) {
+        tableElement.removeEventListener("keydown", handleKeyDown);
+      }
+    };
+  }, [focusedCell, visibleRecords, visibleColumns, selection]);
+
   // Flat list of every visual row (group headers + records + add-row),
   // honouring collapsed groups. Only the slice inside the viewport is rendered.
   const allRows = useMemo(() => {
@@ -1247,23 +1352,16 @@ export function TableView({
           The full table shell (toolbar + headers + group controls) is always
           rendered by the parent BoardLayout, so a zero-row board is never
           blank. */}
-      {!hasAnyData && (
-        <div className="rounded-xl border border-dashed border-border bg-card p-6">
-          {emptyStateNode}
-        </div>
-      )}
-
-      {/* Table container */}
-      <div
-        ref={tableRef}
-        className="min-h-0 flex-1 overflow-auto"
-        tabIndex={0}
-        role="grid"
-        aria-label={`${board.name} table`}
-        onKeyDown={handleKeyDown}
-        onScroll={handleScroll}
-      >
-        <div className="min-w-max">
+      {hasAnyData ? (
+        <div
+          ref={tableRef}
+          className="min-h-0 flex-1 overflow-auto"
+          tabIndex={0}
+          role="grid"
+          aria-label={`${board.name} table`}
+          onScroll={handleScroll}
+        >
+          <div className="min-w-max">
           {/* ── Sticky Header Row ───────────────────────────── */}
           <DndContext
             sensors={sensors}
@@ -1334,15 +1432,19 @@ export function TableView({
                        const delta = upEvent.clientX - startX;
                        const finalWidth = Math.max(120, Math.min(600, startWidth + delta));
                        handleRecordTitleResize(finalWidth);
-                       document.removeEventListener("mousemove", handleMouseMove);
-                       document.removeEventListener("mouseup", handleMouseUp);
-                       document.body.style.cursor = "";
-                       document.body.style.userSelect = "";
+                       if (typeof document !== 'undefined') {
+                         document.removeEventListener("mousemove", handleMouseMove);
+                         document.removeEventListener("mouseup", handleMouseUp);
+                         document.body.style.cursor = "";
+                         document.body.style.userSelect = "";
+                       }
                      };
-                     document.addEventListener("mousemove", handleMouseMove);
-                     document.addEventListener("mouseup", handleMouseUp);
-                     document.body.style.cursor = "col-resize";
-                     document.body.style.userSelect = "none";
+                     if (typeof document !== 'undefined') {
+                       document.addEventListener("mousemove", handleMouseMove);
+                       document.addEventListener("mouseup", handleMouseUp);
+                       document.body.style.cursor = "col-resize";
+                       document.body.style.userSelect = "none";
+                     }
                    }}
                  >
                    <div className="mx-auto h-full w-0.5 rounded-full bg-border opacity-60 transition-opacity group-hover:opacity-100" />
@@ -1446,6 +1548,7 @@ export function TableView({
                       isFiltered={activeFilters.has(column.id)}
                       isCollapsed={collapsedColumns.has(column.id)}
                       isWrapped={wrappedColumns.has(column.id)}
+                      deleteLoading={deletingColumnId === column.id}
                     />
                   );
                 })}
@@ -1619,7 +1722,7 @@ export function TableView({
                     if (collapsedColumns.has(column.id)) {
                       return (
                         <div
-                          key={column.id}
+                        key={`collapsed-${column.id}`}
                           className="flex items-center justify-center border-r border-border bg-white"
                           style={{ width: 10, minWidth: 10 }}
                           data-cell-row={actualIdx}
@@ -1731,13 +1834,13 @@ export function TableView({
               </div>
               {visibleColumns.map((column) => {
                 if (collapsedColumns.has(column.id)) {
-                  return <div key={column.id} style={{ width: 10, minWidth: 10 }} />;
+                  return <div key={`collapsed-footer-${column.id}`} style={{ width: 10, minWidth: 10 }} />;
                 }
                 const sum = numberColumnSums[column.id];
-                if (sum === undefined) return <div key={column.id} className="px-4 py-2" />;
+                if (sum === undefined) return <div key={`empty-footer-${column.id}`} className="px-4 py-2" />;
                 return (
                   <div
-                    key={column.id}
+                    key={`footer-${column.id}`}
                     className={cn(
                       "px-4 py-2 align-top text-sm font-medium tabular-nums",
                       column.frozen && "sticky left-0 z-10 bg-card shadow-sm",
@@ -1750,7 +1853,12 @@ export function TableView({
             </div>
           )}
         </div>
-      </div>
+        </div>
+      ) : (
+        <div className="flex min-h-[400px] items-center justify-center rounded-xl border border-dashed border-border bg-card p-6">
+          {emptyStateNode}
+        </div>
+      )}
 
       {/* Floating bottom selection toolbar */}
       {hasSelection && (
@@ -1863,6 +1971,7 @@ export function TableView({
           selection.clear();
           setBulkAction(null);
         }}
+        loading={bulkArchiveLoading}
       />
 
       {/* Bulk Delete Confirmation */}
@@ -1878,6 +1987,7 @@ export function TableView({
           selection.clear();
           setBulkAction(null);
         }}
+        loading={bulkDeleteLoading}
       />
 
       {/* Add Column Picker */}

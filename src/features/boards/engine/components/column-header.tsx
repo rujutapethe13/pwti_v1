@@ -48,6 +48,8 @@ export interface ColumnHeaderProps {
   onDelete?: (columnId: string) => void;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
+  /** Whether a delete operation is in progress for this column */
+  deleteLoading?: boolean;
   sortColumnId?: string;
   sortDirection?: "asc" | "desc";
   onSort?: (columnId: string, direction: "asc" | "desc") => void;
@@ -246,6 +248,7 @@ export function ColumnHeader({
   isFiltered,
   isCollapsed,
   isWrapped,
+  deleteLoading,
   sortableListeners,
   sortableAttributes,
 }: ColumnHeaderProps) {
@@ -427,9 +430,10 @@ export function ColumnHeader({
         restrictEditing={restrictEditing}
         restrictView={restrictView}
         isFiltered={isFiltered}
-        isCollapsed={isCollapsed}
-        isWrapped={isWrapped}
-      />
+         isCollapsed={isCollapsed}
+         isWrapped={isWrapped}
+         deleteLoading={deleteLoading}
+       />
 
       {/* Resize handle */}
       <ColumnResizer onResizeStart={handleResizeStart} />

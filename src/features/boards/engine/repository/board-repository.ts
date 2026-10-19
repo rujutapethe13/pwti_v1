@@ -34,6 +34,9 @@ export class BoardRepository extends BaseRepository<BoardDefinition> {
       primaryColumnLabel: this.asString(row.primary_column_label ?? row.primaryColumnLabel) || undefined,
       createdAt: this.asString(row.created_at ?? row.createdAt),
       updatedAt: this.asString(row.updated_at ?? row.updatedAt),
+      // Soft-delete timestamp. Mirrors records.archived_at and
+      // workspaces.deleted_at. NULL means the board has never been archived.
+      archivedAt: this.asString(row.archived_at ?? row.archivedAt) || null,
     };
   }
 
@@ -54,6 +57,7 @@ export class BoardRepository extends BaseRepository<BoardDefinition> {
       ...(e.sharedWith !== undefined ? { shared_with: e.sharedWith } : {}),
       ...(e.isRestricted !== undefined ? { is_restricted: e.isRestricted } : {}),
       ...(e.primaryColumnLabel !== undefined ? { primary_column_label: e.primaryColumnLabel } : {}),
+      ...(e.archivedAt !== undefined ? { archived_at: e.archivedAt } : {}),
     };
   }
 

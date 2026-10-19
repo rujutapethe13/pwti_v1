@@ -24,10 +24,15 @@ import {
   Blocks,
   BarChart3,
   PanelsTopLeft,
+  Table,
 } from "lucide-react";
 
+import { createElement } from "react";
 import { pluginRegistry } from "../../plugins/plugin-registry";
 import type { ViewPlugin } from "../../plugins/plugin-types";
+import { TableView } from "../../components/table-view";
+import type { ViewRendererProps } from "../view-engine-types";
+import type { Group } from "../../types";
 
 // ── View Plugin Factory ────────────────────────────────────
 
@@ -40,17 +45,65 @@ function createViewPlugin(
   placeholder = false,
 ): ViewPlugin {
   return {
-    id: `powerweave.view.${viewType}`,
+    id: `powerweave.view.${viewType.trim().toLowerCase()}`,
     name,
     description,
     category: "view",
     version: "1.0.0",
-    viewType,
+    viewType: viewType.trim().toLowerCase(),
     icon,
     component,
     placeholder,
     enabled: true,
   };
+}
+
+// ── Table View Renderer Adapter ─────────────────────────────
+
+// Adapts the View Engine's ViewRendererProps to the original TableView
+// component props. Reuses the existing TableView unchanged (no redesign) so
+// the table view keeps its exact original behaviour. createElement is used
+// because this registry module is a .ts file (JSX is not allowed there).
+function TableViewRenderer(props: ViewRendererProps) {
+  const ops = props.columnOps ?? {};
+  return createElement(TableView, {
+    board: props.board,
+    columns: props.columns,
+    records: props.records,
+    cellValues: props.cellValues,
+    groups: props.groups as unknown as Group[] | undefined,
+    onCellChange: props.onCellChange,
+    primaryColumnLabel: props.board.primaryColumnLabel ?? "Name",
+    onPrimaryColumnRename: ops.onPrimaryColumnRename,
+    onColumnRename: ops.onColumnRename,
+    onColumnDuplicate: ops.onColumnDuplicate,
+    onColumnDuplicateWithValues: ops.onColumnDuplicateWithValues,
+    onColumnToggleHidden: ops.onColumnToggleHidden,
+    onColumnToggleFrozen: ops.onColumnToggleFrozen,
+    onColumnChangeType: ops.onColumnChangeType,
+    onColumnDelete: ops.onColumnDelete,
+    deletingColumnId: ops.deletingColumnId,
+    onColumnAdd: ops.onColumnAdd,
+    onColumnResize: ops.onColumnResize,
+    onColumnReorder: ops.onColumnReorder,
+    onUpdateColumnSettings: ops.onUpdateColumnSettings,
+    columnWidths: ops.columnWidths,
+    onColumnUpdateDescription: ops.onColumnUpdateDescription,
+    onColumnToggleRestrictEditing: ops.onColumnToggleRestrictEditing,
+    onColumnToggleRestrictView: ops.onColumnToggleRestrictView,
+    onColumnToggleWrapText: ops.onColumnToggleWrapText,
+    sortColumnId: ops.sortColumnId,
+    sortDirection: ops.sortDirection,
+    onSort: ops.onSort,
+    onBulkArchive: props.onBulkArchive,
+    onBulkDelete: props.onBulkDelete,
+    onRowDelete: props.onRowDelete,
+    onRowDuplicate: props.onRowDuplicate,
+    onMoveToGroup: props.onMoveToGroup,
+    onMoveToStatus: props.onMoveToStatus,
+    bulkArchiveLoading: props.bulkArchiveLoading,
+    bulkDeleteLoading: props.bulkDeleteLoading,
+  });
 }
 
 // ── Lazy Imports ───────────────────────────────────────────
@@ -103,7 +156,10 @@ export function registerViewPlugins(): void {
     ),
   );
 
-  // Table is registered separately (reuses existing TableView component)
+  // Table (reuses the existing TableView component)
+  pluginRegistry.register(
+    createViewPlugin("table", "Table", "Spreadsheet-style board view", Table, TableViewRenderer),
+  );
 }
 
 // Auto-register on import in client components

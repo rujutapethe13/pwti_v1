@@ -20,11 +20,10 @@
  * No view queries Supabase directly. No view mutates records directly.
  */
 
-import { useCallback, useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { pluginRegistry } from "../plugins/plugin-registry";
-import { ViewSwitcher } from "./view-switcher";
 import { getDefaultSettings, type ViewEngineProps, type ViewRendererProps } from "./view-engine-types";
-import type { BoardView, ColumnValue, ViewSettingsByType } from "../types";
+import type { ViewSettingsByType } from "../types";
 import type { ViewPlugin } from "../plugins/plugin-types";
 
 // ── View Engine ────────────────────────────────────────────
@@ -32,18 +31,20 @@ import type { ViewPlugin } from "../plugins/plugin-types";
 export function ViewEngine({
   boardData,
   view,
-  views,
-  onViewChange,
-  onCreateView,
   onUpdateView,
-  onDuplicateView,
-  onDeleteView,
-  onSetDefaultView,
-  onFavoriteView,
-  onReorderViews,
   onCellChange,
+  columnOps,
+  onBulkArchive,
+  onBulkDelete,
+  onRowDelete,
+  onRowDuplicate,
+  onMoveToGroup,
+  onMoveToStatus,
+  bulkArchiveLoading,
+  bulkDeleteLoading,
 }: ViewEngineProps) {
   const { board, columns, groups, records, cellValues } = boardData;
+  const loggedMissingRef = useRef<Set<string> | null>(null);
 
   // Look up the renderer from the Plugin Registry — NO switch statement
   const viewPlugin = useMemo(
@@ -73,48 +74,50 @@ export function ViewEngine({
       })),
       settings,
       onCellChange,
+      columnOps,
       onSettingsChange: (partialSettings) => {
         onUpdateView?.(view.id, { settings: { ...settings, ...partialSettings } as ViewSettingsByType });
       },
       isActive: true,
+      onBulkArchive,
+      onBulkDelete,
+      onRowDelete,
+      onRowDuplicate,
+      onMoveToGroup,
+      onMoveToStatus,
+      bulkArchiveLoading,
+      bulkDeleteLoading,
     }),
-    [board, view, columns, records, cellValues, groups, settings, onCellChange, onUpdateView],
-  );
-
-  // Handle cell changes — route through existing CRUD services
-  const handleCellChange = useCallback(
-    (args: { recordId: string; columnId: string; value: unknown }) => {
-      onCellChange?.(args as { recordId: string; columnId: string; value: ColumnValue });
-    },
-    [onCellChange],
+    [board, view, columns, records, cellValues, groups, settings, onCellChange, columnOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
   );
 
   if (!viewPlugin || viewPlugin.placeholder) {
+    if (process.env.NODE_ENV !== "production") {
+      const loggedMissing = (loggedMissingRef.current ??= new Set<string>());
+      if (!loggedMissing.has(view.type)) {
+        loggedMissing.add(view.type);
+        const registeredViewTypes = pluginRegistry
+          .getAll()
+          .filter((p) => p.category === "view")
+          .map((p) => (p as ViewPlugin).viewType);
+        console.warn(
+          `[ViewEngine] No registered view plugin for type ${JSON.stringify(view.type)}.`,
+          `\nrequested type: ${JSON.stringify(view.type)}`,
+          `\nregistered view types: ${JSON.stringify(registeredViewTypes)}`,
+        );
+      }
+    }
     return (
-      <div className="flex flex-col gap-6">
-        <ViewSwitcher
-          views={views}
-          activeViewId={view.id}
-          onViewChange={onViewChange}
-          onCreateView={onCreateView}
-          onUpdateView={onUpdateView}
-          onDuplicateView={onDuplicateView}
-          onDeleteView={onDeleteView}
-          onSetDefaultView={onSetDefaultView}
-          onFavoriteView={onFavoriteView}
-          onReorderViews={onReorderViews}
-        />
-        <div className="flex min-h-[400px] items-center justify-center rounded-xl border border-dashed border-border bg-card p-12">
-          <div className="text-center">
-            <p className="text-sm font-medium text-foreground">
-              {view.type.charAt(0).toUpperCase() + view.type.slice(1)} view
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {viewPlugin
-                ? "This view type is defined but not yet implemented."
-                : `View type "${view.type}" is not registered.`}
-            </p>
-          </div>
+      <div className="flex min-h-[400px] items-center justify-center rounded-xl border border-dashed border-border bg-card p-12">
+        <div className="text-center">
+          <p className="text-sm font-medium text-foreground">
+            {view.type.charAt(0).toUpperCase() + view.type.slice(1)} view
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {viewPlugin
+              ? "This view type is defined but not yet implemented."
+              : `View type "${view.type}" is not registered.`}
+          </p>
         </div>
       </div>
     );
@@ -122,22 +125,6 @@ export function ViewEngine({
 
   const RendererComponent = viewPlugin.component;
 
-  return (
-    <div className="flex flex-col gap-6">
-      <ViewSwitcher
-        views={views}
-        activeViewId={view.id}
-        onViewChange={onViewChange}
-        onCreateView={onCreateView}
-        onUpdateView={onUpdateView}
-        onDuplicateView={onDuplicateView}
-        onDeleteView={onDeleteView}
-        onSetDefaultView={onSetDefaultView}
-        onFavoriteView={onFavoriteView}
-        onReorderViews={onReorderViews}
-      />
-      <RendererComponent {...rendererProps} />
-    </div>
-  );
+  return <RendererComponent {...rendererProps} />;
 }
 

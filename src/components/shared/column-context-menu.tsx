@@ -88,6 +88,8 @@ interface ColumnContextMenuProps {
   isFiltered?: boolean;
   isCollapsed?: boolean;
   isWrapped?: boolean;
+  /** Whether a delete operation is in progress for this column */
+  deleteLoading?: boolean;
 }
 
 const FILTER_OPERATORS: Record<string, Array<{ value: string; label: string }>> = {
@@ -297,6 +299,7 @@ export function ColumnContextMenu({
   isFiltered,
   isCollapsed,
   isWrapped,
+  deleteLoading,
 }: ColumnContextMenuProps) {
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameValue, setRenameValue] = useState(column.label);
@@ -642,14 +645,15 @@ export function ColumnContextMenu({
             Rename
           </DropdownMenuItem>
 
-          {/* ── Delete ─────────────────────────────────── */}
+          {/* ── Delete column ─────────────────────────────── */}
           {onDelete && (
             <DropdownMenuItem
               className="text-destructive focus:text-destructive"
               onSelect={() => setDeleteConfirmOpen(true)}
+              disabled={column.key === "name" || deleteLoading}
             >
               <Trash2 className="mr-2 size-3.5" />
-              Delete
+              Delete column
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>
@@ -813,6 +817,7 @@ export function ColumnContextMenu({
         description={`Are you sure you want to delete "${column.label}"? This will permanently remove the column and all its values across all records.`}
         confirmLabel="Delete"
         variant="destructive"
+        loading={deleteLoading}
         onConfirm={() => {
           setDeleteConfirmOpen(false);
           onDelete?.(column.id);

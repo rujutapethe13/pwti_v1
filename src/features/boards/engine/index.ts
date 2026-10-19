@@ -39,6 +39,6 @@ export type { ViewCatalogItem as ViewMode } from "./registry";
 
 // ── View Engine ────────────────────────────────────────────
 export { getDefaultSettings } from "./view-engine/view-engine-types";
-export type { ViewEngineProps, ViewRendererProps } from "./view-engine/view-engine-types";
+export type { ViewEngineProps, ViewRendererProps, ColumnOperations } from "./view-engine/view-engine-types";
 export { ViewEngine } from "./view-engine/view-engine";
 export { ViewSwitcher } from "./view-engine/view-switcher";

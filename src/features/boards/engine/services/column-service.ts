@@ -8,6 +8,7 @@
 
 import "server-only";
 
+import { createServiceClient } from "@/lib/supabase/server";
 import { ColumnRepository } from "../repository/column-repository";
 import { CellRepository } from "../repository/cell-repository";
 import { getColumnTypeDefinition } from "../column-registry";
@@ -26,10 +27,17 @@ import type {
   HideColumnsInput,
   FreezeColumnInput,
   ChangeColumnTypeInput,
+  DeleteBoardColumnsInput,
 } from "../schemas/column-schemas";
 
 const columnRepo = new ColumnRepository();
 const cellRepo = new CellRepository();
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidUuid(value: string): boolean {
+  return UUID_RE.test(value);
+}
 
 function buildScope(column: ColumnDefinition) {
   return { organizationId: "", workspaceId: "", boardId: column.boardId, columnId: column.id };
@@ -164,13 +172,48 @@ export const ColumnService = {
   },
 
   async delete(input: DeleteColumnInput, actorUserId: string): Promise<ApiResponse<null>> {
+    if (!isValidUuid(input.columnId)) {
+      return { data: null, error: "Invalid column ID", status: 400 };
+    }
+
     const existing = await columnRepo.findById(input.columnId);
     if (!existing.data) return { data: null, error: "Column not found", status: 404 };
 
-    await eventBus.publish(createEvent("column.delete:before", actorUserId, existing.data, existing.data as unknown as Record<string, unknown>, null));
+    const column = existing.data;
+
+    await eventBus.publish(createEvent("column.delete:before", actorUserId, column, column as unknown as Record<string, unknown>, null));
+
+    const client = await createServiceClient();
+
+    // Check for dependents (formula/mirror/lookup/rollup columns referencing this one)
+    const { data: dependentsData, error: depError } = await client.rpc("get_column_dependents", {
+      p_column_id: input.columnId,
+    });
+
+    if (depError) {
+      return { data: null, error: depError.message, status: 500 };
+    }
+
+    const dependents = (dependentsData as { dependencies?: unknown[] } | null)?.dependencies ?? [];
+    if (dependents.length > 0) {
+      return {
+        data: null,
+        error: `Cannot delete "${column.label}": other columns depend on it. Remove those columns first.`,
+        status: 409,
+      };
+    }
+
+    // Clean up view config references and dependency edges (idempotent RPC)
+    const { error: cleanupError } = await client.rpc("cleanup_column_dependents", {
+      p_column_id: input.columnId,
+    });
+
+    if (cleanupError) {
+      return { data: null, error: cleanupError.message, status: 500 };
+    }
 
     if (input.cascade) {
-      await cellRepo.clearColumn(existing.data.boardId, input.columnId);
+      await cellRepo.clearColumn(column.boardId, input.columnId);
     }
 
     if (input.permanent) {
@@ -179,8 +222,8 @@ export const ColumnService = {
       await columnRepo.softDelete(input.columnId);
     }
 
-    await eventBus.publish(createEvent("column.delete:after", actorUserId, existing.data, existing.data as unknown as Record<string, unknown>, null));
-    metadataCache.invalidate("column", existing.data.boardId);
+    await eventBus.publish(createEvent("column.delete:after", actorUserId, column, column as unknown as Record<string, unknown>, null));
+    metadataCache.invalidate("column", column.boardId);
     return { data: null, error: null, status: 200 };
   },
 
@@ -326,6 +369,41 @@ export const ColumnService = {
       await eventBus.publish(createEvent("column.update_options:after", actorUserId, result.data, before as unknown as Record<string, unknown>, result.data as unknown as Record<string, unknown>));
       metadataCache.invalidate("column", existing.data.boardId);
     }
+    return result;
+  },
+
+  async deleteBoardColumns(input: DeleteBoardColumnsInput, actorUserId: string): Promise<ApiResponse<null>> {
+    const firstColResult = await columnRepo.findById(input.columnIds[0]);
+    if (!firstColResult.data) {
+      return { data: null, error: "Column not found", status: 404 };
+    }
+
+    await eventBus.publish({
+      eventId: crypto.randomUUID(),
+      eventName: "column.bulk_delete:before",
+      timestamp: new Date().toISOString(),
+      actorUserId,
+      scope: { organizationId: "", workspaceId: "", boardId: input.boardId },
+      before: { columnIds: input.columnIds } as unknown as Record<string, unknown>,
+      after: null,
+      metadata: { boardId: input.boardId },
+    });
+
+    const result = await columnRepo.batchSoftDelete(input.columnIds);
+
+    metadataCache.invalidate("column", firstColResult.data.boardId);
+
+    await eventBus.publish({
+      eventId: crypto.randomUUID(),
+      eventName: "column.bulk_delete:after",
+      timestamp: new Date().toISOString(),
+      actorUserId,
+      scope: { organizationId: "", workspaceId: "", boardId: input.boardId },
+      before: null,
+      after: { columnIds: input.columnIds } as unknown as Record<string, unknown>,
+      metadata: { boardId: input.boardId },
+    });
+
     return result;
   },
 };

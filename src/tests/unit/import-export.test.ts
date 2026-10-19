@@ -11,6 +11,7 @@ import {
   applyOptionMappingsToColumns,
   buildExportFilename,
   buildExportWorkbook,
+  buildImportColumnPlan,
   buildInitialMappings,
   buildNewColumnsFromMappings,
   buildRecordFromRow,
@@ -264,12 +265,17 @@ describe("mapping cleanup helpers", () => {
     expect(getMappableMappings(mappings, null)).toEqual(mappings);
   });
 
-  it("deletes unmapped existing columns but protects Status and Assigned To", () => {
+  it("deletes every unmapped default column except the protected Name column", () => {
     const mappedIds = getMappedExistingColumnIds([
       { id: "test-id", fileColumn: "Client", action: { kind: "existing", columnId: "col-client" } },
     ]);
-    expect(getColumnIdsToDelete(COLUMNS, mappedIds)).toEqual([
+    // Client Name is mapped, so only the unmapped defaults remain: Status,
+    // Date and Assigned To. None of them are protected anymore — only the
+    // record-title "Name" column is.
+    expect(getColumnIdsToDelete(COLUMNS, mappedIds).sort()).toEqual([
+      "col-assigned",
       "col-date",
+      "col-status",
     ]);
   });
 });
@@ -344,10 +350,11 @@ describe("buildNewColumnsFromMappings", () => {
       },
     ];
     const newCols = buildNewColumnsFromMappings("board-1", mappings, 5);
-    expect(newCols.map((column) => column.id)).toEqual([
-      "col-import-client_name",
-      "col-import-client_name_2",
-    ]);
+    // Every column id is a real UUID, and distinct labels get distinct UUIDs.
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    expect(newCols).toHaveLength(2);
+    expect(newCols.every((c) => uuidRegex.test(c.id))).toBe(true);
+    expect(new Set(newCols.map((c) => c.id)).size).toBe(2);
     expect(newCols.map((column) => column.key)).toEqual([
       "client_name",
       "client_name_2",
@@ -1039,13 +1046,14 @@ describe("import value mapping (Bug 14)", () => {
     ];
     const newCols = buildNewColumnsFromMappings("board-1", mappings, 5, COLUMNS);
     expect(newCols).toHaveLength(1);
-    expect(newCols[0].id).toBe("col-import-notes");
+    expect(newCols[0].id).toBeTruthy();
+    expect(newCols[0].key).toBe('notes');
 
     const effectiveColumns = [...COLUMNS, ...newCols];
     const built = buildRecordFromRow(row, 0, mappings, effectiveColumns, "Client", {});
 
     expect(built.cellValues).not.toHaveProperty("col-client");
-    expect(built.cellValues["col-import-notes"]).toBe("Urgent follow-up");
+    expect(built.cellValues[newCols[0].id]).toBe("Urgent follow-up");
   });
 
   it("creates options for a new status column and writes their IDs", () => {
@@ -1432,5 +1440,134 @@ describe("parseBuffer blank-row filtering", () => {
     const buffer = makeXlsxBuffer(aoa);
     const parsed = parseBuffer(buffer);
     expect(parsed.totalRowCount).toBe(10_000);
+  });
+});
+
+describe("buildImportColumnPlan", () => {
+  // The board's default columns, in creation order, for the plan tests.
+  // Mirrors createBoardWithDefaults: Client Name (protected), Job Type,
+  // Status, Date, Assigned To.
+  const PLAN_COLUMNS: ColumnDefinition[] = [
+    makeColumn("col-client", "Client Name", "text", 0),
+    makeColumn("col-jobtype", "Job Type", "dropdown", 1, {
+      options: [{ id: "opt-retouching", label: "Retouching" }],
+    }),
+    makeColumn("col-status", "Status", "status", 2, { options: STATUS_OPTIONS }),
+    makeColumn("col-date", "Date", "date", 3),
+    makeColumn("col-assigned", "Assigned To", "person", 4),
+  ];
+
+  it("orders columns to match the source file and deletes unmapped defaults", () => {
+    // 8 file columns, 3 mapped to defaults, 5 not mapped.
+    const mappings: ColumnMapping[] = [
+      { id: "m0", fileColumn: "Job Type", action: { kind: "existing", columnId: "col-jobtype" } },
+      { id: "m1", fileColumn: "Status", action: { kind: "existing", columnId: "col-status" } },
+      { id: "m2", fileColumn: "Receive Date", action: { kind: "existing", columnId: "col-date" } },
+      { id: "m3", fileColumn: "Item Name", action: { kind: "create", type: "text", label: "Item Name" } },
+      { id: "m4", fileColumn: "Comment", action: { kind: "create", type: "text", label: "Comment" } },
+      { id: "m5", fileColumn: "No. of images", action: { kind: "create", type: "number", label: "No. of images" } },
+      { id: "m6", fileColumn: "Date of Upload", action: { kind: "create", type: "date", label: "Date of Upload" } },
+      { id: "m7", fileColumn: "Invoice Amount", action: { kind: "create", type: "currency", label: "Invoice Amount" } },
+    ];
+    const newColumns = buildNewColumnsFromMappings(
+      "board-1",
+      mappings.filter((m) => m.action.kind === "create"),
+      0,
+      PLAN_COLUMNS,
+    );
+    const { plan, finalColumns, columnsToDelete } = buildImportColumnPlan(
+      PLAN_COLUMNS,
+      mappings,
+      newColumns,
+    );
+
+    // 8 imported columns in file order; the unmapped default (Assigned To) is gone.
+    // Mapped defaults keep their own id/label/type/settings — they are not
+    // renamed to the file header and are not duplicated.
+    expect(finalColumns).toHaveLength(8);
+    expect(finalColumns.map((c) => c.label)).toEqual([
+      "Job Type",
+      "Status",
+      "Date",
+      "Item Name",
+      "Comment",
+      "No. of images",
+      "Date of Upload",
+      "Invoice Amount",
+    ]);
+    // Mapped defaults keep their id/type/settings; they are not duplicated.
+    expect(finalColumns.filter((c) => c.id === "col-status")).toHaveLength(1);
+    expect(finalColumns.filter((c) => c.id === "col-date")).toHaveLength(1);
+    expect(finalColumns.filter((c) => c.id === "col-jobtype")).toHaveLength(1);
+
+    // Positions are assigned 0..n-1 in file order.
+    expect(plan.map((e) => e.position)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+
+    // The only unmapped default is Assigned To (col-assigned).
+    expect(columnsToDelete.map((c) => c.id)).toEqual(["col-assigned"]);
+  });
+
+  it("deletes all defaults when none are mapped and creates new columns in file order", () => {
+    const mappings: ColumnMapping[] = [
+      { id: "m0", fileColumn: "A", action: { kind: "create", type: "text", label: "A" } },
+      { id: "m1", fileColumn: "B", action: { kind: "create", type: "text", label: "B" } },
+    ];
+    const newColumns = buildNewColumnsFromMappings("board-1", mappings, 0, PLAN_COLUMNS);
+    const { finalColumns, columnsToDelete } = buildImportColumnPlan(
+      PLAN_COLUMNS,
+      mappings,
+      newColumns,
+    );
+
+    expect(finalColumns).toHaveLength(2);
+    expect(finalColumns.map((c) => c.label)).toEqual(["A", "B"]);
+    // All 4 non-protected defaults are deleted (Client Name is protected).
+    expect(columnsToDelete.map((c) => c.id).sort()).toEqual([
+      "col-assigned",
+      "col-date",
+      "col-jobtype",
+      "col-status",
+    ]);
+  });
+
+  it("reorders mapped defaults to match the file order", () => {
+    // File order: Status first, then Date.
+    const mappings: ColumnMapping[] = [
+      { id: "m0", fileColumn: "Status", action: { kind: "existing", columnId: "col-status" } },
+      { id: "m1", fileColumn: "Date", action: { kind: "existing", columnId: "col-date" } },
+    ];
+    const { finalColumns, columnsToDelete } = buildImportColumnPlan(
+      PLAN_COLUMNS,
+      mappings,
+      [],
+    );
+
+    expect(finalColumns.map((c) => c.id)).toEqual(["col-status", "col-date"]);
+    // Positions are assigned 0..n-1 in file order.
+    expect(finalColumns.map((c) => c.order)).toEqual([0, 1]);
+    // Assigned To and Job Type are unmapped; Client Name is protected.
+    expect(columnsToDelete.map((c) => c.id).sort()).toEqual([
+      "col-assigned",
+      "col-jobtype",
+    ]);
+  });
+
+  it("skips a mapping whose target column no longer exists", () => {
+    const mappings: ColumnMapping[] = [
+      { id: "m0", fileColumn: "Ghost", action: { kind: "existing", columnId: "does-not-exist" } },
+      { id: "m1", fileColumn: "Status", action: { kind: "existing", columnId: "col-status" } },
+    ];
+    const { finalColumns, columnsToDelete } = buildImportColumnPlan(
+      PLAN_COLUMNS,
+      mappings,
+      [],
+    );
+
+    expect(finalColumns.map((c) => c.id)).toEqual(["col-status"]);
+    expect(columnsToDelete.map((c) => c.id).sort()).toEqual([
+      "col-assigned",
+      "col-date",
+      "col-jobtype",
+    ]);
   });
 });
