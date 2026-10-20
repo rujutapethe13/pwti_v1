@@ -141,6 +141,7 @@ export function MirrorSettingsModal({
           .from("columns")
           .select("id,label,type,key,hidden,sort_order")
           .eq("board_id", bid)
+          .is("group_id", null)
           .order("sort_order", { ascending: true });
         return { boardId: bid, columns: (data ?? []) as BoardColumnRow[] };
       }),

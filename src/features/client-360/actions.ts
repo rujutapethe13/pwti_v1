@@ -97,6 +97,7 @@ export async function createClient360ItemAction(input: {
       .from("columns")
       .select("id, label, type, settings")
       .eq("board_id", input.boardId)
+      .is("group_id", null)
       .order("sort_order", { ascending: true });
 
     if (columnsResult.error) {

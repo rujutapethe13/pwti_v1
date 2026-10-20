@@ -9,7 +9,7 @@ import "server-only";
 
 import { BaseRepository, type DatabaseRow, type RepositoryOptions } from "./base-repository";
 import type { ApiResponse } from "@/types";
-import type { ColumnDefinition, ColumnValue } from "../types";
+import type { ColumnDefinition, ColumnValue, ColumnScope } from "../types";
 
 /**
  * Column write payload.
@@ -30,6 +30,7 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
   protected fromDatabase(row: DatabaseRow): ColumnDefinition {
     return {
       id: this.asString(row.id),
+      groupId: this.asString(row.group_id ?? row.groupId) || null,
       boardId: this.asString(row.board_id ?? row.boardId),
       key: this.asString(row.key),
       label: this.asString(row.label, this.asString(row.key)),
@@ -58,6 +59,7 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     const e = entity as ColumnWritePayload;
     return {
       ...(e.id !== undefined ? { id: e.id } : {}),
+      ...(e.groupId !== undefined ? { group_id: e.groupId } : {}),
       ...(e.boardId !== undefined ? { board_id: e.boardId } : {}),
       ...(e.organizationId !== undefined ? { organization_id: e.organizationId } : {}),
       ...(e.workspaceId !== undefined ? { workspace_id: e.workspaceId } : {}),
@@ -83,12 +85,41 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     boardId: string,
     options?: RepositoryOptions,
     includeDeleted = false,
+    scope?: ColumnScope,
   ): Promise<ApiResponse<ColumnDefinition[]>> {
-    const filters: Record<string, unknown> = { board_id: boardId };
-    if (!includeDeleted) {
-      filters.deleted_at = null;
+    const resolved = scope ?? { kind: "shared" as const };
+    const client = await this.getClient(options);
+
+    let query = client.from(this.tableName).select("*").eq("board_id", boardId);
+    if (resolved.kind === "shared") {
+      query = query.is("group_id", null);
+    } else if (resolved.kind === "group") {
+      query = query.eq("group_id", resolved.groupId);
     }
-    return this.findMany(filters, { column: "sort_order", ascending: true }, options);
+    if (!includeDeleted) {
+      query = query.is("deleted_at", null);
+    }
+    query = query.order("sort_order", { ascending: true });
+
+    const { data: rows, error } = await query;
+    if (error) {
+      return { data: null, error: error.message, status: 500 };
+    }
+
+    return {
+      data: (rows ?? []).map((row) => this.fromDatabase(row as DatabaseRow)),
+      error: null,
+      status: 200,
+    };
+  }
+
+  async listGroupColumns(
+    boardId: string,
+    groupId: string,
+    options?: RepositoryOptions,
+    includeDeleted = false,
+  ): Promise<ApiResponse<ColumnDefinition[]>> {
+    return this.findByBoard(boardId, options, includeDeleted, { kind: "group", groupId });
   }
 
   async reorder(
@@ -147,7 +178,6 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     const updates = columnIds.map((id) => ({
       id,
       deleted_at: now,
-      status: "archived",
       updated_at: now,
     }));
 
@@ -169,7 +199,7 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
 
     const { data: row, error } = await client
       .from(this.tableName)
-      .update({ deleted_at: now, status: "archived", updated_at: now })
+      .update({ deleted_at: now, updated_at: now })
       .eq(this.primaryKey, columnId)
       .is("deleted_at", null)
       .select()
@@ -191,7 +221,7 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
 
     const { data: row, error } = await client
       .from(this.tableName)
-      .update({ deleted_at: null, status: "active", updated_at: now })
+      .update({ deleted_at: null, updated_at: now })
       .eq(this.primaryKey, columnId)
       .not("deleted_at", "is", null)
       .select()

@@ -103,6 +103,7 @@ export async function GET(_request: NextRequest) {
       .from("columns")
       .select("id, board_id, key, label, type")
       .in("board_id", boardIds)
+      .is("group_id", null)
       .in("type", ["person", "text", "long_text"]);
 
     if (colErr) {

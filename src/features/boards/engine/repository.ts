@@ -58,6 +58,7 @@ function toBoardDefinition(row: DatabaseRow): BoardDefinition {
 function toColumnDefinition(row: DatabaseRow): ColumnDefinition {
   return {
     id: asString(row.id),
+    groupId: asString(row.group_id ?? row.groupId) || null,
     boardId: asString(row.board_id ?? row.boardId),
     key: asString(row.key),
     label: asString(row.label, asString(row.key)),
@@ -191,7 +192,7 @@ export async function loadBoardBySlug(
   const recordOffset = options?.recordOffset ?? 0;
 
   const [{ data: columnRows, error: columnError }, { data: recordRows, error: recordError, count: recordCount }, { data: cellRows, error: cellError }, { data: viewRows, error: viewError }, { data: groupRows, error: groupError }] = await Promise.all([
-    supabase.from("columns").select("*").eq("board_id", boardRow.id).order("sort_order", { ascending: true }),
+    supabase.from("columns").select("*").eq("board_id", boardRow.id).is("group_id", null).order("sort_order", { ascending: true }),
     supabase
       .from("records")
       .select("*", { count: "exact" })
@@ -287,6 +288,9 @@ export async function upsertBoardColumns(boardId: string, organizationId: string
     organization_id: organizationId,
     workspace_id: workspaceId,
     board_id: boardId,
+    // Only written when known: omitting the key leaves an existing custom
+    // group's column membership untouched on upsert.
+    ...(column.groupId !== undefined ? { group_id: column.groupId } : {}),
     key: column.key,
     label: column.label,
     description: column.description ?? null,
@@ -453,6 +457,7 @@ export async function loadColumnsByBoard(
     .from("columns")
     .select("*")
     .eq("board_id", boardId)
+    .is("group_id", null)
     .is("deleted_at", null)
     .order("sort_order", { ascending: true });
 

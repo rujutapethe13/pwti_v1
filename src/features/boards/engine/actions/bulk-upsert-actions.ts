@@ -19,6 +19,9 @@ export async function upsertBoardColumns(
       organization_id: organizationId,
       workspace_id: workspaceId,
       board_id: boardId,
+      // Only written when known, so an upsert never clears a column's group
+      // membership implicitly.
+      ...(column.groupId !== undefined ? { group_id: column.groupId } : {}),
       key: column.key,
       label: column.label,
       description: column.description ?? null,

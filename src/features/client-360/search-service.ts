@@ -92,6 +92,7 @@ async function fetchColumnsForBoards(boardIds: string[]): Promise<BoardColumns[]
     .from("columns")
     .select("*")
     .in("board_id", boardIds)
+    .is("group_id", null)
     .order("sort_order", { ascending: true });
 
   if (error) {

@@ -366,6 +366,7 @@ async function loadBoardData(
       .from("columns")
       .select("*")
       .eq("board_id", boardId)
+      .is("group_id", null)
       .order("sort_order", { ascending: true }),
     client
       .from("records")

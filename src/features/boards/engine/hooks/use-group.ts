@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
-import { createGroup, renameGroup, reorderGroups, deleteGroup, collapseGroup, updateGroupColor, updateGroupStatusOptions } from "../actions/group-actions";
+import { createGroup, renameGroup, reorderGroups, deleteGroup, collapseGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup } from "../actions/group-actions";
 import type { DropdownOption, Group } from "../types";
 import { useUndoStack } from "./use-undo";
 
@@ -112,13 +112,22 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
   const moveGroupFn = useCallback(
     async (groupId: string, targetBoardId: string) => {
       const prev = groups.find((g) => g.id === groupId);
-      setGroups((p) => p.filter((g) => g.id !== groupId));
+      if (!prev) return;
+      setLoading(true);
       try {
-        setLoading(true);
-        toast.success("Group moved.");
-      } catch {
-        if (prev) setGroups((p) => [...p, prev]);
-        toast.error("Failed to move group.");
+        const response = await moveGroup(groupId, targetBoardId);
+        if (response.error) {
+          setGroups((p) => [...p, prev]);
+          toast.error(response.error);
+        } else if (response.data) {
+          setGroups((p) =>
+            p.map((g) => (g.id === groupId ? { ...g, boardId: response.data!.boardId } : g)),
+          );
+          toast.success("Group moved.");
+        }
+      } catch (err) {
+        setGroups((p) => [...p, prev]);
+        toast.error(err instanceof Error ? err.message : "Failed to move group.");
       } finally {
         setLoading(false);
       }
@@ -128,11 +137,17 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
 
   const duplicateGroupFn = useCallback(
     async (groupId: string) => {
+      setLoading(true);
       try {
-        setLoading(true);
-        toast.success("Group duplicated.");
-      } catch {
-        toast.error("Failed to duplicate group.");
+        const response = await duplicateGroup(groupId);
+        if (response.error) {
+          toast.error(response.error);
+        } else if (response.data) {
+          setGroups((p) => [...p, response.data!]);
+          toast.success("Group duplicated.");
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Failed to duplicate group.");
       } finally {
         setLoading(false);
       }

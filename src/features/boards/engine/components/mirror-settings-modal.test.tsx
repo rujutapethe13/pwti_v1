@@ -13,7 +13,9 @@ function supabaseMock() {
         return {
           select: () => ({
             eq: (_col: string, boardId: string) => ({
-              order: () => Promise.resolve({ data: columnData.get(boardId) ?? [], error: null }),
+              is: (_isCol: string, _isVal: null) => ({
+                order: () => Promise.resolve({ data: columnData.get(boardId) ?? [], error: null }),
+              }),
             }),
           }),
         };

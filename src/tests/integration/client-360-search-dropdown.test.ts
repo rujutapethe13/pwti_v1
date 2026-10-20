@@ -15,6 +15,7 @@ interface Chainable {
   select: ReturnType<typeof vi.fn>;
   eq: ReturnType<typeof vi.fn>;
   neq: ReturnType<typeof vi.fn>;
+  is: ReturnType<typeof vi.fn>;
   gte: ReturnType<typeof vi.fn>;
   lte: ReturnType<typeof vi.fn>;
   ilike: ReturnType<typeof vi.fn>;
@@ -36,6 +37,8 @@ function makeChain(baseRows: AnyRow[]): Chainable {
         }
       } else if (f.op === "neq") {
         data = data.filter((r) => r[f.col] !== f.val);
+      } else if (f.op === "is") {
+        data = data.filter((r) => r[f.col] == null);
       } else if (f.op === "gte") {
         data = data.filter((r) => r[f.col] != null && String(r[f.col]) >= String(f.val));
       } else if (f.op === "lte") {
@@ -61,6 +64,10 @@ function makeChain(baseRows: AnyRow[]): Chainable {
     }),
     neq: vi.fn((col: string, val: unknown) => {
       recorded.push({ col, op: "neq", val });
+      return chain;
+    }),
+    is: vi.fn((col: string, val: unknown) => {
+      recorded.push({ col, op: "is", val });
       return chain;
     }),
     gte: vi.fn((col: string, val: unknown) => {

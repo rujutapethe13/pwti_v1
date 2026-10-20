@@ -148,12 +148,29 @@ export async function importWithColumnCleanup(
     const columnsToDelete = input.keepUnmappedColumns ? [] : input.columnsToDelete;
     const deletedColumns: string[] = [];
 
+
     // Start transaction by using a single client
     const client = await createClient(await cookies());
     
     // We'll use the service client for the actual operations to bypass RLS
     // but the permission check above ensures the user is authorized
     const serviceClient = await createClient(await cookies());
+
+    // Imported columns belong to the target group's column set. A group in
+    // "shared" mode uses the board's shared columns (group_id IS NULL); a group
+    // in "custom" mode owns its columns (group_id = group id).
+    let targetColumnGroupId: string | null = null;
+    if (input.targetGroupId) {
+      const { data: targetGroup } = await serviceClient
+        .from("groups")
+        .select("id, column_mode")
+        .eq("id", input.targetGroupId)
+        .eq("board_id", input.boardId)
+        .maybeSingle();
+      if (targetGroup?.column_mode === "custom") {
+        targetColumnGroupId = targetGroup.id;
+      }
+    }
 
     const importErrors: Array<{ rowIndex: number; reason: string }> = [];
     let createdCount = 0;
@@ -171,6 +188,8 @@ export async function importWithColumnCleanup(
             organization_id: input.organizationId,
             workspace_id: input.workspaceId,
             board_id: input.boardId,
+            // Imported columns belong to the target group's column set.
+            group_id: targetColumnGroupId,
             key: nc.key,
             label: nc.label,
             description: nc.description,
@@ -221,17 +240,23 @@ export async function importWithColumnCleanup(
         }
       }
 
-      // 3. Soft-delete unmapped columns (if not keeping them)
+      // 3. Soft-delete unmapped columns (if not keeping them).
+      // The delete is scoped to the target group's column set: a column that
+      // belongs to another scope (a different custom group) is never touched.
       for (const columnId of columnsToDelete) {
         // Clean up dependents first
         await serviceClient.rpc("cleanup_column_dependents", { p_column_id: columnId });
-        
+
         // Soft-delete the column
-        const { error } = await serviceClient
+        let deleteQuery = serviceClient
           .from("columns")
-          .update({ deleted_at: new Date().toISOString(), status: "archived", updated_at: new Date().toISOString() })
+          .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
           .eq("id", columnId)
           .is("deleted_at", null);
+        deleteQuery = targetColumnGroupId
+          ? deleteQuery.eq("group_id", targetColumnGroupId)
+          : deleteQuery.is("group_id", null);
+        const { error } = await deleteQuery;
 
         if (!error) {
           deletedColumns.push(columnId);
@@ -259,12 +284,16 @@ export async function importWithColumnCleanup(
       const BATCH_SIZE = 500;
       const effectiveColumnsById = new Map<string, ColumnDefinition>();
       
-      // Build effective columns map (existing + new - deleted)
-      const { data: existingColumns } = await serviceClient
+      // Build effective columns map (existing + new - deleted), scoped to the
+      // target group's column set.
+      const existingColumnsQuery = serviceClient
         .from("columns")
         .select("*")
         .eq("board_id", input.boardId)
         .is("deleted_at", null);
+      const { data: existingColumns } = targetColumnGroupId
+        ? await existingColumnsQuery.eq("group_id", targetColumnGroupId)
+        : await existingColumnsQuery.is("group_id", null);
 
       if (existingColumns) {
         for (const col of existingColumns) {

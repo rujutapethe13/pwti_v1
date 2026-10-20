@@ -254,10 +254,21 @@ export interface Group {
   status: EntityStatus;
   permissions?: Partial<Record<BoardRole, ColumnRole>>;
   statusOptions?: DropdownOption[];
+  /**
+   * "shared"  — the group renders the board's shared columns (group_id IS NULL).
+   * "custom"  — the group owns its own column set (columns.group_id = group.id).
+   */
+  columnMode?: "shared" | "custom";
 }
+
+export type ColumnScope =
+  | { kind: "shared" }
+  | { kind: "group"; groupId: string }
+  | { kind: "all" };
 
 export interface ColumnDefinition {
   id: string;
+  groupId?: string | null;
   boardId: string;
   key: string;
   label: string;

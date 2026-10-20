@@ -10,7 +10,7 @@ export async function GET(request: Request) {
   // Direct database check: what boards exist?
   const supabase = await createClient(await cookies());
   const boardCheck = await supabase.from("boards").select("id, name, workspace_id, status").neq("status", "archived").limit(20);
-  const columnCheck = await supabase.from("columns").select("id, board_id, label, type").limit(100);
+  const columnCheck = await supabase.from("columns").select("id, board_id, label, type").is("group_id", null).limit(100);
   const cellCheck = await supabase.from("cell_values").select("record_id, column_id, value, value_text").limit(200);
 
   // Run the actual search with debug

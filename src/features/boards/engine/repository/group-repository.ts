@@ -30,6 +30,9 @@ export class GroupRepository extends BaseRepository<Group> {
       statusOptions: row.status_options
         ? (row.status_options as Group["statusOptions"])
         : undefined,
+      columnMode: (this.asString(row.column_mode ?? row.columnMode, "shared") === "custom"
+        ? "custom"
+        : "shared") as Group["columnMode"],
     };
   }
 
@@ -48,6 +51,7 @@ export class GroupRepository extends BaseRepository<Group> {
       ...(e.status !== undefined ? { status: e.status } : {}),
       ...(e.permissions !== undefined ? { permissions: e.permissions } : {}),
       ...(e.statusOptions !== undefined ? { status_options: e.statusOptions } : {}),
+      ...(e.columnMode !== undefined ? { column_mode: e.columnMode } : {}),
     };
   }
 

@@ -236,27 +236,33 @@ export const BoardService = {
 
     // Duplicate groups
     const groupsResult = await groupRepo.findByBoard(sourceBoard.id, { client });
+    const groupIdMap = new Map<string, string>();
     if (groupsResult.data) {
-      const newGroups = groupsResult.data.map((g) => ({
-        id: crypto.randomUUID(),
-        organizationId: g.organizationId,
-        workspaceId: g.workspaceId,
-        boardId: newBoard.id,
-        parentGroupId: null,
-        name: g.name,
-        color: g.color,
-        collapsed: false,
-        order: g.order,
-        status: "active" as const,
-      }));
+      const newGroups = groupsResult.data.map((g) => {
+        const newGroupId = crypto.randomUUID();
+        groupIdMap.set(g.id, newGroupId);
+        return {
+          id: newGroupId,
+          organizationId: g.organizationId,
+          workspaceId: g.workspaceId,
+          boardId: newBoard.id,
+          parentGroupId: null,
+          name: g.name,
+          color: g.color,
+          collapsed: false,
+          order: g.order,
+          status: "active" as const,
+        };
+      });
 
       for (const group of newGroups) {
         await groupRepo.create(group, { client });
       }
     }
 
-    // Duplicate columns
-    const columnsResult = await columnRepo.findByBoard(sourceBoard.id, { client });
+    // Duplicate columns. The "all" scope is used so custom-group columns are
+    // copied as well; their group reference is remapped to the new group id.
+    const columnsResult = await columnRepo.findByBoard(sourceBoard.id, { client }, false, { kind: "all" });
     const columnIdMap = new Map<string, string>();
     if (columnsResult.data) {
       for (const col of columnsResult.data) {
@@ -266,6 +272,7 @@ export const BoardService = {
           ...col,
           id: newColId,
           boardId: newBoard.id,
+          groupId: col.groupId ? (groupIdMap.get(col.groupId) ?? null) : null,
         }, { client });
       }
     }
