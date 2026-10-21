@@ -79,6 +79,27 @@ export async function updateBoardPrimaryLabel(
   );
 }
 
+/**
+ * Persist the board's title (record-title) column label.
+ *
+ * This is the field the pinned first column header renders from. It is never
+ * derived from a data column, so importing a sheet whose first column was not
+ * the title column can no longer rename the header to that column's label.
+ */
+export async function updateBoardTitleColumnLabel(
+  boardId: string,
+  titleColumnLabel: string,
+): Promise<ApiResponse<BoardDefinition>> {
+  if (!boardId || !titleColumnLabel.trim()) {
+    return { data: null, error: "Board ID and label are required", status: 400 };
+  }
+
+  return BoardService.updateTitleColumnLabel(
+    { boardId, titleColumnLabel: titleColumnLabel.trim() },
+    "system",
+  );
+}
+
 export async function duplicateBoard(formData: FormData): Promise<ApiResponse<BoardDefinition>> {
   const parsed = duplicateBoardSchema.safeParse({
     boardId: formData.get("boardId"),

@@ -34,6 +34,7 @@ export function ViewEngine({
   onUpdateView,
   onCellChange,
   columnOps,
+  groupOps,
   onBulkArchive,
   onBulkDelete,
   onRowDelete,
@@ -71,10 +72,14 @@ export function ViewEngine({
         name: g.name,
         color: g.color,
         order: g.order,
+        statusOptions: g.statusOptions,
+        titleColumnLabel: g.titleColumnLabel,
+        columnMode: g.columnMode,
       })),
       settings,
       onCellChange,
       columnOps,
+      groupOps,
       onSettingsChange: (partialSettings) => {
         onUpdateView?.(view.id, { settings: { ...settings, ...partialSettings } as ViewSettingsByType });
       },
@@ -88,7 +93,7 @@ export function ViewEngine({
       bulkArchiveLoading,
       bulkDeleteLoading,
     }),
-    [board, view, columns, records, cellValues, groups, settings, onCellChange, columnOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
+    [board, view, columns, records, cellValues, groups, settings, onCellChange, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
   );
 
   if (!viewPlugin || viewPlugin.placeholder) {

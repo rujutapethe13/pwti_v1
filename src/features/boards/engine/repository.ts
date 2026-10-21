@@ -50,6 +50,7 @@ function toBoardDefinition(row: DatabaseRow): BoardDefinition {
     sharedWith: asStringArray(row.shared_with ?? row.sharedWith, ["owner", "editor", "viewer"]) as BoardDefinition["sharedWith"],
     isRestricted: asBoolean(row.is_restricted),
     primaryColumnLabel: asString(row.primary_column_label ?? row.primaryColumnLabel) || undefined,
+    titleColumnLabel: asString(row.title_column_label ?? row.titleColumnLabel) || undefined,
        createdAt: asString(row.created_at ?? row.createdAt),
        updatedAt: asString(row.updated_at ?? row.updatedAt),
   };
@@ -153,6 +154,10 @@ function toGroup(row: DatabaseRow): Group {
     statusOptions: row.status_options
       ? (row.status_options as Group["statusOptions"])
       : undefined,
+    columnMode: (asString(row.column_mode ?? row.columnMode, "shared") === "custom"
+      ? "custom"
+      : "shared") as Group["columnMode"],
+    titleColumnLabel: asString(row.title_column_label ?? row.titleColumnLabel) || undefined,
   };
 }
 
@@ -269,6 +274,7 @@ export async function upsertBoard(data: BoardDefinition): Promise<BoardDefinitio
      status: data.status,
      shared_with: data.sharedWith,
      primary_column_label: data.primaryColumnLabel ?? null,
+     title_column_label: data.titleColumnLabel ?? null,
      updated_at: data.updatedAt,
      created_at: data.createdAt,
   });

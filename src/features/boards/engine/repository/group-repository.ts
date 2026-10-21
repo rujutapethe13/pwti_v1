@@ -33,6 +33,7 @@ export class GroupRepository extends BaseRepository<Group> {
       columnMode: (this.asString(row.column_mode ?? row.columnMode, "shared") === "custom"
         ? "custom"
         : "shared") as Group["columnMode"],
+      titleColumnLabel: this.asString(row.title_column_label ?? row.titleColumnLabel) || undefined,
     };
   }
 
@@ -52,6 +53,7 @@ export class GroupRepository extends BaseRepository<Group> {
       ...(e.permissions !== undefined ? { permissions: e.permissions } : {}),
       ...(e.statusOptions !== undefined ? { status_options: e.statusOptions } : {}),
       ...(e.columnMode !== undefined ? { column_mode: e.columnMode } : {}),
+      ...(e.titleColumnLabel !== undefined ? { title_column_label: e.titleColumnLabel } : {}),
     };
   }
 

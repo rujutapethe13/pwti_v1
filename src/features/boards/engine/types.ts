@@ -229,7 +229,8 @@ export interface BoardDefinition {
   status: EntityStatus;
   sharedWith: BoardRole[];
   isRestricted?: boolean;
-  primaryColumnLabel?: string;
+   primaryColumnLabel?: string;
+   titleColumnLabel?: string;
   createdAt: string;
   updatedAt: string;
   /**
@@ -250,6 +251,7 @@ export interface Group {
   name: string;
   color?: string;
   collapsed: boolean;
+  titleColumnLabel?: string;
   order: number;
   status: EntityStatus;
   permissions?: Partial<Record<BoardRole, ColumnRole>>;
@@ -259,6 +261,27 @@ export interface Group {
    * "custom"  — the group owns its own column set (columns.group_id = group.id).
    */
   columnMode?: "shared" | "custom";
+  /** Columns owned by the group — only populated for custom-column groups. */
+  columns?: ColumnDefinition[];
+}
+
+// ── Add-new-group payload ───────────────────────────────────
+
+export type AddGroupMode = "blank" | "copy" | "custom";
+
+export interface AddGroupColumnSpec {
+  name: string;
+  type: string;
+}
+
+export interface AddGroupPayload {
+  title: string;
+  color?: string;
+  mode: AddGroupMode;
+  /** Group whose columns are copied when mode is "copy". */
+  sourceGroupId?: string;
+  /** Explicit column set when mode is "custom". */
+  columns?: AddGroupColumnSpec[];
 }
 
 export type ColumnScope =

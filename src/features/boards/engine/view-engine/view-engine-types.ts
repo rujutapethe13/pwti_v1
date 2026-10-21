@@ -20,6 +20,7 @@ import type {
   Group,
   ColumnTypeKey,
   ViewSettingsByType,
+  AddGroupPayload,
 } from "../types";
 import type { BoardQueryResult } from "../query/query-service";
 
@@ -44,14 +45,32 @@ export interface ColumnOperations {
   columnWidths?: Record<string, number>;
   onColumnResize?: (columnId: string, newWidth: number) => void;
   onColumnReorder?: (activeId: string, overId: string, columns: ColumnDefinition[]) => void;
-  /** Primary (record-title) column label */
-  primaryColumnLabel?: string;
-  /** Rename the primary (record-title) column */
-  onPrimaryColumnRename?: (label: string) => void;
+  /** Title (record-title) column label rendered in the pinned first column header. */
+  titleColumnLabel?: string;
+  /** Rename the title (record-title) column label. */
+  onTitleColumnRename?: (label: string) => void;
   /** Sort */
   sortColumnId?: string;
   sortDirection?: "asc" | "desc";
   onSort?: (columnId: string, direction: "asc" | "desc") => void;
+}
+
+/**
+ * Group-level operations. These live in their own bag because the Table
+ * view needs them for the group rail and the "Add new group" affordance.
+ */
+export interface GroupOperations {
+  onAddGroup?: (payload: AddGroupPayload) => Promise<string | void> | string | void;
+  onRenameGroup?: (groupId: string, name: string) => void;
+  onDeleteGroup?: (groupId: string) => void;
+  onUpdateGroupColor?: (groupId: string, color: string | null) => void;
+  onUpdateGroupStatusOptions?: (groupId: string, statusOptions: Array<{ id: string; label: string; color?: string }>) => void;
+  onMoveGroupToBoard?: (groupId: string, targetBoardId: string) => void;
+  onMoveGroupToTop?: (groupId: string) => void;
+  onDuplicateGroup?: (groupId: string) => void;
+  onToggleGroupCollapse?: (groupId: string, collapsed: boolean) => void;
+  /** Persist a group's own title column label. */
+  onUpdateGroupTitleColumnLabel?: (groupId: string, titleColumnLabel: string) => void;
 }
 
 export interface ViewRendererProps {
@@ -71,7 +90,15 @@ export interface ViewRendererProps {
   cellValues: Map<string, ColumnValue>;
 
   /** Board's structural groups (BoardGroup — used by Kanban to respect months, etc.) */
-  groups: Array<{ id: string; name: string; color?: string; order: number; statusOptions?: Array<{ id: string; label: string; color?: string }> }>;
+  groups: Array<{
+    id: string;
+    name: string;
+    color?: string;
+    order: number;
+    statusOptions?: Array<{ id: string; label: string; color?: string }>;
+    titleColumnLabel?: string;
+    columnMode?: "shared" | "custom";
+  }>;
 
   /** Type-safe view settings (cast by the View Engine) */
   settings: ViewSettingsByType;
@@ -87,6 +114,9 @@ export interface ViewRendererProps {
 
   /** Column operations */
   columnOps?: ColumnOperations;
+
+  /** Group operations */
+  groupOps?: GroupOperations;
 
   /** Bulk record operations */
   onBulkArchive?: (recordIds: string[]) => void;
@@ -146,6 +176,9 @@ export interface ViewEngineProps {
 
   /** Column operations passed through to the active view renderer */
   columnOps?: ColumnOperations;
+
+  /** Group operations passed through to the active view renderer */
+  groupOps?: GroupOperations;
 
   /** Bulk record operations */
   onBulkArchive?: (recordIds: string[]) => void;

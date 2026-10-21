@@ -59,7 +59,8 @@ export type DomainAction =
   | "update_options"
   | "update_primary_column_label"
   | "update:color"
-  | "update:statusOptions";
+  | "update:statusOptions"
+  | "update:titleColumnLabel";
 
 export type EventPhase = "before" | "after";
 

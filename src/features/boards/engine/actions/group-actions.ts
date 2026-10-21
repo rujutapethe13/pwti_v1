@@ -1,11 +1,21 @@
 "use server";
 
-import { createGroupSchema, renameGroupSchema, reorderGroupsSchema, moveGroupSchema, duplicateGroupSchema, collapseGroupSchema, deleteGroupSchema, updateGroupColorSchema, updateGroupStatusOptionsSchema } from "../schemas/group-schemas";
+import { createGroupSchema, renameGroupSchema, reorderGroupsSchema, moveGroupSchema, duplicateGroupSchema, collapseGroupSchema, deleteGroupSchema, updateGroupColorSchema, updateGroupStatusOptionsSchema, updateGroupTitleColumnLabelSchema } from "../schemas/group-schemas";
 import { GroupService } from "../services/group-service";
 import type { ApiResponse } from "@/types";
 import type { Group } from "../types";
 
 export async function createGroup(formData: FormData): Promise<ApiResponse<Group>> {
+  const rawColumns = formData.get("columns");
+  let columns: unknown;
+  if (typeof rawColumns === "string" && rawColumns.length > 0) {
+    try {
+      columns = JSON.parse(rawColumns);
+    } catch {
+      columns = undefined;
+    }
+  }
+
   const parsed = createGroupSchema.safeParse({
     organizationId: formData.get("organizationId"),
     workspaceId: formData.get("workspaceId"),
@@ -13,8 +23,11 @@ export async function createGroup(formData: FormData): Promise<ApiResponse<Group
     name: formData.get("name"),
     color: formData.get("color") || undefined,
     statusOptions: formData.get("statusOptions") ? JSON.parse(formData.get("statusOptions") as string) : undefined,
+    titleColumnLabel: formData.get("titleColumnLabel") || undefined,
+    columnMode: formData.get("columnMode") || undefined,
+    copyFromGroupId: formData.get("copyFromGroupId") || undefined,
+    columns,
   });
-
   if (!parsed.success) {
     return { data: null, error: parsed.error.flatten().fieldErrors as unknown as string, status: 400 };
   }
@@ -84,5 +97,19 @@ export async function updateGroupStatusOptions(groupId: string, statusOptions: A
     return { data: null, error: "Invalid input", status: 400 };
   }
   return GroupService.updateStatusOptions(parsed.data, "system");
+}
+
+/**
+ * Persist the group's title (record-title) column label.
+ *
+ * The label lives in its own field so the pinned header never borrows the
+ * name of an unrelated data column.
+ */
+export async function updateGroupTitleColumnLabel(groupId: string, titleColumnLabel: string): Promise<ApiResponse<Group>> {
+  const parsed = updateGroupTitleColumnLabelSchema.safeParse({ groupId, titleColumnLabel });
+  if (!parsed.success) {
+    return { data: null, error: "Invalid input", status: 400 };
+  }
+  return GroupService.updateTitleColumnLabel(parsed.data, "system");
 }
 

@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
-import { createRecord, editRecord, deleteRecord, archiveRecord, restoreRecord, bulkDeleteRecords } from "../actions/record-actions";
+import { createRecord, editRecord, deleteRecord, archiveRecord, restoreRecord, moveRecord, bulkDeleteRecords } from "../actions/record-actions";
 import type { BoardRecord } from "../types";
 import { useUndoStack } from "./use-undo";
 
@@ -154,11 +154,22 @@ export function useRecord(initialRecords: BoardRecord[] = []): UseRecordReturn {
   const moveRecordFn = useCallback(
     async (recordId: string, groupId: string) => {
       const prev = records.find((r) => r.id === recordId);
+      setError(null);
       setRecords((p) => p.map((r) => (r.id === recordId ? { ...r, groupId } : r)));
       try {
-        toast.success("Record moved.");
-      } catch {
+        const response = await moveRecord(recordId, groupId);
+        if (response.error) {
+          setError(response.error);
+          if (prev) setRecords((p) => p.map((r) => (r.id === recordId ? prev : r)));
+          toast.error(response.error);
+        } else {
+          toast.success("Record moved.");
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Failed to move record.";
+        setError(msg);
         if (prev) setRecords((p) => p.map((r) => (r.id === recordId ? prev : r)));
+        toast.error(msg);
       }
     },
     [records],

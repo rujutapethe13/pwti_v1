@@ -35,6 +35,24 @@ export const createGroupSchema = z.object({
     label: z.string().min(1).max(255),
     color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
   })).optional(),
+  /**
+   * Label of the group's title (record-title) column. Stored in its own
+   * field so the pinned header never borrows another column's name.
+   */
+  titleColumnLabel: z.string().max(255).optional(),
+  /**
+   * "shared" — the group renders the board's shared columns.
+   * "custom" — the group owns its own column set.
+   */
+  columnMode: z.enum(["shared", "custom"]).optional(),
+  /** Copy the columns of this group when creating a custom-mode group. */
+  copyFromGroupId: entityId.optional(),
+  /** Explicit column set for a custom-mode group. */
+  columns: z.array(z.object({
+    key: z.string().min(1),
+    label: z.string().min(1).max(255),
+    type: z.string().min(1),
+  })).optional(),
 });
 
 export type CreateGroupInput = z.infer<typeof createGroupSchema>;
@@ -118,4 +136,15 @@ export const updateGroupStatusOptionsSchema = z.object({
 });
 
 export type UpdateGroupStatusOptionsInput = z.infer<typeof updateGroupStatusOptionsSchema>;
+
+// ── Update Group Title Column Label ─────────────────────────
+
+export const updateGroupTitleColumnLabelSchema = z.object({
+  groupId: entityId,
+  titleColumnLabel: z.string().min(1).max(255),
+});
+
+export type UpdateGroupTitleColumnLabelInput = z.infer<
+  typeof updateGroupTitleColumnLabelSchema
+>;
 

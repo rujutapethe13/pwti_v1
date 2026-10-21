@@ -38,6 +38,7 @@ import type {
 
 import { createServiceClient, createClient } from "@/lib/supabase/server";
 import { createBoardWithDefaults } from "../actions/create";
+import { resolveTitleColumnLabel } from "../lib/title-column";
 import type { PostgrestError } from "@supabase/supabase-js";
 
 const boardRepo = new BoardRepository();
@@ -178,6 +179,60 @@ export const BoardService = {
     const before = { ...board };
     const updates: Partial<BoardDefinition> = {
       primaryColumnLabel: input.primaryColumnLabel,
+      // The legacy field and the title column label are the same thing, so
+      // they must never drift apart — the pinned header renders the latter.
+      titleColumnLabel: input.primaryColumnLabel,
+    };
+
+    await eventBus.publish(
+      createEvent(
+        "board.update_primary_column_label:before",
+        actorUserId,
+        board,
+        before as unknown as Record<string, unknown>,
+        updates as unknown as Record<string, unknown>,
+      ),
+    );
+
+    const result = await boardRepo.update(input.boardId, updates);
+
+    if (result.data) {
+      await eventBus.publish(
+        createEvent(
+          "board.update_primary_column_label:after",
+          actorUserId,
+          result.data,
+          before as unknown as Record<string, unknown>,
+          result.data as unknown as Record<string, unknown>,
+        ),
+      );
+    }
+
+    return result;
+  },
+
+  /**
+   * Update the title column label (the pinned first column's header).
+   *
+   * The label is stored in its own field (`boards.title_column_label`) and is
+   * never derived from a data column. The legacy `primary_column_label` is
+   * kept in sync so older readers do not show a stale name.
+   */
+  async updateTitleColumnLabel(
+    input: { boardId: string; titleColumnLabel: string },
+    actorUserId: string,
+  ): Promise<ApiResponse<BoardDefinition>> {
+    const existing = await boardRepo.findById(input.boardId);
+    if (!existing.data) {
+      return existing as ApiResponse<BoardDefinition>;
+    }
+
+    const label = resolveTitleColumnLabel(input.titleColumnLabel);
+    const board = existing.data;
+    const before = { ...board };
+    const updates: Partial<BoardDefinition> = {
+      titleColumnLabel: label,
+      primaryColumnLabel: label,
     };
 
     await eventBus.publish(

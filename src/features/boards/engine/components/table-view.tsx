@@ -64,6 +64,8 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ColumnHeader } from "./column-header";
 import { CellRenderer } from "./cell-renderer";
 import { ColumnTypePicker } from "./column-type-picker";
+import { AddGroupPopover, type AddGroupPayload } from "./add-group-popover";
+import { DEFAULT_TITLE_COLUMN_LABEL } from "../lib/title-column";
 import { ConnectBoardColumnModal } from "./connect-board-column-modal";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useSelection } from "../hooks/use-selection";
@@ -141,10 +143,10 @@ export interface TableViewProps {
   onColumnUpdateDescription?: (columnId: string, description: string) => void;
   onColumnToggleRestrictEditing?: (columnId: string) => void;
   onColumnToggleRestrictView?: (columnId: string) => void;
-  /** Primary (record-title) column label */
-  primaryColumnLabel?: string;
-  /** Rename the primary (record-title) column */
-  onPrimaryColumnRename?: (label: string) => void;
+  /** Title (record-title) column label rendered in the pinned first column header */
+  titleColumnLabel?: string;
+  /** Rename the title (record-title) column */
+  onTitleColumnRename?: (label: string) => void;
   /** Sort */
   sortColumnId?: string;
   sortDirection?: "asc" | "desc";
@@ -168,7 +170,11 @@ export interface TableViewProps {
   onDeleteGroup?: (groupId: string) => void;
   onUpdateGroupColor?: (groupId: string, color: string | null) => void;
   onUpdateGroupStatusOptions?: (groupId: string, statusOptions: Array<{ id: string; label: string; color?: string }>) => void;
-  onAddGroup?: (name: string) => Promise<string | void> | string | void;
+  onAddGroup?: (payload: AddGroupPayload) => Promise<string | void> | string | void;
+  onDuplicateGroup?: (groupId: string) => void;
+  onToggleGroupCollapse?: (groupId: string, collapsed: boolean) => void;
+  /** Persist a group's own title column label */
+  onUpdateGroupTitleColumnLabel?: (groupId: string, titleColumnLabel: string) => void;
   /** New item callback */
   onNewItem?: (groupId?: string | null) => void;
   /** Record title change callback */
@@ -490,8 +496,10 @@ function GroupHeaderMenu({
   onMoveGroupToTop,
   onRenameGroup,
   onDeleteGroup,
+  onDuplicateGroup,
   onUpdateGroupColor,
   onUpdateGroupStatusOptions,
+  onRenameTitleColumn,
 }: {
   group: Group;
   _boardId: string;
@@ -499,8 +507,10 @@ function GroupHeaderMenu({
   onMoveGroupToTop?: (groupId: string) => void;
   onRenameGroup?: (groupId: string, name: string) => void;
   onDeleteGroup?: (groupId: string) => void;
+  onDuplicateGroup?: (groupId: string) => void;
   onUpdateGroupColor?: (groupId: string, color: string | null) => void;
   onUpdateGroupStatusOptions?: (groupId: string, statusOptions: Array<{ id: string; label: string; color?: string }>) => void;
+  onRenameTitleColumn?: (groupId: string) => void;
 }) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [editingStatus, setEditingStatus] = useState(false);
@@ -554,6 +564,16 @@ function GroupHeaderMenu({
         {onRenameGroup && (
           <DropdownMenuItem onSelect={() => onRenameGroup(group.id, group.name)}>
             Rename
+          </DropdownMenuItem>
+        )}
+        {onDuplicateGroup && (
+          <DropdownMenuItem onSelect={() => onDuplicateGroup(group.id)}>
+            Duplicate group
+          </DropdownMenuItem>
+        )}
+        {onRenameTitleColumn && (
+          <DropdownMenuItem onSelect={() => onRenameTitleColumn(group.id)}>
+            Rename title column
           </DropdownMenuItem>
         )}
         <DropdownMenuSub>
@@ -695,8 +715,8 @@ export function TableView({
   onColumnUpdateDescription,
   onColumnToggleRestrictEditing,
   onColumnToggleRestrictView,
-  primaryColumnLabel,
-  onPrimaryColumnRename,
+  titleColumnLabel,
+  onTitleColumnRename,
   sortColumnId,
   sortDirection,
   onSort,
@@ -718,12 +738,14 @@ export function TableView({
   onUpdateGroupColor,
   onUpdateGroupStatusOptions,
   onAddGroup,
+  onDuplicateGroup,
+  onToggleGroupCollapse,
+  onUpdateGroupTitleColumnLabel,
   onScrollBottom,
   loadingMore,
   hasMore,
   recordTotal,
 }: TableViewProps) {
-  console.log("[TableView] Rendering, board:", board?.id, "columns:", columns?.length, "records:", records?.length, "groups:", groups?.length);
   // ── Selection ──────────────────────────────────────────
   const recordIds = useMemo(() => records.map((r) => r.id), [records]);
   const selection = useSelection<string>();
@@ -811,6 +833,7 @@ export function TableView({
   // ── Groups ────────────────────────────────────────────
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [showAddGroupPopover, setShowAddGroupPopover] = useState(false);
   const [editingGroupName, setEditingGroupName] = useState("");
   const editingGroupInputRef = useRef<HTMLInputElement>(null);
 
@@ -821,17 +844,22 @@ export function TableView({
     }
   }, [editingGroupId]);
 
-  const toggleGroup = useCallback((groupId: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(groupId)) {
-        next.delete(groupId);
-      } else {
-        next.add(groupId);
-      }
-      return next;
-    });
-  }, []);
+  const toggleGroup = useCallback(
+    (groupId: string) => {
+      const willCollapse = !collapsedGroups.has(groupId);
+      setCollapsedGroups((prev) => {
+        const next = new Set(prev);
+        if (next.has(groupId)) {
+          next.delete(groupId);
+        } else {
+          next.add(groupId);
+        }
+        return next;
+      });
+      onToggleGroupCollapse?.(groupId, willCollapse);
+    },
+    [collapsedGroups, onToggleGroupCollapse],
+  );
 
   // ── Sort state ────────────────────────────────────────
   const [internalSort, setInternalSort] = useState<{ columnId: string; direction: "asc" | "desc" } | null>(null);
@@ -930,17 +958,24 @@ export function TableView({
   const [addColumnAfterId, setAddColumnAfterId] = useState<string | null>(null);
   const [connectBoardAfterId, setConnectBoardAfterId] = useState<string | null>(null);
 
-  const [recordColumnLabel, setRecordColumnLabel] = useState(primaryColumnLabel ?? "Name");
+  const [recordColumnLabel, setRecordColumnLabel] = useState(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
   const [recordTitleWidth, setRecordTitleWidth] = useState(ROW_TITLE_MIN_WIDTH);
 
   const [primaryColumnRenameOpen, setPrimaryColumnRenameOpen] = useState(false);
   const primaryColumnRenameInputRef = useRef<HTMLInputElement>(null);
 
+  /** Per-group title column rename (the group keeps its own label). */
+  const [groupTitleRename, setGroupTitleRename] = useState<{
+    groupId: string;
+    label: string;
+  } | null>(null);
+
+  // Sync the header label from the persisted board/group label — but only when
+  // the prop actually changes. The previous effect also depended on
+  // `recordColumnLabel`, so every keystroke in the rename input was reverted.
   useEffect(() => {
-    if (primaryColumnLabel && primaryColumnLabel !== recordColumnLabel) {
-      setRecordColumnLabel(primaryColumnLabel);
-    }
-  }, [primaryColumnLabel, recordColumnLabel]);
+    setRecordColumnLabel(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
+  }, [titleColumnLabel]);
 
   useEffect(() => {
     if (primaryColumnRenameOpen && primaryColumnRenameInputRef.current) {
@@ -1294,6 +1329,20 @@ export function TableView({
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalRowsHeight = rowVirtualizer.getTotalSize();
 
+  // ── Scroll a newly created group into view ─────────────
+  const [pendingScrollGroupId, setPendingScrollGroupId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingScrollGroupId) return;
+    const index = allRows.findIndex(
+      (r) => r.type === "header" && r.groupId === pendingScrollGroupId,
+    );
+    if (index >= 0) {
+      rowVirtualizer.scrollToIndex(index, { align: "end" });
+      setPendingScrollGroupId(null);
+    }
+  }, [pendingScrollGroupId, allRows, rowVirtualizer]);
+
   // ── Always render the full table shell ─────────────────────────
   // Even a brand-new board with zero rows / zero groups must show the
   // toolbar, headers, group headers, and "+ Add new group" so the user is
@@ -1466,50 +1515,115 @@ export function TableView({
                  </div>
                </div>
 
-               {/* Primary column rename dialog */}
-               <Dialog open={primaryColumnRenameOpen} onOpenChange={setPrimaryColumnRenameOpen}>
+                {/* Primary column rename dialog */}
+                <Dialog open={primaryColumnRenameOpen} onOpenChange={setPrimaryColumnRenameOpen}>
                  <DialogContent className="sm:max-w-sm">
                    <DialogHeader>
                      <DialogTitle>Rename column</DialogTitle>
                    </DialogHeader>
-                   <div className="py-4">
-                     <Input
-                       ref={primaryColumnRenameInputRef}
-                       defaultValue={recordColumnLabel}
-                       onChange={(e) => setRecordColumnLabel(e.target.value)}
-                       onKeyDown={(e) => {
-                         if (e.key === "Enter") {
-                           const trimmed = (e.target as HTMLInputElement).value.trim();
-                           if (trimmed && trimmed !== (primaryColumnLabel ?? "Name")) {
-                             onPrimaryColumnRename?.(trimmed);
-                           }
-                           setPrimaryColumnRenameOpen(false);
-                         } else if (e.key === "Escape") {
-                           setPrimaryColumnRenameOpen(false);
-                         }
-                       }}
-                       placeholder="Column label"
-                       className="h-7 text-xs"
-                     />
-                   </div>
-                   <DialogFooter>
-                     <Button variant="outline" onClick={() => setPrimaryColumnRenameOpen(false)}>
-                       Cancel
-                     </Button>
-                     <Button
-                       onClick={() => {
-                         const trimmed = recordColumnLabel.trim();
-                         if (trimmed && trimmed !== (primaryColumnLabel ?? "Name")) {
-                           onPrimaryColumnRename?.(trimmed);
-                         }
-                         setPrimaryColumnRenameOpen(false);
-                       }}
-                     >
-                       Save
-                     </Button>
-                   </DialogFooter>
+                    <div className="py-4">
+                      <Input
+                        ref={primaryColumnRenameInputRef}
+                        value={recordColumnLabel}
+                        onChange={(e) => setRecordColumnLabel(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            const trimmed = (e.target as HTMLInputElement).value.trim();
+                            if (trimmed && trimmed !== (titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL)) {
+                              onTitleColumnRename?.(trimmed);
+                            }
+                            setPrimaryColumnRenameOpen(false);
+                          } else if (e.key === "Escape") {
+                            setRecordColumnLabel(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
+                            setPrimaryColumnRenameOpen(false);
+                          }
+                        }}
+                        placeholder="Column label"
+                        className="h-7 text-xs"
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setRecordColumnLabel(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
+                          setPrimaryColumnRenameOpen(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          const trimmed = recordColumnLabel.trim();
+                          if (trimmed && trimmed !== (titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL)) {
+                            onTitleColumnRename?.(trimmed);
+                          }
+                          setPrimaryColumnRenameOpen(false);
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </DialogFooter>
                  </DialogContent>
                </Dialog>
+
+                {/* Per-group title column rename dialog */}
+                <Dialog
+                  open={groupTitleRename !== null}
+                  onOpenChange={(open) => {
+                    if (!open) setGroupTitleRename(null);
+                  }}
+                >
+                  <DialogContent className="sm:max-w-sm">
+                    <DialogHeader>
+                      <DialogTitle>Rename title column</DialogTitle>
+                    </DialogHeader>
+                    <div className="py-4">
+                      <Input
+                        value={groupTitleRename?.label ?? ""}
+                        onChange={(e) =>
+                          setGroupTitleRename((prev) =>
+                            prev ? { ...prev, label: e.target.value } : prev,
+                          )
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && groupTitleRename) {
+                            const trimmed = (e.target as HTMLInputElement).value.trim();
+                            if (trimmed) {
+                              onUpdateGroupTitleColumnLabel?.(
+                                groupTitleRename.groupId,
+                                trimmed,
+                              );
+                            }
+                            setGroupTitleRename(null);
+                          }
+                        }}
+                        placeholder="Column label"
+                        className="h-7 text-xs"
+                      />
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setGroupTitleRename(null)}>
+                        Cancel
+                      </Button>
+                      <Button
+                        onClick={() => {
+                          if (!groupTitleRename) return;
+                          const trimmed = groupTitleRename.label.trim();
+                          if (trimmed) {
+                            onUpdateGroupTitleColumnLabel?.(
+                              groupTitleRename.groupId,
+                              trimmed,
+                            );
+                          }
+                          setGroupTitleRename(null);
+                        }}
+                      >
+                        Save
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
 
               {/* Column headers */}
               <SortableContext
@@ -1658,8 +1772,19 @@ export function TableView({
                         setEditingGroupName(groups?.find((g) => g.id === groupId)?.name ?? "");
                       }}
                       onDeleteGroup={onDeleteGroup}
+                      onDuplicateGroup={onDuplicateGroup}
                       onUpdateGroupColor={onUpdateGroupColor}
                       onUpdateGroupStatusOptions={onUpdateGroupStatusOptions}
+                      onRenameTitleColumn={(groupId) => {
+                        const target = groups?.find((g) => g.id === groupId);
+                        setGroupTitleRename({
+                          groupId,
+                          label:
+                            target?.titleColumnLabel ??
+                            titleColumnLabel ??
+                            DEFAULT_TITLE_COLUMN_LABEL,
+                        });
+                      }}
                     />
                   </div>
                 </div>
@@ -1819,19 +1944,35 @@ export function TableView({
 
           {/* Add new group button */}
           {onAddGroup && (
-            <div
-              className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground hover:bg-accent/50 cursor-pointer"
-              onClick={async () => {
-                const result = await onAddGroup("New Group");
-                if (typeof result === "string") {
-                  setEditingGroupId(result);
-                  setEditingGroupName("New Group");
-                }
-              }}
-            >
-              <Plus className="size-3.5" />
-              <span>Add new group</span>
-            </div>
+            <>
+              <div
+                className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground hover:bg-accent/50 cursor-pointer"
+                onClick={() => setShowAddGroupPopover(true)}
+              >
+                <Plus className="size-3.5" />
+                <span>Add new group</span>
+              </div>
+              {showAddGroupPopover && (
+                <AddGroupPopover
+                  groups={(groups ?? []).map((g) => ({
+                    id: g.id,
+                    name: g.name ?? (g as { title?: string }).title ?? "Group",
+                    color: g.color,
+                    columnCount: (g.columns?.length ?? 0),
+                  }))}
+                  onConfirm={async (payload) => {
+                    const result = await onAddGroup(payload);
+                    if (typeof result === "string") {
+                      setEditingGroupId(result);
+                      setEditingGroupName(payload.title);
+                      // Bring the freshly created group into view.
+                      setPendingScrollGroupId(result);
+                    }
+                  }}
+                  onClose={() => setShowAddGroupPopover(false)}
+                />
+              )}
+            </>
           )}
 
           {/* ── Footer with sums for number columns ────────── */}

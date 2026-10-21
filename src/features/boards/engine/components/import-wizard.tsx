@@ -69,6 +69,13 @@ import type {
   ParsedFile,
   ColumnRemovalInfo,
 } from "@/features/boards/engine/lib/import-export";
+import {
+  DEFAULT_TITLE_COLUMN_LABEL,
+  normalizeTitleColumnLabel,
+  resolveImportTitleColumnLabel,
+  shouldPromptForTitleColumnRename,
+  titleColumnLabelFromFileHeader,
+} from "@/features/boards/engine/lib/title-column";
 
 /* ─────────────────────────────────────────────────────────────
  * Types
@@ -80,6 +87,8 @@ export interface ImportWizardProps {
   boardName: string;
   columns: ColumnDefinition[];
   groups: Group[];
+  /** The board's current title column label — the fallback for the header. */
+  titleColumnLabel?: string;
   onConfirm: (args: {
     newColumns: ColumnDefinition[];
     updatedColumns: ColumnDefinition[];
@@ -88,6 +97,20 @@ export interface ImportWizardProps {
     columnsToDelete: string[];
     targetGroupId: string | null;
     keepUnmappedColumns: boolean;
+    /**
+     * Title column label to persist for the import. `null` means "leave the
+     * existing label alone" (the wizard's "None" option).
+     */
+    titleColumnLabel: string | null;
+    /**
+     * Whether the import may replace an existing title column label. When the
+     * user declines the rename prompt the existing label is kept.
+     */
+    renameTitleColumn: boolean;
+    /**
+     * Name of the group to create when the target is "create new group".
+     */
+    newGroupName?: string;
     /**
      * Explicit post-import column plan built before any backend writes.
      * `finalColumns` is the ordered list of columns that must exist after the
@@ -100,6 +123,9 @@ export interface ImportWizardProps {
     };
   }) => Promise<{ createdCount: number; importErrors: Array<{ rowIndex: number; reason: string }> }> | { createdCount: number; importErrors: Array<{ rowIndex: number; reason: string }> };
 }
+
+/** Sentinel value for the "create a new group" option in the target dropdown. */
+const CREATE_NEW_GROUP = "__create_new_group__";
 
 type Step = "upload" | "preview" | "mapping" | "confirm" | "creating" | "summary";
 
@@ -129,6 +155,7 @@ export function ImportWizard({
   boardName,
   columns,
   groups,
+  titleColumnLabel,
   onConfirm,
 }: ImportWizardProps) {
   const [step, setStep] = useState<Step>("upload");
@@ -144,6 +171,8 @@ export function ImportWizard({
   const [targetGroupId, setTargetGroupId] = useState<string | null>(
     groups[0]?.id ?? null,
   );
+  const [newGroupName, setNewGroupName] = useState("");
+  const [renameTitleColumn, setRenameTitleColumn] = useState(true);
   const [optionMappings, setOptionMappings] = useState<
     Record<string, Record<string, OptionMapping>>
   >({});
@@ -162,6 +191,59 @@ export function ImportWizard({
     () => getMappableMappings(mappings, titleColumnFileHeader),
     [mappings, titleColumnFileHeader],
   );
+
+  /**
+   * The title column label this import would persist. `null` when the user
+   * picked "None" — in that case the existing board/group label is kept.
+   */
+  const pendingTitleColumnLabel = useMemo(() => {
+    if (!titleColumnFileHeader) return null;
+    return titleColumnLabelFromFileHeader(titleColumnFileHeader);
+  }, [titleColumnFileHeader]);
+
+  /** The group the import lands in (null when a new group will be created). */
+  const targetGroup = useMemo(
+    () => groups.find((g) => g.id === targetGroupId) ?? null,
+    [groups, targetGroupId],
+  );
+
+  /** True when the import will create a brand new group. */
+  const createsNewGroup = targetGroupId === CREATE_NEW_GROUP;
+
+  /**
+   * Whether the import would replace an existing title column label. Only
+   * existing groups can conflict — a new group always adopts the label.
+   */
+  const needsTitleColumnRename = useMemo(() => {
+    if (!pendingTitleColumnLabel) return false;
+    if (createsNewGroup) return false;
+    const existing = targetGroup?.titleColumnLabel ?? titleColumnLabel;
+    return shouldPromptForTitleColumnRename(existing, pendingTitleColumnLabel);
+  }, [pendingTitleColumnLabel, createsNewGroup, targetGroup, titleColumnLabel]);
+
+  /** The label the header will show once the import completes. */
+  const effectiveTitleColumnLabel = useMemo(() => {
+    const applied = resolveImportTitleColumnLabel({
+      fileHeader: titleColumnFileHeader,
+      existingLabel: createsNewGroup
+        ? null
+        : (targetGroup?.titleColumnLabel ?? titleColumnLabel),
+      renameAccepted: renameTitleColumn,
+    });
+    if (applied) return applied;
+    return (
+      normalizeTitleColumnLabel(targetGroup?.titleColumnLabel) ??
+      normalizeTitleColumnLabel(titleColumnLabel) ??
+      DEFAULT_TITLE_COLUMN_LABEL
+    );
+  }, [
+    titleColumnFileHeader,
+    createsNewGroup,
+    targetGroup,
+    titleColumnLabel,
+    renameTitleColumn,
+  ]);
+
   const columnsToDelete = useMemo(
     () =>
       getColumnIdsToDelete(
@@ -192,6 +274,8 @@ export function ImportWizard({
       setNewColumns([]);
       setTitleColumnFileHeader(null);
       setTargetGroupId(groups[0]?.id ?? null);
+      setNewGroupName("");
+      setRenameTitleColumn(true);
       setOptionMappings({});
       setImporting(false);
       setImportProgress({ done: 0, total: 0 });
@@ -231,6 +315,8 @@ export function ImportWizard({
       setTitleColumnFileHeader(
         findBestTitleColumn(result.headers, columns),
       );
+      setNewGroupName(file.name.replace(/\.[^.]+$/, ""));
+      setRenameTitleColumn(true);
       setOptionMappings({});
       setStep("preview");
     } catch (err) {
@@ -361,16 +447,20 @@ export function ImportWizard({
 
   /* ── Bulk create ─────────────────────────────────────────── */
 
-  const startImport = useCallback(async () => {
+  /**
+   * Move to the confirmation step. The import always passes through it so the
+   * user sees the row count, the target group and the title column label
+   * before anything is written, and so the rename prompt has a home.
+   */
+  const startImport = useCallback(() => {
     if (!parsed) return;
     if (!validation.valid) return;
+    setStep("confirm");
+  }, [parsed, validation.valid]);
 
-    // If there are columns to delete and user hasn't chosen to keep them,
-    // show confirmation step first
-    if (columnsToDelete.length > 0 && !keepUnmappedColumns) {
-      setStep("confirm");
-      return;
-    }
+  const runImport = useCallback(async () => {
+    if (!parsed) return;
+    if (!validation.valid) return;
 
     setStep("creating");
     setImporting(true);
@@ -494,8 +584,19 @@ export function ImportWizard({
         // page component now relies on the live ColumnDefinition[] in the plan
         // so the delete call uses real backend ids.
         columnsToDelete: keepUnmappedColumns ? [] : columnsToDelete,
-        targetGroupId,
+        targetGroupId: createsNewGroup ? null : targetGroupId,
         keepUnmappedColumns,
+        // `null` means "keep the existing title column label" (the wizard's
+        // "None" option, or a declined rename prompt).
+        titleColumnLabel: resolveImportTitleColumnLabel({
+          fileHeader: titleColumnFileHeader,
+          existingLabel: createsNewGroup
+            ? null
+            : (targetGroup?.titleColumnLabel ?? titleColumnLabel),
+          renameAccepted: renameTitleColumn,
+        }),
+        renameTitleColumn: !needsTitleColumnRename || renameTitleColumn,
+        newGroupName: createsNewGroup ? newGroupName.trim() || "Imported" : undefined,
         columnPlan: {
           finalColumns: columnPlan.finalColumns,
           columnsToDelete: keepUnmappedColumns ? [] : columnPlan.columnsToDelete,
@@ -524,6 +625,13 @@ export function ImportWizard({
     titleColumnFileHeader,
     columnsToDelete,
     targetGroupId,
+    targetGroup?.titleColumnLabel,
+    titleColumnLabel,
+    createsNewGroup,
+    newGroupName,
+    pendingTitleColumnLabel,
+    needsTitleColumnRename,
+    renameTitleColumn,
     keepUnmappedColumns,
     onConfirm,
   ]);
@@ -564,6 +672,8 @@ export function ImportWizard({
     setMappings([]);
     setNewColumns([]);
     setTitleColumnFileHeader(null);
+    setNewGroupName("");
+    setRenameTitleColumn(true);
     setOptionMappings({});
     setSummary(null);
   }, []);
@@ -651,6 +761,9 @@ export function ImportWizard({
               targetGroupId={targetGroupId}
               groups={groups}
               onTargetGroupChange={setTargetGroupId}
+              newGroupName={newGroupName}
+              onNewGroupNameChange={setNewGroupName}
+              effectiveTitleColumnLabel={effectiveTitleColumnLabel}
               validation={validation}
               onBack={() => setStep("preview")}
               onConfirm={startImport}
@@ -663,8 +776,20 @@ export function ImportWizard({
               columnsToRemoveInfo={columnsToRemoveInfo}
               keepUnmappedColumns={keepUnmappedColumns}
               onKeepUnmappedChange={setKeepUnmappedColumns}
+              rowCount={parsed.rows.length}
+              targetGroupName={
+                createsNewGroup
+                  ? newGroupName.trim() || "New group"
+                  : targetGroup?.name ?? "No group"
+              }
+              createsNewGroup={createsNewGroup}
+              titleColumnLabel={effectiveTitleColumnLabel}
+              needsTitleColumnRename={needsTitleColumnRename}
+              pendingTitleColumnLabel={pendingTitleColumnLabel}
+              renameTitleColumn={renameTitleColumn}
+              onRenameTitleColumnChange={setRenameTitleColumn}
               onBack={() => setStep("mapping")}
-              onConfirm={startImport}
+              onConfirm={runImport}
             />
           )}
 
@@ -727,7 +852,7 @@ export function ImportWizard({
       <ChevronLeft className="mr-1 size-3.5" />
       Back
     </Button>
-    <Button onClick={startImport} disabled={!canProceedFromMapping || importing}>
+    <Button onClick={runImport} disabled={!canProceedFromMapping || importing}>
       {importing ? (
         <>
           <Loader2 className="mr-1 h-3 w-3" />
@@ -968,12 +1093,16 @@ interface MappingStepProps {
   targetGroupId: string | null;
   groups: Group[];
   onTargetGroupChange: (id: string | null) => void;
+  newGroupName: string;
+  onNewGroupNameChange: (name: string) => void;
+  /** The title column label the header will show once the import completes. */
+  effectiveTitleColumnLabel: string;
   validation: ReturnType<typeof validateMappings>;
   onBack: () => void;
   onConfirm: () => void;
 }
 
-function MappingStep(props: MappingStepProps) {
+export function MappingStep(props: MappingStepProps) {
   const {
     mappings,
     allMappings,
@@ -992,8 +1121,13 @@ function MappingStep(props: MappingStepProps) {
     targetGroupId,
     groups,
     onTargetGroupChange,
+    newGroupName,
+    onNewGroupNameChange,
+    effectiveTitleColumnLabel,
     validation,
   } = props;
+
+  const createsNewGroup = targetGroupId === CREATE_NEW_GROUP;
 
   return (
     <div className="space-y-3">
@@ -1011,13 +1145,19 @@ function MappingStep(props: MappingStepProps) {
             onChange={(e) => onTitleColumnChange(e.target.value || null)}
             className="h-7 rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
           >
-            <option value="">— Generate titles automatically —</option>
+            <option value="">None</option>
             {allMappings.map((m, i) => (
-                <option key={m.fileColumn + i} value={m.fileColumn}>
-                  {m.fileColumn}
-                </option>
-              ))}
+              <option key={m.fileColumn + i} value={m.fileColumn}>
+                {m.fileColumn}
+              </option>
+            ))}
           </select>
+          <span className="text-[10px] text-muted-foreground">
+            Title column header will read:{" "}
+            <span className="font-medium text-foreground">
+              {effectiveTitleColumnLabel}
+            </span>
+          </span>
         </label>
         <label className="flex flex-col gap-1">
           <span className="font-medium text-foreground">Target group</span>
@@ -1032,7 +1172,16 @@ function MappingStep(props: MappingStepProps) {
                 {g.name}
               </option>
             ))}
+            <option value={CREATE_NEW_GROUP}>+ Create new group</option>
           </select>
+          {createsNewGroup && (
+            <Input
+              value={newGroupName}
+              onChange={(e) => onNewGroupNameChange(e.target.value)}
+              placeholder="New group name"
+              className="h-7 text-xs"
+            />
+          )}
         </label>
       </div>
 
@@ -1311,15 +1460,31 @@ interface ConfirmStepProps {
   columnsToRemoveInfo: ColumnRemovalInfo[];
   keepUnmappedColumns: boolean;
   onKeepUnmappedChange: (value: boolean) => void;
+  rowCount: number;
+  targetGroupName: string;
+  createsNewGroup: boolean;
+  titleColumnLabel: string;
+  needsTitleColumnRename: boolean;
+  pendingTitleColumnLabel: string | null;
+  renameTitleColumn: boolean;
+  onRenameTitleColumnChange: (value: boolean) => void;
   onBack: () => void;
   onConfirm: () => void;
 }
 
-function ConfirmStep({
+export function ConfirmStep({
   columnSets,
   columnsToRemoveInfo,
   keepUnmappedColumns,
   onKeepUnmappedChange,
+  rowCount,
+  targetGroupName,
+  createsNewGroup,
+  titleColumnLabel,
+  needsTitleColumnRename,
+  pendingTitleColumnLabel,
+  renameTitleColumn,
+  onRenameTitleColumnChange,
   onBack,
   onConfirm,
 }: ConfirmStepProps) {
@@ -1330,6 +1495,37 @@ function ConfirmStep({
 
   return (
     <div className="space-y-3">
+      {/* Import summary */}
+      <div className="rounded-md border border-border bg-muted/20 p-3 text-xs">
+        <div className="font-medium text-foreground">Import summary</div>
+        <div className="mt-1 text-muted-foreground">
+          {rowCount} row{rowCount === 1 ? "" : "s"} into{" "}
+          <span className="font-medium text-foreground">
+            &quot;{targetGroupName}&quot;
+          </span>
+          {createsNewGroup && " (new group)"}
+          , title column:{" "}
+          <span className="font-medium text-foreground">{titleColumnLabel}</span>
+        </div>
+      </div>
+
+      {/* Title column rename prompt */}
+      {needsTitleColumnRename && pendingTitleColumnLabel && (
+        <label className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+          <input
+            type="checkbox"
+            checked={renameTitleColumn}
+            onChange={(e) => onRenameTitleColumnChange(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+          />
+          <span>
+            Rename the title column to{" "}
+            <span className="font-medium">{pendingTitleColumnLabel}</span>?
+            Uncheck to keep the current title column label.
+          </span>
+        </label>
+      )}
+
       <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
         <div className="flex items-center gap-1.5 font-medium mb-2">
           <AlertCircle className="size-3.5" />

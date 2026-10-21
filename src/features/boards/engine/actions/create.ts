@@ -5,6 +5,7 @@ import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { boardTemplates } from "../registry";
 
 import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, Group, BoardTemplate } from "../types";
+import { DEFAULT_TITLE_COLUMN_LABEL } from "../lib/title-column";
 
 /**
  * Every board/group/column/view/record id must be a real UUID. The
@@ -176,6 +177,7 @@ export async function createBoardWithDefaults(
       order: 0,
       status: "active",
       statusOptions: [],
+      titleColumnLabel: DEFAULT_TITLE_COLUMN_LABEL,
     },
   ];
 
@@ -328,6 +330,7 @@ defaultValue: "",
     visibility: board.visibility,
     status: board.status,
     shared_with: board.sharedWith,
+    title_column_label: board.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
   });
@@ -349,6 +352,7 @@ defaultValue: "",
       sort_order: group.order,
       status: group.status,
       status_options: group.statusOptions ?? [],
+      title_column_label: group.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
       created_at: now,
       updated_at: now,
     });
@@ -486,6 +490,7 @@ export async function createBoardFromTemplate(
     visibility: board.visibility,
     status: board.status,
     shared_with: board.sharedWith,
+    title_column_label: board.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
   });
@@ -513,6 +518,7 @@ export async function createBoardFromTemplate(
       order: i,
       status: "active",
       statusOptions: [],
+      titleColumnLabel: DEFAULT_TITLE_COLUMN_LABEL,
     };
     groups.push(group);
 
@@ -528,6 +534,7 @@ export async function createBoardFromTemplate(
       sort_order: group.order,
       status: group.status,
       status_options: [],
+      title_column_label: group.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
       created_at: now,
       updated_at: now,
     });
@@ -689,6 +696,7 @@ export async function createMultiLevelBoard(
     visibility: board.visibility,
     status: board.status,
     shared_with: board.sharedWith,
+    title_column_label: board.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
   });
@@ -723,6 +731,7 @@ export async function createMultiLevelBoard(
       order: i,
       status: "active",
       statusOptions: [],
+      titleColumnLabel: DEFAULT_TITLE_COLUMN_LABEL,
     };
     groups.push(group);
 
@@ -738,6 +747,7 @@ export async function createMultiLevelBoard(
       sort_order: group.order,
       status: group.status,
       status_options: [],
+      title_column_label: group.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
       created_at: now,
       updated_at: now,
     });
@@ -774,6 +784,7 @@ export async function createMultiLevelBoard(
       order: i,
       status: "active",
       statusOptions: [],
+      titleColumnLabel: DEFAULT_TITLE_COLUMN_LABEL,
     };
     groups.push(subGroup);
 
@@ -789,6 +800,7 @@ export async function createMultiLevelBoard(
       sort_order: subGroup.order,
       status: subGroup.status,
       status_options: [],
+      title_column_label: subGroup.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
       created_at: now,
       updated_at: now,
     });
@@ -1034,6 +1046,7 @@ export async function createDashboardBoard(
     visibility: board.visibility,
     status: board.status,
     shared_with: board.sharedWith,
+    title_column_label: board.titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL,
     created_at: board.createdAt,
     updated_at: board.updatedAt,
   });

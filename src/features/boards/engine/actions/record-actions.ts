@@ -89,8 +89,8 @@ export async function moveRecord(recordId: string, targetGroupId: string): Promi
   return RecordService.move(parsed.data, "system");
 }
 
-export async function bulkUpdateRecords(recordIds: string[], cellValues: Record<string, unknown>): Promise<ApiResponse<null>> {
-  const parsed = bulkUpdateSchema.safeParse({ recordIds, cellValues });
+export async function bulkUpdateRecords(recordIds: string[], cellValues: Record<string, unknown>, targetGroupId?: string): Promise<ApiResponse<null>> {
+  const parsed = bulkUpdateSchema.safeParse({ recordIds, cellValues, targetGroupId });
   if (!parsed.success) {
     return { data: null, error: "Invalid input", status: 400 };
   }

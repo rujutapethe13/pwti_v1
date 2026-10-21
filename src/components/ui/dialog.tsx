@@ -3,7 +3,6 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import * as React from "react";
-import { useTheme } from "next-themes";
 
 import { cn } from "@/lib/utils";
 
@@ -34,24 +33,21 @@ const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
 >(({ className, children, ...props }, ref) => {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-
   return (
     <DialogPortal>
       <DialogOverlay />
       <DialogPrimitive.Content
         ref={ref}
         className={cn(
-          "fixed left-1/2 top-1/2 z-[9999] grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] sm:rounded-[12px]",
+          "fixed left-1/2 top-1/2 z-[9999] grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=closed]:slide-out-to-left-1/2 data-[state=closed]:slide-out-to-top-[48%] data-[state=open]:slide-in-from-left-1/2 data-[state=open]:slide-in-from-top-[48%] rounded-[12px]",
           className,
         )}
         style={{
-          backgroundColor: isDark ? "#1f1f23" : "#ffffff",
-          border: `1px solid ${isDark ? "#3a3a40" : "#e5e5e5"}`,
-          boxShadow: isDark
-            ? "0 20px 50px rgba(0,0,0,0.5)"
-            : "0 20px 50px rgba(0,0,0,0.3)",
+          backgroundColor: "hsl(var(--popover-bg))",
+          opacity: 1,
+          backdropFilter: "none",
+          border: `1px solid hsl(var(--popover-border))`,
+          boxShadow: "0 12px 40px rgba(0, 0, 0, 0.25)",
         }}
         {...props}
       >

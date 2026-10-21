@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
-import { createGroup, renameGroup, reorderGroups, deleteGroup, collapseGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup } from "../actions/group-actions";
+import { createGroup, renameGroup, reorderGroups, deleteGroup, collapseGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, updateGroupTitleColumnLabel } from "../actions/group-actions";
 import type { DropdownOption, Group } from "../types";
 import { useUndoStack } from "./use-undo";
 
@@ -18,7 +18,18 @@ interface UseGroupReturn {
   groups: Group[];
   loading: boolean;
   error: string | null;
-  createGroup: (data: { boardId: string; organizationId: string; workspaceId: string; name: string; color?: string; statusOptions?: DropdownOption[] }) => Promise<string | void>;
+  createGroup: (data: {
+    boardId: string;
+    organizationId: string;
+    workspaceId: string;
+    name: string;
+    color?: string;
+    statusOptions?: DropdownOption[];
+    titleColumnLabel?: string;
+    columnMode?: "shared" | "custom";
+    copyFromGroupId?: string;
+    columns?: Array<{ key: string; label: string; type: string }>;
+  }) => Promise<string | void>;
   renameGroup: (groupId: string, name: string) => Promise<void>;
   reorderGroups: (boardId: string, orderedIds: Array<{ id: string; order: number }>) => Promise<void>;
   moveGroup: (groupId: string, targetBoardId: string) => Promise<void>;
@@ -27,6 +38,7 @@ interface UseGroupReturn {
   deleteGroup: (groupId: string) => Promise<void>;
   updateGroupColor: (groupId: string, color: string | null) => Promise<void>;
   updateGroupStatusOptions: (groupId: string, statusOptions: DropdownOption[]) => Promise<void>;
+  updateGroupTitleColumnLabel: (groupId: string, titleColumnLabel: string) => Promise<void>;
 }
 
 export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
@@ -36,7 +48,18 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
   const { pushAction } = useUndoStack();
 
   const createGroupFn = useCallback(
-    async (data: { boardId: string; organizationId: string; workspaceId: string; name: string; color?: string; statusOptions?: DropdownOption[] }) => {
+    async (data: {
+      boardId: string;
+      organizationId: string;
+      workspaceId: string;
+      name: string;
+      color?: string;
+      statusOptions?: DropdownOption[];
+      titleColumnLabel?: string;
+      columnMode?: "shared" | "custom";
+      copyFromGroupId?: string;
+      columns?: Array<{ key: string; label: string; type: string }>;
+    }) => {
       setLoading(true);
       setError(null);
       try {
@@ -49,8 +72,16 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
         if (data.statusOptions && data.statusOptions.length > 0) {
           fd.set("statusOptions", JSON.stringify(data.statusOptions));
         }
+        if (data.titleColumnLabel) fd.set("titleColumnLabel", data.titleColumnLabel);
+        if (data.columnMode) fd.set("columnMode", data.columnMode);
+        if (data.copyFromGroupId) fd.set("copyFromGroupId", data.copyFromGroupId);
+        if (data.columns && data.columns.length > 0) {
+          fd.set("columns", JSON.stringify(data.columns));
+        }
         const response = await createGroup(fd);
         if (response.data) {
+          // New array, never a mutation: React only re-renders when the
+          // reference changes.
           setGroups((prev) => [...prev, response.data!]);
           toast.success(`Group "${data.name}" created.`);
           return response.data.id;
@@ -224,6 +255,27 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
     [groups],
   );
 
+  const updateGroupTitleColumnLabelFn = useCallback(
+    async (groupId: string, titleColumnLabel: string) => {
+      const prev = groups.find((g) => g.id === groupId);
+      if (!prev) return;
+      setGroups((p) =>
+        p.map((g) => (g.id === groupId ? { ...g, titleColumnLabel } : g)),
+      );
+      try {
+        const response = await updateGroupTitleColumnLabel(groupId, titleColumnLabel);
+        if (response.error) {
+          setGroups((p) => p.map((g) => (g.id === groupId ? prev : g)));
+          toast.error(response.error);
+        }
+      } catch {
+        setGroups((p) => p.map((g) => (g.id === groupId ? prev : g)));
+        toast.error("Failed to rename the title column.");
+      }
+    },
+    [groups],
+  );
+
   return {
     groups,
     loading,
@@ -237,5 +289,6 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
     deleteGroup: deleteGroupFn,
     updateGroupColor: updateGroupColorFn,
     updateGroupStatusOptions: updateGroupStatusOptionsFn,
+    updateGroupTitleColumnLabel: updateGroupTitleColumnLabelFn,
   };
 }

@@ -66,6 +66,7 @@ function createViewPlugin(
 // because this registry module is a .ts file (JSX is not allowed there).
 function TableViewRenderer(props: ViewRendererProps) {
   const ops = props.columnOps ?? {};
+  const groupOps = props.groupOps ?? {};
   return createElement(TableView, {
     board: props.board,
     columns: props.columns,
@@ -73,8 +74,11 @@ function TableViewRenderer(props: ViewRendererProps) {
     cellValues: props.cellValues,
     groups: props.groups as unknown as Group[] | undefined,
     onCellChange: props.onCellChange,
-    primaryColumnLabel: props.board.primaryColumnLabel ?? "Name",
-    onPrimaryColumnRename: ops.onPrimaryColumnRename,
+    // The pinned title header renders from the board's own title column
+    // label. The legacy `primaryColumnLabel` is deliberately NOT a fallback:
+    // it used to hold an unrelated data column's name.
+    titleColumnLabel: ops.titleColumnLabel ?? props.board.titleColumnLabel,
+    onTitleColumnRename: ops.onTitleColumnRename,
     onColumnRename: ops.onColumnRename,
     onColumnDuplicate: ops.onColumnDuplicate,
     onColumnDuplicateWithValues: ops.onColumnDuplicateWithValues,
@@ -95,6 +99,16 @@ function TableViewRenderer(props: ViewRendererProps) {
     sortColumnId: ops.sortColumnId,
     sortDirection: ops.sortDirection,
     onSort: ops.onSort,
+    onAddGroup: groupOps.onAddGroup,
+    onRenameGroup: groupOps.onRenameGroup,
+    onDeleteGroup: groupOps.onDeleteGroup,
+    onUpdateGroupColor: groupOps.onUpdateGroupColor,
+    onUpdateGroupStatusOptions: groupOps.onUpdateGroupStatusOptions,
+    onMoveGroupToBoard: groupOps.onMoveGroupToBoard,
+    onMoveGroupToTop: groupOps.onMoveGroupToTop,
+    onDuplicateGroup: groupOps.onDuplicateGroup,
+    onToggleGroupCollapse: groupOps.onToggleGroupCollapse,
+    onUpdateGroupTitleColumnLabel: groupOps.onUpdateGroupTitleColumnLabel,
     onBulkArchive: props.onBulkArchive,
     onBulkDelete: props.onBulkDelete,
     onRowDelete: props.onRowDelete,

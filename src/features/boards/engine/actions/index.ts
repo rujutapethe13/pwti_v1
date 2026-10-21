@@ -10,6 +10,7 @@ export {
   createBoard,
   renameBoard,
   updateBoardPrimaryLabel,
+  updateBoardTitleColumnLabel,
   duplicateBoard,
   archiveBoard,
   deleteBoard,
@@ -31,6 +32,9 @@ export {
   duplicateGroup,
   collapseGroup,
   deleteGroup,
+  updateGroupColor,
+  updateGroupStatusOptions,
+  updateGroupTitleColumnLabel,
 } from "./group-actions";
 
 export {

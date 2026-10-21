@@ -8,11 +8,16 @@
 import "server-only";
 
 import { GroupRepository } from "../repository/group-repository";
+import { ColumnRepository } from "../repository/column-repository";
 import { RecordRepository } from "../repository/record-repository";
 import { eventBus } from "../events/event-bus";
 import type { DomainEventPayload } from "../events/event-types";
 import type { ApiResponse } from "@/types";
-import type { DropdownOption, Group } from "../types";
+import type { ColumnDefinition, DropdownOption, Group } from "../types";
+import {
+  DEFAULT_TITLE_COLUMN_LABEL,
+  resolveTitleColumnLabel,
+} from "../lib/title-column";
 import type {
   CreateGroupInput,
   RenameGroupInput,
@@ -24,6 +29,7 @@ import type {
 } from "../schemas/group-schemas";
 
 const groupRepo = new GroupRepository();
+const columnRepo = new ColumnRepository();
 const recordRepo = new RecordRepository();
 
 function createEvent(
@@ -47,11 +53,83 @@ function createEvent(
   };
 }
 
+/**
+ * Create the column set of a custom-mode group.
+ *
+ * A custom group owns its columns (`columns.group_id = group.id`). The set is
+ * either taken verbatim from the caller, or copied from another group — a
+ * custom group's own columns, or the board's shared columns when the source
+ * group is in shared mode.
+ */
+async function createGroupColumns(params: {
+  boardId: string;
+  organizationId: string;
+  workspaceId: string;
+  groupId: string;
+  copyFromGroupId?: string;
+  explicitColumns?: Array<{ key: string; label: string; type: string }>;
+}): Promise<void> {
+  const { boardId, organizationId, workspaceId, groupId } = params;
+  const now = new Date().toISOString();
+
+  let sourceColumns: ColumnDefinition[] = [];
+
+  if (params.explicitColumns && params.explicitColumns.length > 0) {
+    sourceColumns = params.explicitColumns.map((col, index) => ({
+      id: crypto.randomUUID(),
+      groupId,
+      boardId,
+      key: col.key,
+      label: col.label,
+      type: col.type as ColumnDefinition["type"],
+      required: false,
+      hidden: false,
+      frozen: false,
+      defaultValue: null,
+      settings: {},
+      permissions: {
+        view: ["owner", "editor", "commenter", "viewer"],
+        edit: ["owner", "editor"],
+        configure: ["owner"],
+      },
+      validation: [],
+      version: 1,
+      order: index,
+      createdAt: now,
+      updatedAt: now,
+    }));
+  } else if (params.copyFromGroupId) {
+    const sourceGroup = await groupRepo.findById(params.copyFromGroupId);
+    const sourceIsCustom = sourceGroup.data?.columnMode === "custom";
+    const source = sourceIsCustom
+      ? await columnRepo.listGroupColumns(boardId, params.copyFromGroupId)
+      : await columnRepo.findByBoard(boardId);
+    sourceColumns = (source.data ?? []).map((col, index) => ({
+      ...col,
+      id: crypto.randomUUID(),
+      groupId,
+      order: index,
+      createdAt: now,
+      updatedAt: now,
+    }));
+  }
+
+  for (const column of sourceColumns) {
+    await columnRepo.create({
+      ...column,
+      organizationId,
+      workspaceId,
+    } as Parameters<typeof columnRepo.create>[0]);
+  }
+}
+
 export const GroupService = {
   async create(input: CreateGroupInput, actorUserId: string): Promise<ApiResponse<Group>> {
     // Determine the next order value
     const existingResult = await groupRepo.findByBoard(input.boardId);
     const nextOrder = existingResult.data ? existingResult.data.length : 0;
+
+    const columnMode = input.columnMode ?? "shared";
 
     const group: Group = {
       id: crypto.randomUUID(),
@@ -67,6 +145,11 @@ export const GroupService = {
       statusOptions: input.statusOptions && input.statusOptions.length > 0
         ? input.statusOptions
         : undefined,
+      columnMode,
+      titleColumnLabel: resolveTitleColumnLabel(
+        input.titleColumnLabel,
+        DEFAULT_TITLE_COLUMN_LABEL,
+      ),
     };
 
     const scope = { organizationId: input.organizationId, workspaceId: input.workspaceId, boardId: input.boardId };
@@ -74,7 +157,45 @@ export const GroupService = {
     await eventBus.publish(createEvent("group.create:before", actorUserId, scope, group, null, group as unknown as Record<string, unknown>));
     const result = await groupRepo.create(group);
     if (result.data) {
+      // A custom-mode group owns its own column set, so the columns have to
+      // be created with `group_id` pointing at the new group. A shared-mode
+      // group simply reuses the board's shared columns and needs nothing here.
+      if (columnMode === "custom") {
+        await createGroupColumns({
+          boardId: input.boardId,
+          organizationId: input.organizationId,
+          workspaceId: input.workspaceId,
+          groupId: result.data.id,
+          copyFromGroupId: input.copyFromGroupId,
+          explicitColumns: input.columns,
+        });
+      }
       await eventBus.publish(createEvent("group.create:after", actorUserId, scope, result.data, null, result.data as unknown as Record<string, unknown>));
+    }
+    return result;
+  },
+
+  /**
+   * Update the group's title (record-title) column label.
+   *
+   * The label lives in its own field (`groups.title_column_label`) and is
+   * never derived from a data column.
+   */
+  async updateTitleColumnLabel(
+    input: { groupId: string; titleColumnLabel: string },
+    actorUserId: string,
+  ): Promise<ApiResponse<Group>> {
+    const existing = await groupRepo.findById(input.groupId);
+    if (!existing.data) return { data: null, error: "Group not found", status: 404 };
+
+    const scope = { organizationId: "", workspaceId: "", boardId: existing.data.boardId };
+    const before = { ...existing.data };
+    const label = resolveTitleColumnLabel(input.titleColumnLabel);
+
+    await eventBus.publish(createEvent("group.update:titleColumnLabel:before", actorUserId, scope, existing.data, before as unknown as Record<string, unknown>, { titleColumnLabel: label }));
+    const result = await groupRepo.update(input.groupId, { titleColumnLabel: label });
+    if (result.data) {
+      await eventBus.publish(createEvent("group.update:titleColumnLabel:after", actorUserId, scope, result.data, before as unknown as Record<string, unknown>, result.data as unknown as Record<string, unknown>));
     }
     return result;
   },
@@ -187,6 +308,8 @@ export const GroupService = {
       collapsed: false,
       order: nextOrder,
       status: "active",
+      columnMode: source.data.columnMode,
+      titleColumnLabel: source.data.titleColumnLabel,
     };
 
     const scope = { organizationId: "", workspaceId: "", boardId: source.data.boardId };

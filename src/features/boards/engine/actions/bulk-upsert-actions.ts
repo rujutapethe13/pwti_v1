@@ -144,6 +144,7 @@ export async function upsertBoard(data: BoardDefinition): Promise<ApiResponse<Bo
       status: data.status,
       shared_with: data.sharedWith,
       primary_column_label: data.primaryColumnLabel ?? null,
+      title_column_label: data.titleColumnLabel ?? null,
       updated_at: data.updatedAt,
       created_at: data.createdAt,
     });

@@ -9,8 +9,10 @@ import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
 import { toast } from "sonner";
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
 import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey } from "@/features/boards/engine/types";
-import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, freezeColumn, hideColumns, updateBoardPrimaryLabel } from "@/features/boards/engine/actions";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, freezeColumn, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel } from "@/features/boards/engine/actions";
 import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
+import { resolveTitleColumnLabel } from "@/features/boards/engine/lib/title-column";
+import type { AddGroupPayload } from "@/features/boards/engine/types";
 import { refreshClient360Snapshot } from "@/features/client-360/actions/snapshot-actions";
 import { workbookToArrayBuffer } from "@/features/boards/engine/lib/import-export";
 
@@ -77,7 +79,7 @@ function clearColumnRefsFromRecord(
 }
 
 export function EngineBoardPage({ data }: EngineBoardPageProps) {
-  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, views, groups } = data;
+  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, views, groups: initialGroups } = data;
 
   const [columns, setColumns] = useState<ColumnDefinition[]>(initialColumns);
   const [records, setRecords] = useState<BoardRecord[]>(initialRecords);
@@ -91,6 +93,16 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
    const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
    const [bulkArchiveLoading, setBulkArchiveLoading] = useState(false);
    const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null);
+
+  // Groups live in state so a newly created group appears immediately — the
+  // server props are only the initial snapshot.
+  const [groups, setGroups] = useState<Group[]>(initialGroups);
+
+  // The pinned title column header label. Stored on the board itself, never
+  // derived from `columns[0]`.
+  const [titleColumnLabel, setTitleColumnLabel] = useState<string>(
+    resolveTitleColumnLabel(board.titleColumnLabel),
+  );
 
   const columnMapRef = useRef(new Map(columns.map((c) => [c.id, c])));
   const recordMapRef = useRef(new Map(records.map((r) => [r.id, r])));
@@ -317,21 +329,21 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         prev.map((r) => (recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r)),
       );
       try {
-        // Use bulkUpdate to move records to group
-        const response = await fetch("/api/boards/records/bulk-update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recordIds, targetGroupId }),
-        });
-        const data = await response.json();
-        if (data.error) {
-          setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
-          toast.error(data.error);
+        const response = await bulkUpdateRecords(recordIds, {}, targetGroupId);
+        if (response.error) {
+          setRecords((prev) => {
+            const remaining = prev.filter((r) => !recordIds.includes(r.id));
+            return [...remaining, ...prevRecords];
+          });
+          toast.error(response.error);
         } else {
           toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`);
         }
       } catch {
-        setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+        setRecords((prev) => {
+          const remaining = prev.filter((r) => !recordIds.includes(r.id));
+          return [...remaining, ...prevRecords];
+        });
         toast.error("Failed to move records.");
       }
     },
@@ -345,20 +357,21 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         prev.map((r) => (recordIds.includes(r.id) ? { ...r, status: statusName as EntityStatus } : r)),
       );
       try {
-        const response = await fetch("/api/boards/records/bulk-update", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ recordIds, cellValues: { status: statusName } }),
-        });
-        const data = await response.json();
-        if (data.error) {
-          setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
-          toast.error(data.error);
+        const response = await bulkUpdateRecords(recordIds, { status: statusName });
+        if (response.error) {
+          setRecords((prev) => {
+            const remaining = prev.filter((r) => !recordIds.includes(r.id));
+            return [...remaining, ...prevRecords];
+          });
+          toast.error(response.error);
         } else {
           toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} updated.`);
         }
       } catch {
-        setRecords((prev) => [...prev.filter((r) => !recordIds.includes(r.id)), ...prevRecords]);
+        setRecords((prev) => {
+          const remaining = prev.filter((r) => !recordIds.includes(r.id));
+          return [...remaining, ...prevRecords];
+        });
         toast.error("Failed to update records.");
       }
     },
@@ -403,7 +416,6 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     const targetColumn = columns.find((c) => c.id === columnId);
     if (!targetColumn) return;
 
-    const isNameColumn = targetColumn.key === "name";
     const remainingColumns = columns.filter((c) => c.id !== columnId);
 
     // Never leave a board with zero columns. If the user deletes the last
@@ -416,15 +428,11 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     setDeletingColumnId(columnId);
     const prevColumns = columns;
 
-    // When the primary/title column (key "name") is deleted, promote another
-    // column to be the record-title column so views never lose their title.
-    // Preference: first remaining text-type column, else the first column.
-    let nextPrimaryLabel: string | null = null;
-    if (isNameColumn) {
-      const nextPrimary =
-        remainingColumns.find((c) => c.type === "text") ?? remainingColumns[0];
-      nextPrimaryLabel = nextPrimary?.label ?? null;
-    }
+    // NOTE: deleting the structural "name" column deliberately does NOT
+    // rename the title column. The title column label is its own field
+    // (`boards.title_column_label`); promoting an unrelated text column's
+    // label into it is what made the pinned header read
+    // "Batch Details (PFM1_No)" instead of the title column's own name.
 
     // Optimistic UI update — remove the column and its cell values
     setColumns((prev) => prev.filter((c) => c.id !== columnId));
@@ -474,28 +482,13 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     );
 
     try {
-      // When the primary/title column is deleted, promote another column to be
-      // the record-title column so views never lose their title. Preference:
-      // first remaining text-type column, else the first column.
-      if (isNameColumn && nextPrimaryLabel) {
-        try {
-          await updateBoardPrimaryLabel(board.id, nextPrimaryLabel);
-        } catch {
-          // Non-fatal: the column still deletes; the label just stays stale.
-        }
-      }
-
       const response = await deleteColumn(columnId);
       if (response.error) {
         // Restore columns on failure
         setColumns(prevColumns);
         toast.error(response.error);
       } else {
-        toast.success(
-          nextPrimaryLabel
-            ? `Column deleted. "${nextPrimaryLabel}" is now the item name column.`
-            : `Column "${targetColumn.label}" deleted.`,
-        );
+        toast.success(`Column "${targetColumn.label}" deleted.`);
       }
     } catch (err) {
       setColumns(prevColumns);
@@ -656,6 +649,210 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     }
   }, [columns, board]);
 
+  /* ── Group operations ───────────────────────────────────── */
+
+  const handleAddGroup = useCallback(
+    async (payload: AddGroupPayload) => {
+      try {
+        const fd = new FormData();
+        fd.set("organizationId", board.organizationId);
+        fd.set("workspaceId", board.workspaceId);
+        fd.set("boardId", board.id);
+        fd.set("name", payload.title);
+        if (payload.color) fd.set("color", payload.color);
+        if (payload.mode === "copy" && payload.sourceGroupId) {
+          fd.set("columnMode", "custom");
+          fd.set("copyFromGroupId", payload.sourceGroupId);
+        } else if (payload.mode === "custom") {
+          fd.set("columnMode", "custom");
+          fd.set(
+            "columns",
+            JSON.stringify(
+              (payload.columns ?? []).map((c) => ({
+                key: c.name.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+                label: c.name,
+                type: c.type,
+              })),
+            ),
+          );
+        } else {
+          fd.set("columnMode", "shared");
+        }
+        fd.set("titleColumnLabel", titleColumnLabel);
+
+        const response = await createGroup(fd);
+        if (response.error || !response.data) {
+          toast.error(response.error ?? "Failed to create group.");
+          return;
+        }
+        setGroups((prev) => [...prev, response.data!]);
+        toast.success(`Group "${payload.title}" created.`);
+        return response.data.id;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create group.";
+        toast.error(message);
+      }
+    },
+    [board, titleColumnLabel],
+  );
+
+  const handleRenameGroup = useCallback(async (groupId: string, name: string) => {
+    const previous = groups.find((g) => g.id === groupId);
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, name } : g)),
+    );
+    try {
+      const response = await renameGroup(groupId, name);
+      if (response.error) {
+        if (previous) {
+          setGroups((prev) =>
+            prev.map((g) => (g.id === groupId ? previous : g)),
+          );
+        }
+        toast.error(response.error);
+      }
+    } catch (err) {
+      if (previous) {
+        setGroups((prev) => prev.map((g) => (g.id === groupId ? previous : g)));
+      }
+      toast.error("Failed to rename group.");
+    }
+  }, [groups]);
+
+  const handleDeleteGroup = useCallback(async (groupId: string) => {
+    const previous = groups;
+    setGroups((prev) => prev.filter((g) => g.id !== groupId));
+    try {
+      const response = await deleteGroup(groupId);
+      if (response.error) {
+        setGroups(previous);
+        toast.error(response.error);
+      }
+    } catch (err) {
+      setGroups(previous);
+      toast.error("Failed to delete group.");
+    }
+  }, [groups]);
+
+  const handleUpdateGroupColor = useCallback(async (groupId: string, color: string | null) => {
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, color: color ?? undefined } : g)),
+    );
+    try {
+      await updateGroupColor(groupId, color);
+    } catch {
+      toast.error("Failed to update group color.");
+    }
+  }, []);
+
+  const handleUpdateGroupStatusOptions = useCallback(
+    async (groupId: string, statusOptions: Array<{ id: string; label: string; color?: string }>) => {
+      setGroups((prev) =>
+        prev.map((g) => (g.id === groupId ? { ...g, statusOptions } : g)),
+      );
+      try {
+        await updateGroupStatusOptions(groupId, statusOptions);
+      } catch {
+        toast.error("Failed to update status options.");
+      }
+    },
+    [],
+  );
+
+  const handleMoveGroupToBoard = useCallback(async (groupId: string, targetBoardId: string) => {
+    try {
+      const response = await moveGroup(groupId, targetBoardId);
+      if (response.error) {
+        toast.error(response.error);
+        return;
+      }
+      setGroups((prev) => prev.filter((g) => g.id !== groupId));
+      toast.success("Group moved.");
+    } catch {
+      toast.error("Failed to move group.");
+    }
+  }, []);
+
+  const handleMoveGroupToTop = useCallback(async (groupId: string) => {
+    const ordered = [...groups].sort((a, b) => {
+      if (a.id === groupId) return -1;
+      if (b.id === groupId) return 1;
+      return a.order - b.order;
+    });
+    setGroups(ordered);
+    try {
+      const response = await reorderGroups(
+        board.id,
+        ordered.map((g, index) => ({ id: g.id, order: index })),
+      );
+      if (response.error) toast.error(response.error);
+    } catch {
+      toast.error("Failed to move group.");
+    }
+  }, [groups, board.id]);
+
+  const handleDuplicateGroup = useCallback(async (groupId: string) => {
+    try {
+      const response = await duplicateGroup(groupId);
+      if (response.error || !response.data) {
+        toast.error(response.error ?? "Failed to duplicate group.");
+        return;
+      }
+      setGroups((prev) => [...prev, response.data!]);
+      toast.success("Group duplicated.");
+    } catch {
+      toast.error("Failed to duplicate group.");
+    }
+  }, []);
+
+  const handleToggleGroupCollapse = useCallback(async (groupId: string, collapsed: boolean) => {
+    setGroups((prev) =>
+      prev.map((g) => (g.id === groupId ? { ...g, collapsed } : g)),
+    );
+    try {
+      await collapseGroup(groupId, collapsed);
+    } catch {
+      toast.error("Failed to update group.");
+    }
+  }, []);
+
+  const handleUpdateGroupTitleColumnLabel = useCallback(
+    async (groupId: string, label: string) => {
+      setGroups((prev) =>
+        prev.map((g) => (g.id === groupId ? { ...g, titleColumnLabel: label } : g)),
+      );
+      try {
+        await updateGroupTitleColumnLabel(groupId, label);
+      } catch {
+        toast.error("Failed to rename the title column.");
+      }
+    },
+    [],
+  );
+
+  const handleTitleColumnRename = useCallback(
+    async (label: string) => {
+      const trimmed = label.trim();
+      if (!trimmed) return;
+      const previous = titleColumnLabel;
+      setTitleColumnLabel(trimmed);
+      try {
+        const response = await updateBoardTitleColumnLabel(board.id, trimmed);
+        if (response.error) {
+          setTitleColumnLabel(previous);
+          toast.error(response.error);
+          return;
+        }
+        toast.success("Column label updated.");
+      } catch (err) {
+        setTitleColumnLabel(previous);
+        const message = err instanceof Error ? err.message : "Failed to update label";
+        toast.error(message);
+      }
+    },
+    [board.id, titleColumnLabel],
+  );
+
   const handleImportConfirm = useCallback(
     async (args: {
       newColumns: ColumnDefinition[];
@@ -665,6 +862,9 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       columnsToDelete: string[];
       targetGroupId: string | null;
       keepUnmappedColumns: boolean;
+      titleColumnLabel: string | null;
+      renameTitleColumn: boolean;
+      newGroupName?: string;
       columnPlan: {
         finalColumns: ColumnDefinition[];
         columnsToDelete: ColumnDefinition[];
@@ -683,12 +883,34 @@ setImporting(true);
         const finalColumns = args.columnPlan.finalColumns;
         const columnsToDelete = args.columnPlan.columnsToDelete;
 
+        // The import may target a brand new group. Create it first so the
+        // records can be attached to it, and so the group carries the title
+        // column label the import chose.
+        let targetGroupId = args.targetGroupId;
+        if (args.newGroupName) {
+          const fd = new FormData();
+          fd.set("organizationId", board.organizationId);
+          fd.set("workspaceId", board.workspaceId);
+          fd.set("boardId", board.id);
+          fd.set("name", args.newGroupName);
+          fd.set("columnMode", "shared");
+          if (args.titleColumnLabel) {
+            fd.set("titleColumnLabel", args.titleColumnLabel);
+          }
+          const created = await createGroup(fd);
+          if (created.error || !created.data) {
+            throw new Error(created.error ?? "Failed to create the target group.");
+          }
+          setGroups((prev) => [...prev, created.data!]);
+          targetGroupId = created.data.id;
+        }
+
         const newRecords: BoardRecord[] = args.records.map((r, idx) => ({
           id: crypto.randomUUID(),
           organizationId: board.organizationId,
           workspaceId: board.workspaceId,
           boardId: board.id,
-          groupId: args.targetGroupId,
+          groupId: targetGroupId,
           title: r.title,
           status: "active" as const,
           version: 1,
@@ -805,6 +1027,34 @@ setImporting(true);
           return next;
         });
 
+        // (f) Persist the title column label chosen in the wizard. The label
+        // lives on the board (the pinned header is board-wide) and on the
+        // target group (so exports and per-group views agree). When the user
+        // declined the rename prompt the wizard sends `null` and nothing is
+        // changed.
+        if (args.titleColumnLabel && args.renameTitleColumn) {
+          setTitleColumnLabel(args.titleColumnLabel);
+          try {
+            await updateBoardTitleColumnLabel(board.id, args.titleColumnLabel);
+          } catch (err) {
+            console.warn("[EngineBoardPage] failed to update title column label:", err);
+          }
+          if (targetGroupId && !args.newGroupName) {
+            setGroups((prev) =>
+              prev.map((g) =>
+                g.id === targetGroupId
+                  ? { ...g, titleColumnLabel: args.titleColumnLabel! }
+                  : g,
+              ),
+            );
+            try {
+              await updateGroupTitleColumnLabel(targetGroupId, args.titleColumnLabel);
+            } catch (err) {
+              console.warn("[EngineBoardPage] failed to update group title column label:", err);
+            }
+          }
+        }
+
         // Update the active view to include all remaining columns and set the column order (via visibleColumnIds)
         // Use the post-cleanup remaining ids so removed columns stay out of the view.
         setBoardViews((prevViews) => {
@@ -857,7 +1107,7 @@ setImporting(true);
         boardName: board.name,
         columns,
         columnOrder: columns.map((c) => c.id),
-        primaryColumnLabel: board.primaryColumnLabel ?? "Name",
+        primaryColumnLabel: titleColumnLabel,
         records: records.map((r) => ({
           record: { id: r.id, title: r.title, groupId: r.groupId ?? null },
           cellValues: Object.fromEntries(
@@ -883,7 +1133,7 @@ setImporting(true);
     } finally {
       setExporting(false);
     }
-  }, [board, columns, records, cellValues, groups]);
+  }, [board, columns, records, cellValues, groups, titleColumnLabel]);
 
    useEffect(() => {
      const handleImportEvent = () => handleOpenImport();
@@ -952,16 +1202,20 @@ setImporting(true);
                onColumnResize: handleColumnResize,
                onColumnReorder: handleColumnReorder,
                columnWidths: boardViews.find((v) => v.id === activeViewId)?.columnWidths ?? {},
-              primaryColumnLabel: board.primaryColumnLabel ?? "Name",
-              onPrimaryColumnRename: (label: string) => {
-                try {
-                  updateBoardPrimaryLabel(board.id, label);
-                  toast.success("Column label updated.");
-                } catch (err) {
-                  const message = err instanceof Error ? err.message : "Failed to update label";
-                  toast.error(message);
-                }
-              },
+              titleColumnLabel,
+              onTitleColumnRename: handleTitleColumnRename,
+            }}
+            groupOps={{
+              onAddGroup: handleAddGroup,
+              onRenameGroup: handleRenameGroup,
+              onDeleteGroup: handleDeleteGroup,
+              onUpdateGroupColor: handleUpdateGroupColor,
+              onUpdateGroupStatusOptions: handleUpdateGroupStatusOptions,
+              onMoveGroupToBoard: handleMoveGroupToBoard,
+              onMoveGroupToTop: handleMoveGroupToTop,
+              onDuplicateGroup: handleDuplicateGroup,
+              onToggleGroupCollapse: handleToggleGroupCollapse,
+              onUpdateGroupTitleColumnLabel: handleUpdateGroupTitleColumnLabel,
             }}
             onBulkArchive={handleBulkArchive}
             onBulkDelete={handleBulkDelete}
@@ -994,6 +1248,7 @@ setImporting(true);
         boardName={board.name}
         columns={columns}
         groups={groups}
+        titleColumnLabel={titleColumnLabel}
         onConfirm={handleImportConfirm}
       />
     </>
