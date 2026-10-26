@@ -228,7 +228,9 @@ type ClientColumnEntry = {
 };
 
 function resolveOptionLabel(settings: Record<string, unknown>, value: unknown): string | null {
-  const options = settings.options;
+  // A status column keeps its labels in `settings.labels`; every other option
+  // column keeps them in `settings.options`.
+  const options = Array.isArray(settings.labels) ? settings.labels : settings.options;
   if (!Array.isArray(options) || value === null || value === undefined) return null;
   const valueStr = String(value);
   for (const opt of options) {

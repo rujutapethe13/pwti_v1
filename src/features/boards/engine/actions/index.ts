@@ -35,6 +35,7 @@ export {
   updateGroupColor,
   updateGroupStatusOptions,
   updateGroupTitleColumnLabel,
+  updateGroupColumnMode,
 } from "./group-actions";
 
 export {
@@ -47,6 +48,7 @@ export {
   freezeColumn,
   changeColumnType,
   updateColumnOptions,
+  updateColumnLabels,
   deleteBoardColumns,
   loadBoardColumns,
 } from "./column-actions";
@@ -87,6 +89,7 @@ export {
 } from "./cell-actions";
 
 export {
+  createView,
   renameView,
   updateViewSettings,
   duplicateView,
@@ -96,5 +99,6 @@ export {
 
 export { repairDropdownColumnValues } from "./repair-actions";
 
-export { importWithColumnCleanup } from "./import-actions";
+export { repairStatusLabels } from "./status-label-migration";
 
+export { importWithColumnCleanup } from "./import-actions";

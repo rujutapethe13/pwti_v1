@@ -23,7 +23,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 
 import type { ViewRendererProps } from "../view-engine-types";
 import type { ChartViewSettings, ColumnDefinition, ColumnValue } from "../../types";
-import { normalizeOptions } from "../../lib/import-export";
+import { getColumnOptions } from "../../lib/option-lookup";
 
 // ── Chart Data Point ───────────────────────────────────────
 
@@ -64,7 +64,7 @@ function resolveLabelCellValue(
 ): string {
   if (cell === null || cell === undefined || cell === "") return "";
   if (column && (column.type === "status" || column.type === "priority" || column.type === "dropdown")) {
-    const opts = normalizeOptions(column.settings?.options);
+    const opts = getColumnOptions(column);
     if (typeof cell === "object" && !Array.isArray(cell)) {
       const obj = cell as Record<string, unknown>;
       if (typeof obj.label === "string" && obj.label) return obj.label;

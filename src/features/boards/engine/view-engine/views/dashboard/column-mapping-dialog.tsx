@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import type { ColumnDefinition } from "../../../types";
 import { createRecordTitleColumn } from "./dashboard-types";
 import { SearchableColumnSelect } from "./dashboard-shared";
+import { findOptionForValue, getColumnOptions } from "../../../lib/option-lookup";
 import {
   RECORD_TITLE_COLUMN_ID,
   ROLE_DEFINITIONS,
@@ -172,6 +173,20 @@ export const ColumnMappingDialog = memo(function ColumnMappingDialog({
     [statusValues, draftBuckets],
   );
 
+  /**
+   * The labels of the status column.
+   *
+   * A status cell stores a label id; the bucket rows show the label the user
+   * knows, read from the live column.
+   */
+  const statusLabels = useMemo(() => {
+    const column = columns.find((c) => c.id === roles.status);
+    return getColumnOptions(column);
+  }, [columns, roles.status]);
+
+  const statusLabelFor = (value: string): string =>
+    findOptionForValue(statusLabels, value)?.label ?? value;
+
   const mappedCount = useMemo(
     () => ROLE_DEFINITIONS.filter((r) => Boolean(draftRoles[r.key])).length,
     [draftRoles],
@@ -297,7 +312,7 @@ export const ColumnMappingDialog = memo(function ColumnMappingDialog({
               <div className="max-h-56 space-y-1.5 overflow-y-auto pr-1">
                 {statusValues.map((value) => (
                   <div key={value} className="flex items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">{value}</span>
+                    <span className="min-w-0 flex-1 truncate text-sm text-foreground">{statusLabelFor(value)}</span>
                     <div className="flex shrink-0 items-center gap-1">
                       {STATUS_BUCKETS.map((bucket) => {
                         const active = effectiveBuckets[value] === bucket.value;

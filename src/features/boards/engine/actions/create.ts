@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { boardTemplates } from "../registry";
+import { DEFAULT_STATUS_LABELS } from "../column-registry";
 
 import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, Group, BoardTemplate } from "../types";
 import { DEFAULT_TITLE_COLUMN_LABEL } from "../lib/title-column";
@@ -194,6 +195,7 @@ export async function createBoardWithDefaults(
       required: false,
       hidden: false,
       frozen: false,
+      pinned: true,
 defaultValue: "",
        settings: { is_default: true },
       permissions: {
@@ -238,7 +240,7 @@ defaultValue: "",
       createdAt: now,
       updatedAt: now,
     },
-    // Status (status-type with Not Started/Working on it/Done - grey/orange/green)
+    // Status (the four standard labels, grey/orange/green/red)
     {
       id: generateId(),
       boardId,
@@ -251,11 +253,9 @@ defaultValue: "",
       defaultValue: "Not Started",
       settings: {
         is_default: true,
-        options: [
-          { id: "opt-not-started", label: "Not Started", color: "#94a3b8" },
-          { id: "opt-working-on-it", label: "Working on it", color: "#f59e0b" },
-          { id: "opt-done", label: "Done", color: "#22c55e" },
-        ],
+        // A status column's labels are canonical — `options` mirrors them.
+        labels: DEFAULT_STATUS_LABELS.map((opt) => ({ ...opt })),
+        options: DEFAULT_STATUS_LABELS.map((opt) => ({ ...opt })),
       },
       permissions: {
         view: ["owner", "editor", "commenter", "viewer"],

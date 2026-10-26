@@ -16,7 +16,7 @@
  * ────────────────────────────────────────────────────────────
  */
 
-import type { ColumnTypeKey, ColumnValue, ColumnDefinition } from "../../types";
+import type { ColumnTypeKey, ColumnValue, ColumnDefinition, DropdownOption } from "../../types";
 import type { ComponentType } from "react";
 
 export interface CellRendererComponentProps {
@@ -30,6 +30,15 @@ export interface CellRendererComponentProps {
   onChange?: (value: ColumnValue) => void;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   focused?: boolean;
+  /**
+   * Persist a column's label list (Edit Labels "Apply").
+   *
+   * The cell renderers never write to the database themselves — they hand
+   * the new list to this callback, which updates the live column in the store
+   * AND the database. It resolves to `true` only when both succeeded.
+   */
+  onUpdateColumnLabels?: (columnId: string, labels: DropdownOption[]) => Promise<boolean>;
+  onConfigureMirror?: (column: ColumnDefinition) => void;
 }
 
 export type CellRendererComponent = ComponentType<CellRendererComponentProps>;

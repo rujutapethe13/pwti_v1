@@ -53,6 +53,7 @@ interface MirroredColumnConfig {
   column_label: string;
   column_type: string;
   aggregation: string | null;
+  showTitle: boolean;
 }
 
 export interface MirrorSettingsModalProps {
@@ -61,6 +62,8 @@ export interface MirrorSettingsModalProps {
   boardId: string;
   columns: ColumnDefinition[];
   sourceConnectColumnId?: string | null;
+  initialSettings?: MirrorColumnSettings;
+  onCreateConnectColumn?: () => void;
   onConfirm: (settings: MirrorColumnSettings) => void;
 }
 
@@ -70,6 +73,8 @@ export function MirrorSettingsModal({
   boardId: _boardId,
   columns,
   sourceConnectColumnId,
+  initialSettings,
+  onCreateConnectColumn,
   onConfirm,
 }: MirrorSettingsModalProps) {
   const connectBoardColumns = useMemo(() => getConnectBoardColumns(columns), [columns]);
@@ -80,13 +85,35 @@ export function MirrorSettingsModal({
   const [boardNames, setBoardNames] = useState<Map<string, string>>(new Map());
   const [loadingColumns, setLoadingColumns] = useState(false);
   const [columnQuery, setColumnQuery] = useState("");
+  const [showItemName, setShowItemName] = useState(false);
+  const [combineAs, setCombineAs] = useState<"comma" | "stack" | "count">("stack");
+  const [maxVisible, setMaxVisible] = useState(3);
 
   // Pre-fill the source column for the prompted flow.
   useEffect(() => {
-    if (open && sourceConnectColumnId) {
-      setSourceColumnId(sourceConnectColumnId);
+    if (open) {
+      setSourceColumnId(sourceConnectColumnId ?? initialSettings?.source_connect_column_id ?? "");
+      setSelectedColumns(
+        (initialSettings?.items ?? initialSettings?.mirrored_columns ?? []).map((item) => ({
+          board_id: item.board_id,
+          column_id: item.column_id,
+          column_label: item.column_id,
+          column_type: "text",
+          aggregation: item.aggregation,
+          showTitle: item.showTitle ?? true,
+        })),
+      );
+      setShowItemName(initialSettings?.showItemName ?? false);
+      setCombineAs(initialSettings?.combineAs ?? "stack");
+      setMaxVisible(initialSettings?.maxVisible ?? 3);
     }
-  }, [open, sourceConnectColumnId]);
+  }, [open, sourceConnectColumnId, initialSettings]);
+
+  useEffect(() => {
+    if (open && !sourceColumnId && connectBoardColumns.length === 1) {
+      setSourceColumnId(connectBoardColumns[0].id);
+    }
+  }, [open, sourceColumnId, connectBoardColumns]);
 
   const sourceColumn = useMemo(
     () => connectBoardColumns.find((c) => c.id === sourceColumnId),
@@ -170,7 +197,7 @@ export function MirrorSettingsModal({
       const cols = (boardColumnMap.get(entry.board_id) ?? []).filter(isMirrorableSourceColumn);
       result.push({
         board_id: entry.board_id,
-        board_name: boardNames.get(entry.board_id) ?? entry.board_id,
+        board_name: boardNames.get(entry.board_id) || "Board unavailable",
         columns: cols,
       });
     }
@@ -208,6 +235,7 @@ export function MirrorSettingsModal({
           column_label: column.label,
           column_type: column.type,
           aggregation: null,
+          showTitle: true,
         },
       ];
     });
@@ -233,13 +261,32 @@ export function MirrorSettingsModal({
     if (!canConfirm) return;
     onConfirm({
       source_connect_column_id: sourceColumnId,
+      sourceRelationColumnId: sourceColumnId,
       mirrored_column_id: null,
       mirrored_columns: selectedColumns.map((c) => ({
         board_id: c.board_id,
         column_id: c.column_id,
         aggregation: c.aggregation,
+        showTitle: c.showTitle,
       })),
-      display_config: { aggregation: null },
+      items: selectedColumns.map((c) => ({
+        board_id: c.board_id,
+        column_id: c.column_id,
+        aggregation: c.aggregation,
+        showTitle: c.showTitle,
+      })),
+      showItemName,
+      combineAs,
+      maxVisible,
+      mirror_column_labels: Object.fromEntries(
+        selectedColumns.map((c) => [`${c.board_id}:${c.column_id}`, c.column_label]),
+      ),
+      display_config: {
+        aggregation: null,
+        combineAs,
+        maxVisible,
+        showItemName,
+      },
     });
     onOpenChange(false);
   };
@@ -251,6 +298,9 @@ export function MirrorSettingsModal({
     setBoardNames(new Map());
     setColumnQuery("");
     setLoadingColumns(false);
+    setShowItemName(false);
+    setCombineAs("stack");
+    setMaxVisible(3);
   };
 
   const handleOpenChange = (next: boolean) => {
@@ -272,7 +322,7 @@ export function MirrorSettingsModal({
           {/* Step 1 — Connect Boards column */}
           <div className="space-y-1.5">
             <label htmlFor="mirror-source-column" className="text-xs font-medium text-muted-foreground">
-              Connect Boards column
+              Mirror from
             </label>
             <select
               id="mirror-source-column"
@@ -300,6 +350,16 @@ export function MirrorSettingsModal({
                 Pre-filled from the linked item&apos;s column.
               </p>
             )}
+
+            {connectBoardColumns.length === 0 && (
+              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                <p className="font-medium text-foreground">Connect a board first</p>
+                <p className="mt-1">A mirror needs a Connect Boards relation in this scope.</p>
+                <Button type="button" variant="outline" size="sm" className="mt-3" onClick={onCreateConnectColumn}>
+                  Add Connect Boards column
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Step 2 — Connected board(s) */}
@@ -320,7 +380,7 @@ export function MirrorSettingsModal({
                       className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground"
                     >
                       <Link2 className="size-3" />
-                      {boardNames.get(entry.board_id) ?? entry.board_id}
+                      {boardNames.get(entry.board_id) || "Board unavailable"}
                     </span>
                   ))
                 )}
@@ -339,14 +399,14 @@ export function MirrorSettingsModal({
               {selectedColumns.length > 0 && (
                 <div className="flex flex-wrap gap-1.5">
                   {selectedColumns.map((sc) => (
-                    <Badge
-                      key={`${sc.board_id}:${sc.column_id}`}
-                      variant="secondary"
-                      className="flex items-center gap-1 text-xs"
-                    >
+                    <Badge key={`${sc.board_id}:${sc.column_id}`} variant="secondary" className="flex items-center gap-1 text-xs">
                       <span className="max-w-[140px] truncate">
-                        {boardNames.get(sc.board_id) ?? sc.board_id} · {sc.column_label}
+                        {boardNames.get(sc.board_id) || "Board unavailable"} · {sc.column_label}
                       </span>
+                      <label className="flex items-center gap-1">
+                        <input type="checkbox" checked={sc.showTitle} onChange={(e) => setSelectedColumns((prev) => prev.map((item) => item === sc ? { ...item, showTitle: e.target.checked } : item))} />
+                        title
+                      </label>
                       <button
                         type="button"
                         onClick={() => toggleColumn(sc.board_id, { id: sc.column_id, label: sc.column_label, type: sc.column_type, key: "", hidden: false, sort_order: 0 })}
@@ -359,6 +419,27 @@ export function MirrorSettingsModal({
                 </div>
               )}
 
+              {selectedColumns.length > 0 && (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={showItemName} onChange={(e) => setShowItemName(e.target.checked)} />
+                    Show item name
+                  </label>
+                  <label className="text-sm">
+                    Combine as
+                    <select value={combineAs} onChange={(e) => setCombineAs(e.target.value as typeof combineAs)} className="mt-1 w-full rounded-md border bg-background px-2 py-1 text-xs">
+                      <option value="stack">Stacked list</option>
+                      <option value="comma">Comma-separated</option>
+                      <option value="count">Count only</option>
+                    </select>
+                  </label>
+                  <label className="text-sm">
+                    Max visible
+                    <input type="number" min={1} max={100} value={maxVisible} onChange={(e) => setMaxVisible(Math.max(1, Number(e.target.value) || 1))} className="mt-1 w-full rounded-md border bg-background px-2 py-1 text-xs" />
+                  </label>
+                </div>
+              )}
+
               {/* Search */}
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -368,6 +449,11 @@ export function MirrorSettingsModal({
                   onChange={(e) => setColumnQuery(e.target.value)}
                   className="pl-8"
                 />
+                {connectBoardColumns.length === 0 && (
+                  <Button type="button" variant="outline" size="sm" onClick={onCreateConnectColumn}>
+                    Add a Connect boards column first
+                  </Button>
+                )}
               </div>
 
               {/* Checkbox list grouped by board */}
@@ -418,6 +504,13 @@ export function MirrorSettingsModal({
                                 <option value="sum">Sum</option>
                                 <option value="average">Average</option>
                                 <option value="count">Count</option>
+                                <option value="countUnique">Count unique</option>
+                                <option value="distribution">Status distribution</option>
+                                <option value="min">Min</option>
+                                <option value="max">Max</option>
+                                <option value="median">Median</option>
+                                <option value="earliest">Earliest</option>
+                                <option value="range">Date range</option>
                                 <option value="list">List</option>
                               </select>
                             )}

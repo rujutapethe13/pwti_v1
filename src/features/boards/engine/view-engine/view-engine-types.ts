@@ -17,6 +17,7 @@ import type {
   BoardView,
   ColumnDefinition,
   ColumnValue,
+  DropdownOption,
   Group,
   ColumnTypeKey,
   ViewSettingsByType,
@@ -32,12 +33,22 @@ export interface ColumnOperations {
   onColumnDuplicateWithValues?: (columnId: string) => void;
   onColumnToggleHidden?: (columnId: string) => void;
   onColumnToggleFrozen?: (columnId: string) => void;
+  onColumnSetPrimary?: (columnId: string) => void;
   onColumnChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onColumnDelete?: (columnId: string) => void;
   onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   /** ID of the column currently being deleted (for loading state in headers) */
   deletingColumnId?: string | null;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
+  onConfigureMirror?: (column: ColumnDefinition) => void;
+  /**
+   * Persist a column's label list (the Edit Labels "Apply" path).
+   *
+   * The callback updates the live column in the store AND the database, and
+   * resolves to `true` only when both succeeded — the caller keeps the panel
+   * open and shows an error toast when it resolves to `false`.
+   */
+  onUpdateColumnLabels?: (columnId: string, labels: DropdownOption[]) => Promise<boolean>;
   onColumnUpdateDescription?: (columnId: string, description: string) => void;
   onColumnToggleRestrictEditing?: (columnId: string) => void;
   onColumnToggleRestrictView?: (columnId: string) => void;
@@ -71,6 +82,7 @@ export interface GroupOperations {
   onToggleGroupCollapse?: (groupId: string, collapsed: boolean) => void;
   /** Persist a group's own title column label. */
   onUpdateGroupTitleColumnLabel?: (groupId: string, titleColumnLabel: string) => void;
+  onUpdateGroupColumnMode?: (groupId: string, mode: "inherit" | "custom", copyBoardColumns?: boolean) => void;
 }
 
 export interface ViewRendererProps {
@@ -97,7 +109,7 @@ export interface ViewRendererProps {
     order: number;
     statusOptions?: Array<{ id: string; label: string; color?: string }>;
     titleColumnLabel?: string;
-    columnMode?: "shared" | "custom";
+    columnMode?: "inherit" | "custom";
   }>;
 
   /** Type-safe view settings (cast by the View Engine) */
@@ -105,6 +117,21 @@ export interface ViewRendererProps {
 
   /** Callback when a cell value changes (e.g., drag card, edit inline) */
   onCellChange?: (args: { recordId: string; columnId: string; value: ColumnValue }) => void;
+
+  /**
+   * Create a new row. Used by the calendar's inline "add item"
+   * affordance, which creates the row with a date already filled in.
+   * The callback returns the created record so the view can put the
+   * new row straight into its inline title editor.
+   */
+  onRecordCreate?: (payload: {
+    title: string;
+    cellValues: Record<string, ColumnValue>;
+  }) => Promise<BoardRecord | void>;
+
+  /** Rename a row (inline title editing). */
+  onRecordTitleChange?: (recordId: string, title: string) => void;
+  onNewItem?: (groupId?: string | null) => void;
 
   /** Callback when view settings change */
   onSettingsChange?: (settings: Partial<ViewSettingsByType>) => void;
@@ -173,6 +200,19 @@ export interface ViewEngineProps {
 
   /** Callback when a cell value changes */
   onCellChange?: (args: { recordId: string; columnId: string; value: ColumnValue }) => void;
+
+  /**
+   * Create a new row. Used by the calendar's inline "add item"
+   * affordance, which creates the row with a date already filled in.
+   */
+  onRecordCreate?: (payload: {
+    title: string;
+    cellValues: Record<string, ColumnValue>;
+  }) => Promise<BoardRecord | void>;
+
+  /** Rename a row (inline title editing). */
+  onRecordTitleChange?: (recordId: string, title: string) => void;
+  onNewItem?: (groupId?: string | null) => void;
 
   /** Column operations passed through to the active view renderer */
   columnOps?: ColumnOperations;
@@ -262,4 +302,3 @@ export function getDefaultSettings(viewType: string): ViewSettingsByType {
       return {} as ViewSettingsByType;
   }
 }
-

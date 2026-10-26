@@ -3,7 +3,7 @@
 import type { ChangeEvent } from "react";
 
 import { columnTypeRegistry } from "../column-registry";
-import type { CellRendererProps, ColumnValue } from "../types";
+import type { CellRendererProps, ColumnDefinition, ColumnValue } from "../types";
 import { cn } from "@/lib/utils";
 import { getCellRenderer } from "./cell-renderers/cell-renderer-registry";
 
@@ -23,7 +23,7 @@ function readValue(value: ColumnValue): string {
   return JSON.stringify(value);
 }
 
-export function CellRenderer({ board, record, column, value, readOnly, onChange }: CellRendererProps) {
+export function CellRenderer({ board, record, column, value, readOnly, onChange, onUpdateColumnLabels, onConfigureMirror }: CellRendererProps & { onConfigureMirror?: (column: ColumnDefinition) => void }) {
   const definition = columnTypeRegistry[column.type];
   const displayValue = readValue(value ?? definition.defaultValue);
 
@@ -40,6 +40,8 @@ export function CellRenderer({ board, record, column, value, readOnly, onChange 
         workspaceId={record.workspaceId}
         readOnly={readOnly}
         onChange={onChange}
+        onUpdateColumnLabels={onUpdateColumnLabels}
+        onConfigureMirror={onConfigureMirror}
       />
     );
   }

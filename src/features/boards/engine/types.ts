@@ -14,6 +14,7 @@ export interface DropdownOption {
   id: string;
   label: string;
   color?: string;
+  variant?: "light" | "default";
 }
 
 /** Array of all valid column type keys for runtime validation (Zod, etc.) */
@@ -93,6 +94,7 @@ export interface ConnectedBoardLinkItem {
   board_id: string;
   item_id: string;
   workspace_id?: string;
+  item_name?: string;
 }
 
 /**
@@ -146,6 +148,21 @@ export interface MirrorDisplayConfig {
   aggregation: string | null;
   display_mode?: "stacked" | "separate";
   filter_value?: string | null;
+  combineAs?: "comma" | "stack" | "count";
+  hideEmpty?: boolean;
+  emptyPlaceholder?: string;
+  maxVisible?: number;
+  wrap?: boolean;
+  showItemName?: boolean;
+}
+
+export interface MirrorItemConfig {
+  board_id: string;
+  column_id: string;
+  aggregation: string | null;
+  showTitle?: boolean;
+  format?: Record<string, unknown>;
+  hideEmpty?: boolean;
 }
 
 export interface MirrorColumnSettings {
@@ -153,21 +170,54 @@ export interface MirrorColumnSettings {
   /** Legacy single-column support for backward compatibility. */
   mirrored_column_id: string | null;
   /** Multi-column mirror targets: each entry specifies the source board + column. */
-  mirrored_columns: Array<{
-    board_id: string;
-    column_id: string;
-    aggregation: string | null;
-  }>;
+  mirrored_columns: MirrorItemConfig[];
+  /** Canonical aliases used by the mirror settings panel. */
+  sourceRelationColumnId?: string;
+  items?: MirrorItemConfig[];
+  showItemName?: boolean;
+  combineAs?: "comma" | "stack" | "count";
+  maxVisible?: number;
+  /** Source labels used when creating one mirror column per selected source. */
+  mirror_column_labels?: Record<string, string>;
   display_config: MirrorDisplayConfig;
 }
 
-export function emptyMirrorColumnSettings(): MirrorColumnSettings {
+export function normalizeMirrorSettings(
+  input: Partial<MirrorColumnSettings> | null | undefined,
+): MirrorColumnSettings {
+  const source = input?.sourceRelationColumnId ?? input?.source_connect_column_id ?? null;
+  const items = input?.items ?? input?.mirrored_columns ?? [];
   return {
+    source_connect_column_id: source,
+    mirrored_column_id: input?.mirrored_column_id ?? items[0]?.column_id ?? null,
+    mirrored_columns: items,
+    sourceRelationColumnId: source ?? undefined,
+    items,
+    showItemName: input?.showItemName ?? input?.display_config?.showItemName ?? false,
+    combineAs: input?.combineAs ?? input?.display_config?.combineAs ?? "stack",
+    maxVisible: input?.maxVisible ?? input?.display_config?.maxVisible ?? 3,
+    mirror_column_labels: input?.mirror_column_labels,
+    display_config: {
+      aggregation: input?.display_config?.aggregation ?? null,
+      display_mode: input?.display_config?.display_mode ?? "stacked",
+      filter_value: input?.display_config?.filter_value ?? null,
+      hideEmpty: input?.display_config?.hideEmpty ?? false,
+      emptyPlaceholder: input?.display_config?.emptyPlaceholder ?? "—",
+      maxVisible: input?.display_config?.maxVisible ?? input?.maxVisible ?? 3,
+      combineAs: input?.display_config?.combineAs ?? input?.combineAs ?? "stack",
+      wrap: input?.display_config?.wrap ?? true,
+      showItemName: input?.display_config?.showItemName ?? input?.showItemName ?? false,
+    },
+  };
+}
+
+export function emptyMirrorColumnSettings(): MirrorColumnSettings {
+  return normalizeMirrorSettings({
     source_connect_column_id: null,
     mirrored_column_id: null,
     mirrored_columns: [],
     display_config: { aggregation: null },
-  };
+  });
 }
 
 export interface Organization {
@@ -256,13 +306,21 @@ export interface Group {
   status: EntityStatus;
   permissions?: Partial<Record<BoardRole, ColumnRole>>;
   statusOptions?: DropdownOption[];
-  /**
-   * "shared"  — the group renders the board's shared columns (group_id IS NULL).
-   * "custom"  — the group owns its own column set (columns.group_id = group.id).
-   */
-  columnMode?: "shared" | "custom";
-  /** Columns owned by the group — only populated for custom-column groups. */
-  columns?: ColumnDefinition[];
+  /** Resolved compatibility mode; the persisted layout uses inherit/custom. */
+  columnMode?: "inherit" | "custom";
+  /** Resolved layout reference; column definitions remain board-level. */
+  columnLayout?: GroupColumnLayout;
+}
+
+export interface GroupColumnLayout {
+  groupId: string;
+  boardId: string;
+  mode: "inherit" | "custom";
+  columnIds: string[];
+  columnWidths: Record<string, number>;
+  hiddenColumnIds: string[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 // ── Add-new-group payload ───────────────────────────────────
@@ -291,15 +349,21 @@ export type ColumnScope =
 
 export interface ColumnDefinition {
   id: string;
+  scope?: "board" | "group";
   groupId?: string | null;
   boardId: string;
   key: string;
   label: string;
   description?: string;
   type: ColumnTypeKey;
+  sourceColumnId?: string | null;
   required: boolean;
   hidden: boolean;
   frozen: boolean;
+  /** Identifies the item in links, search, mirrors, and exports. */
+  isPrimary?: boolean;
+  /** Keeps this column in the leading data-column region. */
+  pinned?: boolean;
   defaultValue: ColumnValue;
   settings: Record<string, unknown>;
   permissions: ColumnPermissions;
@@ -351,6 +415,8 @@ export interface ColumnDefinitionSnapshot {
   required: boolean;
   hidden: boolean;
   frozen: boolean;
+  isPrimary?: boolean;
+  pinned?: boolean;
   defaultValue: ColumnValue;
   settings: Record<string, unknown>;
   validation: ColumnValidationRule[];
@@ -458,6 +524,28 @@ export interface CalendarViewSettings {
   hideItemNames: boolean;
   defaultEventDuration: 15 | 30 | 60; // minutes
   visibleGroups: string[]; // group ids to show, empty = all
+
+  // ── Canonical calendar configuration ───────────────────────
+  // The fields above are the legacy shape kept for backwards
+  // compatibility with views that were already persisted. The three
+  // fields below are the canonical ones the Calendar view reads and
+  // writes; they fall back to the legacy values when absent.
+
+  /** Calendar mode. Falls back to `defaultView` when absent. */
+  mode?: "month" | "week" | "day";
+  /** First day of the week. Falls back to `firstDayOfWeek` when absent. */
+  weekStart?: 0 | 1;
+  /**
+   * Column whose values drive the item colours.
+   * - `""` → no colouring (neutral items)
+   * - `"__group__"` → colour by board group
+   * - any other value → a column id (status / priority / dropdown /
+   *   person columns all resolve to their own colour source)
+   *
+   * When absent the Calendar view falls back to the first Status
+   * column, which is the documented default.
+   */
+  colorByColumnId?: string;
 }
 
 export interface TimelineViewSettings {
@@ -814,6 +902,11 @@ export interface CellRendererProps {
   readOnly?: boolean;
   wrapText?: boolean;
   onChange?: (value: ColumnValue) => void;
+  /**
+   * Persist a column's label list (Edit Labels "Apply").
+   * Resolves to `true` only when the change was persisted.
+   */
+  onUpdateColumnLabels?: (columnId: string, labels: DropdownOption[]) => Promise<boolean>;
 }
 
 export interface SettingsPanelProps {

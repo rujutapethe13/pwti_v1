@@ -30,15 +30,19 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
   protected fromDatabase(row: DatabaseRow): ColumnDefinition {
     return {
       id: this.asString(row.id),
+      scope: (this.asString(row.scope, row.group_id ? "group" : "board") === "group" ? "group" : "board"),
       groupId: this.asString(row.group_id ?? row.groupId) || null,
       boardId: this.asString(row.board_id ?? row.boardId),
       key: this.asString(row.key),
       label: this.asString(row.label, this.asString(row.key)),
       description: this.asString(row.description) || undefined,
       type: this.asString(row.type, "text") as ColumnDefinition["type"],
+      sourceColumnId: this.asString(row.source_column_id ?? row.sourceColumnId) || null,
       required: this.asBoolean(row.required),
       hidden: this.asBoolean(row.hidden),
       frozen: this.asBoolean(row.frozen),
+      isPrimary: this.asBoolean(row.is_primary ?? row.isPrimary),
+      pinned: this.asBoolean(row.pinned),
       defaultValue: (row.default_value ?? row.defaultValue ?? null) as ColumnValue,
       settings: this.asRecord(row.settings),
       permissions: this.asRecord(row.permissions, {
@@ -59,6 +63,7 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
     const e = entity as ColumnWritePayload;
     return {
       ...(e.id !== undefined ? { id: e.id } : {}),
+      ...(e.scope !== undefined ? { scope: e.scope } : {}),
       ...(e.groupId !== undefined ? { group_id: e.groupId } : {}),
       ...(e.boardId !== undefined ? { board_id: e.boardId } : {}),
       ...(e.organizationId !== undefined ? { organization_id: e.organizationId } : {}),
@@ -67,9 +72,12 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
       ...(e.label !== undefined ? { label: e.label } : {}),
       ...(e.description !== undefined ? { description: e.description } : {}),
       ...(e.type !== undefined ? { type: e.type } : {}),
+      ...(e.sourceColumnId !== undefined ? { source_column_id: e.sourceColumnId } : {}),
       ...(e.required !== undefined ? { required: e.required } : {}),
       ...(e.hidden !== undefined ? { hidden: e.hidden } : {}),
       ...(e.frozen !== undefined ? { frozen: e.frozen } : {}),
+      ...(e.isPrimary !== undefined ? { is_primary: e.isPrimary } : {}),
+      ...(e.pinned !== undefined ? { pinned: e.pinned } : {}),
       ...(e.defaultValue !== undefined ? { default_value: e.defaultValue } : {}),
       ...(e.settings !== undefined ? { settings: e.settings } : {}),
       ...(e.permissions !== undefined ? { permissions: e.permissions } : {}),
@@ -257,4 +265,3 @@ export class ColumnRepository extends BaseRepository<ColumnDefinition> {
       : fallback;
   }
 }
-

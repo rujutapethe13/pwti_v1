@@ -13,6 +13,12 @@ const organizationId = z.string().min(1, "Organization ID is required");
 const workspaceId = z.string().min(1, "Workspace ID is required");
 const boardId = z.string().min(1, "Board ID is required");
 const nonEmptyString = z.string().min(1, "Value must not be empty");
+export const groupColumnModeSchema = z.object({
+  groupId: entityId,
+  mode: z.enum(["inherit", "custom"]),
+  copyBoardColumns: z.boolean().default(true),
+});
+export type GroupColumnModeInput = z.infer<typeof groupColumnModeSchema>;
 
 // ── Group Order Entry ──────────────────────────────────────
 
@@ -41,10 +47,10 @@ export const createGroupSchema = z.object({
    */
   titleColumnLabel: z.string().max(255).optional(),
   /**
-   * "shared" — the group renders the board's shared columns.
+   * "inherit" — the group renders the board default layout.
    * "custom" — the group owns its own column set.
    */
-  columnMode: z.enum(["shared", "custom"]).optional(),
+  columnMode: z.enum(["inherit", "custom"]).optional(),
   /** Copy the columns of this group when creating a custom-mode group. */
   copyFromGroupId: entityId.optional(),
   /** Explicit column set for a custom-mode group. */
@@ -147,4 +153,3 @@ export const updateGroupTitleColumnLabelSchema = z.object({
 export type UpdateGroupTitleColumnLabelInput = z.infer<
   typeof updateGroupTitleColumnLabelSchema
 >;
-

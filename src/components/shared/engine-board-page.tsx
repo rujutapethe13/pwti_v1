@@ -5,16 +5,23 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ViewEngine } from "@/features/boards/engine/view-engine/view-engine";
 import { ImportWizard } from "@/features/boards/engine/components/import-wizard";
 import { BoardLayout } from "@/components/shared/board-layout";
+import { registerAllCellRenderers } from "@/features/boards/engine";
 import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
 import { toast } from "sonner";
+import { setPrimaryColumn, isTextCompatibleColumn } from "@/features/boards/engine/lib/primary-column";
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
 import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey } from "@/features/boards/engine/types";
-import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, freezeColumn, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel } from "@/features/boards/engine/actions";
+import { buildInitialCellValues } from "@/features/boards/engine/lib/record-defaults";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, updateColumnLabels } from "@/features/boards/engine/actions";
 import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
 import { resolveTitleColumnLabel } from "@/features/boards/engine/lib/title-column";
+import { applyColumnUpdates, buildColumnSettings, mergeColumns, sanitizeLabels } from "@/features/boards/engine/lib/option-lookup";
+import { runStatusLabelMigration } from "@/features/boards/engine/lib/status-label-migration";
 import type { AddGroupPayload } from "@/features/boards/engine/types";
+import type { DropdownOption } from "@/features/boards/engine/types";
 import { refreshClient360Snapshot } from "@/features/client-360/actions/snapshot-actions";
-import { workbookToArrayBuffer } from "@/features/boards/engine/lib/import-export";
+import { MirrorDataProvider } from "@/features/boards/engine/connected-data/mirror-data-context";
+import { MirrorSettingsModal } from "@/features/boards/engine/components/mirror-settings-modal";
 
 interface EngineBoardPageProps {
   data: DemoBoardPageData;
@@ -79,6 +86,9 @@ function clearColumnRefsFromRecord(
 }
 
 export function EngineBoardPage({ data }: EngineBoardPageProps) {
+  useEffect(() => {
+    registerAllCellRenderers();
+  }, []);
   const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, views, groups: initialGroups } = data;
 
   const [columns, setColumns] = useState<ColumnDefinition[]>(initialColumns);
@@ -93,6 +103,7 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
    const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
    const [bulkArchiveLoading, setBulkArchiveLoading] = useState(false);
    const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null);
+   const [mirrorColumnId, setMirrorColumnId] = useState<string | null>(null);
 
   // Groups live in state so a newly created group appears immediately — the
   // server props are only the initial snapshot.
@@ -118,6 +129,20 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
   useEffect(() => {
     recordMapRef.current = new Map(records.map((r) => [r.id, r]));
   }, [records]);
+
+  // One-time Status label migration. The repair itself runs once per app load
+  // (see the root layout); the board page only folds the repaired columns
+  // into its store so the open board shows the migrated labels immediately.
+  useEffect(() => {
+    let cancelled = false;
+    void runStatusLabelMigration().then((repaired) => {
+      if (cancelled || !repaired || repaired.length === 0) return;
+      setColumns((prev) => applyColumnUpdates(prev, repaired));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleCellChange = useCallback(
     async ({ recordId, columnId, value }: { recordId: string; columnId: string; value: ColumnValue }) => {
@@ -389,7 +414,9 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       hidden: false,
       frozen: false,
       defaultValue: null,
-      settings: settings ?? {},
+      // A new Status column starts with the four standard labels, so the
+      // picker shows them right away and the cells can be filled in.
+      settings: buildColumnSettings(type, settings ?? {}),
       permissions: { view: ["owner", "editor", "commenter", "viewer"], edit: ["owner", "editor"], configure: ["owner"] },
       validation: [],
       version: 1,
@@ -398,6 +425,7 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       updatedAt: new Date().toISOString(),
     };
     setColumns((prev) => [...prev, newColumn]);
+    if (type === "mirror") setMirrorColumnId(newColumn.id);
     try {
       await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, [...columns, newColumn]);
     } catch (err) {
@@ -405,6 +433,69 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       console.error(err);
     }
   }, [board, columns]);
+
+  const handleConfigureMirror = useCallback((column: ColumnDefinition) => {
+    setMirrorColumnId(column.id);
+  }, []);
+
+  /**
+   * Persist a column's label list.
+   *
+   * The list is written to the LIVE column in the store first (so every
+   * surface re-renders with the new labels) and to the database right after.
+   * On failure the store is rolled back and the caller is told so the Edit
+   * Labels panel can stay open.
+   */
+  const handleColumnUpdateLabels = useCallback(
+    async (columnId: string, labels: DropdownOption[]): Promise<boolean> => {
+      const target = columns.find((c) => c.id === columnId);
+      if (!target) {
+        toast.error("This column no longer exists.");
+        return false;
+      }
+
+      const sanitized = sanitizeLabels(labels);
+      if (sanitized.length === 0) {
+        toast.error("A column needs at least one label.");
+        return false;
+      }
+
+      const previousColumn = target;
+      const updatedAt = new Date().toISOString();
+      setColumns((prev) =>
+        prev.map((c) => {
+          if (c.id !== columnId) return c;
+          const settings = { ...c.settings };
+          if (c.type === "status") {
+            settings.labels = sanitized;
+            settings.options = sanitized;
+          } else {
+            settings.options = sanitized;
+          }
+          return { ...c, settings, updatedAt };
+        }),
+      );
+
+      try {
+        const response = await updateColumnLabels(columnId, sanitized);
+        if (response.error || !response.data) {
+          setColumns((prev) => prev.map((c) => (c.id === columnId ? previousColumn : c)));
+          toast.error(response.error ?? "Failed to save labels.");
+          return false;
+        }
+        // Adopt the server's authoritative column so the store and the
+        // database cannot drift apart.
+        setColumns((prev) => prev.map((c) => (c.id === columnId ? response.data! : c)));
+        toast.success("Labels updated.");
+        return true;
+      } catch (err) {
+        setColumns((prev) => prev.map((c) => (c.id === columnId ? previousColumn : c)));
+        toast.error(err instanceof Error ? err.message : "Failed to save labels.");
+        return false;
+      }
+    },
+    [columns],
+  );
 
   const handleColumnDelete = useCallback(async (columnId: string) => {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -560,15 +651,22 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     const current = columns.find((c) => c.id === columnId);
     if (!current) return;
     setColumns((prev) =>
-      prev.map((c) => (c.id === columnId ? { ...c, frozen: !c.frozen, updatedAt: new Date().toISOString() } : c)),
+      prev.map((c) => (c.id === columnId ? { ...c, frozen: !c.frozen, pinned: !c.frozen, updatedAt: new Date().toISOString() } : c)),
     );
     try {
-      await freezeColumn(columnId, !current.frozen);
+      await upsertBoardColumns(
+        board.id,
+        board.organizationId,
+        board.workspaceId,
+        columns.map((c) => c.id === columnId
+          ? { ...c, frozen: !current.frozen, pinned: !current.frozen, updatedAt: new Date().toISOString() }
+          : c),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to update column";
       toast.error(message);
     }
-  }, [columns]);
+  }, [board, columns]);
 
   const handleColumnChangeType = useCallback(async (columnId: string, newType: ColumnTypeKey) => {
     try {
@@ -592,6 +690,24 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     } catch (err) {
       setColumns(prevColumns);
       toast.error("Failed to update column");
+      console.error(err);
+    }
+  }, [board, columns]);
+
+  const handleColumnSetPrimary = useCallback(async (columnId: string) => {
+    const target = columns.find((column) => column.id === columnId);
+    if (!target || !isTextCompatibleColumn(target)) {
+      toast.error("The primary column must be text-compatible.");
+      return;
+    }
+    const nextColumns = setPrimaryColumn(columns, columnId);
+    setColumns(nextColumns);
+    try {
+      await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, nextColumns);
+      toast.success(`${target.label} is now the primary column.`);
+    } catch (err) {
+      setColumns(columns);
+      toast.error("Failed to set the primary column");
       console.error(err);
     }
   }, [board, columns]);
@@ -639,6 +755,7 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     newColumns.splice(newIndex, 0, moved);
     newColumns.forEach((c, i) => {
       c.order = i;
+      c.pinned = i === 0;
       c.updatedAt = new Date().toISOString();
     });
     setColumns(newColumns);
@@ -821,11 +938,21 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       setGroups((prev) =>
         prev.map((g) => (g.id === groupId ? { ...g, titleColumnLabel: label } : g)),
       );
+
       try {
         await updateGroupTitleColumnLabel(groupId, label);
       } catch {
         toast.error("Failed to rename the title column.");
       }
+    },
+    [],
+  );
+
+  const handleUpdateGroupColumnMode = useCallback(
+    async (groupId: string, mode: "inherit" | "custom", copyBoardColumns = true) => {
+      const response = await updateGroupColumnMode(groupId, mode, copyBoardColumns);
+      if (response.error) toast.error(response.error);
+      else window.location.reload();
     },
     [],
   );
@@ -990,7 +1117,10 @@ setImporting(true);
             }
             freshColumns = freshColumnsResult.data;
 
-            setColumns(freshColumns);
+            // Merge instead of replace: a response that carries no labels (or
+            // that is older than the local copy) must never wipe the labels
+            // the user just saved.
+            setColumns((prev) => mergeColumns(prev, freshColumns));
             setBoardViews((prevViews) =>
               prevViews.map((view) => ({
                 ...view,
@@ -1102,7 +1232,7 @@ setImporting(true);
   const handleExportExcel = useCallback(async () => {
     setExporting(true);
     try {
-      const { buildExportWorkbook } = await import("@/features/boards/engine/lib/import-export");
+      const { buildExportWorkbook, workbookToArrayBuffer } = await import("@/features/boards/engine/lib/import-export");
       const workbook = buildExportWorkbook({
         boardName: board.name,
         columns,
@@ -1162,20 +1292,193 @@ setImporting(true);
     [board, columns, groups, records, cellValues],
   );
 
+  /**
+   * Create a new board view (used by the "Create new … view" dialog).
+   * The view is persisted first and only then added to local state so
+   * the tab that appears always matches what is stored.
+   */
+  const handleCreateView = useCallback(
+    async (data: { type: string; name?: string; settings?: Record<string, unknown> }) => {
+      const response = await createView({
+        boardId: board.id,
+        organizationId: board.organizationId,
+        workspaceId: board.workspaceId,
+        name: data.name?.trim() || "Untitled view",
+        type: data.type,
+        settings: data.settings ?? {},
+      });
+
+      if (response.error || !response.data) {
+        toast.error(response.error ?? "Failed to create the view.");
+        return;
+      }
+
+      const created = response.data;
+      setBoardViews((prev) => [...prev, created]);
+      setActiveViewId(created.id);
+      toast.success(`Created “${created.name}”.`);
+    },
+    [board],
+  );
+
+  /**
+   * Persist a view change (settings, name, …). The local state is
+   * updated optimistically so the view reacts immediately; a failed
+   * write is reported but the optimistic value is kept so the UI does
+   * not flicker back and forth.
+   */
+  const handleUpdateView = useCallback(
+    async (viewId: string, data: Partial<BoardView>) => {
+      setBoardViews((prev) =>
+        prev.map((view) => (view.id === viewId ? { ...view, ...data } : view)),
+      );
+
+      if (data.settings) {
+        const response = await updateViewSettings(
+          viewId,
+          data.settings as unknown as Record<string, unknown>,
+        );
+        if (response.error) toast.error(response.error);
+      }
+    },
+    [],
+  );
+
+  /**
+   * Create a row from a view (the calendar's inline "add item").
+   * Returns the created record so the caller can focus its title.
+   */
+  const handleRecordCreate = useCallback(
+    async (payload: { title: string; cellValues: Record<string, ColumnValue>; groupId?: string | null }) => {
+      const formData = new FormData();
+      formData.set("organizationId", board.organizationId);
+      formData.set("workspaceId", board.workspaceId);
+      formData.set("boardId", board.id);
+      formData.set("groupId", payload.groupId ?? "");
+      formData.set("title", payload.title.trim() || "Untitled");
+      formData.set("cellValues", JSON.stringify(payload.cellValues));
+
+      const response = await createRecord(formData);
+      if (response.error || !response.data) {
+        toast.error(response.error ?? "Failed to create the item.");
+        return undefined;
+      }
+
+      const created = response.data;
+      setRecords((prev) => [...prev, created]);
+      setCellValues((prev) => {
+        const next = new Map(prev);
+        for (const [columnId, value] of Object.entries(payload.cellValues)) {
+          next.set(`${created.id}:${columnId}`, value);
+        }
+        return next;
+      });
+
+      return created;
+    },
+    [board],
+  );
+
+  const handleNewItem = useCallback(
+    async (requestedGroupId?: string | null) => {
+      let groupId = requestedGroupId ?? groups[0]?.id ?? null;
+
+      if (!groupId && groups.length === 0) {
+        const formData = new FormData();
+        formData.set("organizationId", board.organizationId);
+        formData.set("workspaceId", board.workspaceId);
+        formData.set("boardId", board.id);
+        formData.set("name", "Group Title");
+        formData.set("columnMode", "shared");
+        const groupResponse = await createGroup(formData);
+        if (groupResponse.error || !groupResponse.data) {
+          toast.error(groupResponse.error ?? "Failed to create a default group.");
+          return;
+        }
+        setGroups([groupResponse.data]);
+        groupId = groupResponse.data.id;
+      }
+
+      const cellValues = buildInitialCellValues(columns);
+
+      const temporaryId = `pending-${crypto.randomUUID()}`;
+      const now = new Date().toISOString();
+      const optimistic: BoardRecord = {
+        id: temporaryId,
+        organizationId: board.organizationId,
+        workspaceId: board.workspaceId,
+        boardId: board.id,
+        groupId,
+        title: "Untitled",
+        status: "active",
+        version: 1,
+        archivedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      };
+      setRecords((prev) => [...prev, optimistic]);
+      try {
+        const created = await handleRecordCreate({ title: "Untitled", cellValues, groupId });
+        if (!created) {
+          setRecords((prev) => prev.filter((record) => record.id !== temporaryId));
+          return;
+        }
+        setRecords((prev) => [
+          ...prev.filter((record) => record.id !== created.id),
+        ].map((record) => record.id === temporaryId ? created : record));
+      } catch (error) {
+        setRecords((prev) => prev.filter((record) => record.id !== temporaryId));
+        toast.error(error instanceof Error ? error.message : "Failed to create the item.");
+      }
+    },
+    [board, columns, groups, handleRecordCreate],
+  );
+
+  /** Rename a row from a view (inline title editing). */
+  const handleRecordTitleChange = useCallback(
+    async (recordId: string, title: string) => {
+      const previous = records.find((record) => record.id === recordId)?.title;
+      if (previous === title) return;
+
+      setRecords((prev) =>
+        prev.map((record) => (record.id === recordId ? { ...record, title } : record)),
+      );
+
+      const formData = new FormData();
+      formData.set("recordId", recordId);
+      formData.set("title", title);
+
+      const response = await editRecord(formData);
+      if (response.error) {
+        if (previous !== undefined) {
+          setRecords((prev) =>
+            prev.map((record) =>
+              record.id === recordId ? { ...record, title: previous } : record,
+            ),
+          );
+        }
+        toast.error(response.error);
+      }
+    },
+    [records],
+  );
+
   return (
-    <>
-      <BoardLayout
+    <MirrorDataProvider boardId={board.id} cellValues={cellValues} columns={columns} records={records}>
+      <>
+        <BoardLayout
         boardId={board.id}
         board={board}
         description={description}
-        onNewItem={() => {}}
+        onNewItem={() => { void handleNewItem(); }}
         onImport={handleOpenImport}
         onExport={handleExportExcel}
         importing={importing}
         exporting={exporting}
-        views={views}
+        views={boardViews}
         activeViewId={activeViewId}
         onViewChange={setActiveViewId}
+        onCreateView={handleCreateView}
         columns={columns}
       >
           <ViewEngine
@@ -1183,18 +1486,25 @@ setImporting(true);
             view={boardViews.find((v) => v.id === activeViewId) ?? boardViews[0]}
             views={boardViews}
             onViewChange={setActiveViewId}
+            onUpdateView={handleUpdateView}
             onCellChange={handleCellChange}
+            onRecordCreate={handleRecordCreate}
+            onNewItem={handleNewItem}
+            onRecordTitleChange={handleRecordTitleChange}
             columnOps={{
               onColumnRename: handleColumnRename,
               onColumnDuplicate: handleColumnDuplicate,
               onColumnDuplicateWithValues: handleColumnDuplicateWithValues,
               onColumnToggleHidden: handleColumnToggleHidden,
               onColumnToggleFrozen: handleColumnToggleFrozen,
+              onColumnSetPrimary: handleColumnSetPrimary,
               onColumnChangeType: handleColumnChangeType,
               onColumnDelete: handleColumnDelete,
               deletingColumnId,
               onColumnAdd: handleColumnAdd,
               onUpdateColumnSettings: handleColumnUpdateSettings,
+              onConfigureMirror: handleConfigureMirror,
+              onUpdateColumnLabels: handleColumnUpdateLabels,
               onColumnUpdateDescription: handleColumnUpdateDescription,
               onColumnToggleRestrictEditing: handleColumnToggleRestrictEditing,
               onColumnToggleRestrictView: handleColumnToggleRestrictView,
@@ -1216,6 +1526,7 @@ setImporting(true);
               onDuplicateGroup: handleDuplicateGroup,
               onToggleGroupCollapse: handleToggleGroupCollapse,
               onUpdateGroupTitleColumnLabel: handleUpdateGroupTitleColumnLabel,
+              onUpdateGroupColumnMode: handleUpdateGroupColumnMode,
             }}
             onBulkArchive={handleBulkArchive}
             onBulkDelete={handleBulkDelete}
@@ -1227,6 +1538,46 @@ setImporting(true);
             bulkDeleteLoading={bulkDeleteLoading}
           />
       </BoardLayout>
+
+      <MirrorSettingsModal
+        open={mirrorColumnId !== null}
+        onOpenChange={(open) => {
+          if (!open) setMirrorColumnId(null);
+        }}
+        boardId={board.id}
+        columns={columns}
+        sourceConnectColumnId={
+          mirrorColumnId
+            ? (columns.find((c) => c.id === mirrorColumnId)?.settings?.source_connect_column_id as string | null | undefined)
+            : null
+        }
+        initialSettings={
+          mirrorColumnId
+            ? (columns.find((c) => c.id === mirrorColumnId)?.settings as import("@/features/boards/engine/types").MirrorColumnSettings | undefined)
+            : undefined
+        }
+        onCreateConnectColumn={() => {
+          void handleColumnAdd("connected_board");
+        }}
+        onConfirm={(settings) => {
+          if (!mirrorColumnId) return;
+          const updatedColumns = columns.map((c) =>
+            c.id === mirrorColumnId
+              ? {
+                  ...c,
+                  settings: { ...settings },
+                  updatedAt: new Date().toISOString(),
+                }
+              : c,
+          );
+          setColumns(updatedColumns);
+          void upsertBoardColumns(board.id, board.organizationId, board.workspaceId, updatedColumns).catch((err) => {
+            toast.error("Failed to save mirror columns");
+            console.error(err);
+          });
+          setMirrorColumnId(null);
+        }}
+      />
 
       <BoardSettingsDialog
         open={settingsOpen}
@@ -1251,6 +1602,7 @@ setImporting(true);
         titleColumnLabel={titleColumnLabel}
         onConfirm={handleImportConfirm}
       />
-    </>
+      </>
+    </MirrorDataProvider>
   );
 }

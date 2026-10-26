@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, cleanup } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("@/lib/supabase/client", () => ({
   supabase: {
@@ -13,16 +14,39 @@ vi.mock("@/lib/supabase/client", () => ({
   },
 }));
 
-vi.mock("@/features/boards/engine/actions/cell-actions", () => ({
-  updateCell: vi.fn().mockResolvedValue({ data: { id: "x", value: null }, error: null, status: 200 }),
-}));
-
-import { updateCell } from "@/features/boards/engine/actions/cell-actions";
 import { MirrorCellRenderer } from "@/features/boards/engine/components/cell-renderers/mirror-cell";
 import { MirrorDataProvider } from "@/features/boards/engine/connected-data/mirror-data-context";
 import { MirrorStore } from "@/features/boards/engine/connected-data/mirror-store";
 import type { CellRendererComponentProps } from "@/features/boards/engine/components/cell-renderers/cell-renderer-registry";
 import type { ColumnDefinition, ColumnValue } from "@/features/boards/engine/types";
+import { normalizeRecordId, parseConnectedBoardLinks } from "@/features/boards/engine/connected-data/mirror-utils";
+
+describe("parseConnectedBoardLinks", () => {
+  it.each([
+    ["whitespace", "  item-1 ", "item-1"],
+    ["numeric id", 42, "42"],
+    ["record prefix", "rec_item-1", "item-1"],
+  ])("normalizes %s ids", (_name, value, expected) => {
+    expect(normalizeRecordId(value)).toBe(expected);
+  });
+
+  it.each([
+    ["object shape", { linked_item_ids: [{ board_id: "b", item_id: "i" }] }],
+    ["id array", ["i"]],
+    ["object array", [{ board_id: "b", id: "i" }]],
+    ["single id", "i"],
+  ])("normalizes %s", (_name, value) => {
+    expect(parseConnectedBoardLinks(value as ColumnValue, "b")).toEqual([{ board_id: "b", item_id: "i" }]);
+  });
+
+  it("preserves the display snapshot while using the normalized id", () => {
+    expect(parseConnectedBoardLinks({
+      linked_item_ids: [{ board_id: "b", item_id: "rec_i", item_name: "LEVI'S" }],
+    } as ColumnValue)).toEqual([
+      { board_id: "b", item_id: "i", item_name: "LEVI'S", workspace_id: undefined },
+    ]);
+  });
+});
 
 function col(overrides: Partial<ColumnDefinition> & { id: string; type: ColumnDefinition["type"] }): ColumnDefinition {
   return {
@@ -83,6 +107,18 @@ function renderMirrorCell(
 }
 
 describe("MirrorCellRenderer — Part 3: read path", () => {
+  it("opens mirror configuration from the unconfigured placeholder", async () => {
+    const user = userEvent.setup();
+    const onConfigureMirror = vi.fn();
+    renderMirrorCell({
+      column: col({ id: "mirror-1", type: "mirror" }),
+      onConfigureMirror,
+    });
+
+    await user.click(screen.getByRole("button", { name: "Choose column to mirror" }));
+    expect(onConfigureMirror).toHaveBeenCalledWith(expect.objectContaining({ id: "mirror-1" }));
+  });
+
   it("shows a placeholder when there are zero linked items", () => {
     renderMirrorCell(
       {
@@ -317,7 +353,7 @@ describe("MirrorCellRenderer — Part 4: editability & write-through", () => {
     expect(screen.queryByRole("spinbutton")).toBeNull();
   });
 
-  it("enters edit mode (shows an input) when the user clicks a single-link mirror", () => {
+  it("remains read-only when a single-link mirror is clicked", () => {
     renderMirrorCell(
       {
         column: col({
@@ -336,10 +372,7 @@ describe("MirrorCellRenderer — Part 4: editability & write-through", () => {
         });
       },
     );
-    fireEvent.click(screen.getByText("92"));
-    const input = screen.getByRole("spinbutton");
-    expect(input).toBeTruthy();
-    expect((input as HTMLInputElement).value).toBe("92");
+    expect(screen.queryByRole("spinbutton")).toBeNull();
   });
 
   it("is strictly read-only (no input) when aggregating multiple items", () => {
@@ -368,7 +401,7 @@ describe("MirrorCellRenderer — Part 4: editability & write-through", () => {
     expect(screen.getByText("Value:")).toBeTruthy();
   });
 
-  it("writes through to the REAL source cell (not the mirror's own cell)", () => {
+  it("does not write through to the source cell", () => {
     const { store } = renderMirrorCell(
       {
         column: col({
@@ -388,19 +421,8 @@ describe("MirrorCellRenderer — Part 4: editability & write-through", () => {
       },
     );
 
-    fireEvent.click(screen.getByText("92"));
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "150" } });
-
-    expect(store.getCellValue("analytics", "analytics-1", "analytics-value")).toBe(150);
-    expect(updateCell).toHaveBeenCalledWith(
-      "org-main",
-      "ws-main",
-      "analytics",
-      "analytics-1",
-      "analytics-value",
-      150,
-    );
+    expect(store.getCellValue("analytics", "analytics-1", "analytics-value")).toBe(92);
+    expect(screen.queryByRole("spinbutton")).toBeNull();
   });
 
   it("propagates updates live to another mirror watching the same source", () => {
@@ -457,39 +479,16 @@ describe("MirrorCellRenderer — Part 4: editability & write-through", () => {
 
     expect(screen.getAllByText("92")).toHaveLength(2);
 
-    fireEvent.click(screen.getAllByText("92")[0]);
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "200" } });
-
-    expect(store.getCellValue("analytics", "analytics-1", "analytics-value")).toBe(200);
-
+    store.setCellValue("analytics", "analytics-1", "analytics-value", 200);
     rerender(
       <MirrorDataProvider boardId="board-a" cellValues={cellValues} store={store}>
         <div>
-          <MirrorCellRenderer
-            value={null}
-            column={makeColumn("mirror-1")}
-            recordId="record-1"
-            boardId="board-a"
-            organizationId="org-main"
-            workspaceId="ws-main"
-            readOnly={false}
-          />
-          <MirrorCellRenderer
-            value={null}
-            column={makeColumn("mirror-2")}
-            recordId="record-2"
-            boardId="board-a"
-            organizationId="org-main"
-            workspaceId="ws-main"
-            readOnly={false}
-          />
+          <MirrorCellRenderer value={null} column={makeColumn("mirror-1")} recordId="record-1" boardId="board-a" organizationId="org-main" workspaceId="ws-main" readOnly={false} />
+          <MirrorCellRenderer value={null} column={makeColumn("mirror-2")} recordId="record-2" boardId="board-a" organizationId="org-main" workspaceId="ws-main" readOnly={false} />
         </div>
       </MirrorDataProvider>,
     );
-
-    expect(screen.getByText("200")).toBeTruthy();
-    expect((screen.getByRole("spinbutton") as HTMLInputElement).value).toBe("200");
+    expect(screen.getAllByText("200")).toHaveLength(2);
   });
 
   it("greys/italicises mirror cells to signal read-through", () => {
@@ -519,7 +518,7 @@ describe("MirrorCellRenderer — Part 4: editability & write-through", () => {
 });
 
 describe("MirrorCellRenderer — Part 6: multiple mirrors per Connect column", () => {
-  it("two mirrors off one Connect column render and edit independently", () => {
+  it("two mirrors off one Connect column render independently", () => {
     const store = new MirrorStore();
     store.setCellValue("board-a", "record-1", "connect-1", {
       linked_item_ids: [{ board_id: "analytics", item_id: "analytics-1" }],
@@ -592,11 +591,7 @@ describe("MirrorCellRenderer — Part 6: multiple mirrors per Connect column", (
     expect(screen.getByText("Delivery Health")).toBeTruthy();
     expect(screen.getByText("18")).toBeTruthy();
 
-    fireEvent.click(screen.getByText("92"));
-    const input = screen.getByRole("spinbutton") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "200" } });
-
-    expect(store.getCellValue("analytics", "analytics-1", "analytics-value")).toBe(200);
+    expect(screen.queryByRole("spinbutton")).toBeNull();
     expect(store.getCellValue("analytics", "analytics-1", "analytics-metric")).toBe(
       "Delivery Health",
     );

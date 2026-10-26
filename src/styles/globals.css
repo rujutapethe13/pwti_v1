@@ -6,23 +6,38 @@
  * dense-data-dashboard visual style.
  *
  * ── Token Architecture ─────────────────────────────────────
- * All colors are defined as CSS custom properties (design tokens)
- * at the `:root` level, with a `.dark` override. Components and
- * utility classes reference these tokens exclusively — no raw hex
- * values in component files.
+ * Two layers of custom properties, in this order:
+ *
+ *   1. `@theme static` — the raw token values. Every colour is stored
+ *      as a bare HSL channel triplet (`20 14.3% 4.1%`), never a
+ *      complete colour function. A triplet on its own is not a valid
+ *      CSS colour, so it can only be consumed through `hsl(...)`.
+ *      `static` guarantees they are always emitted, even when nothing
+ *      in the scanned sources references them by name (several are
+ *      read from JavaScript via `hsl(var(--status-...))`, which the
+ *      scanner cannot see).
+ *
+ *   2. `@theme inline` — the Tailwind colour/font namespace. This is
+ *      the only place the tokens become utilities, and it is where
+ *      `hsl()` is applied. `inline` keeps the generated utilities
+ *      pointing at `var(--token)` rather than copying the light value,
+ *      so the `.dark` overrides below still take effect at runtime.
+ *
+ * Anything that adds a token to the `static` block must add its
+ * `hsl()` alias to the `inline` block, or the utility will emit an
+ * invalid colour and be dropped by the browser.
  *
  * ── Spacing & Typography ───────────────────────────────────
- * Uses Tailwind's default scale (1 unit = 4px) extended for
- * spacious layouts: 18, 22, 30, 36, 44, 52, 60, 72, 80, 96.
- * Typography uses Inter at multiple sizes with a generous
- * line-height for editorial feel.
+ * Uses Tailwind's default scale (1 unit = 4px). Typography uses
+ * Figtree/Inter for UI and DM Serif Display for editorial headings,
+ * all self-hosted through `next/font` and exposed as CSS variables.
  * ────────────────────────────────────────────────────────────
  */
 
 @import "tailwindcss";
-@import url("https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap");
+@import "tw-animate-css";
 
-@theme {
+@theme static {
   /* ── Backgrounds ──────────────────────────────── */
   --background: 0 0% 100%;
   --foreground: 20 14.3% 4.1%;
@@ -88,6 +103,8 @@
   --popover-bg: 0 0% 100%;
   --popover-border: 20 5.9% 90%;
   --popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  --dialog-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+  --sheet-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
 
   /* ── Brand ──────────────────────────────────── */
   --brand: 234 89% 61%;
@@ -126,96 +143,114 @@
   --sidebar-accent-foreground: 60 9.1% 97.8%;
   --sidebar-border: 12 6.5% 15.1%;
   --sidebar-ring: 24 5.7% 82.9%;
+
+  /* ── Typography ────────────────────────────────────────
+     `--font-figtree`, `--font-inter` and `--font-dm-serif` are injected
+     on <html> by `next/font` in `src/app/layout.tsx`. They are referenced
+     (not redefined) here so the theme can name them. */
+  --font-sans: var(--font-figtree), "Figtree", "Inter", "Segoe UI", Roboto,
+    system-ui, -apple-system, sans-serif;
+  --font-display: var(--font-dm-serif), "DM Serif Display", Georgia,
+    "Times New Roman", serif;
 }
 
 /* ── Color namespace ─────────────────────────────────────────
    Tailwind v4 only turns a theme key into a utility when it carries a
    namespace: `--color-*` becomes `bg-*` / `text-*` / `border-*`, and so
-   on. The block above is a v3-era token set whose keys are unnamespaced,
-   so on its own it emits the custom properties but *no* utilities — every
-   `bg-primary`, `text-muted-foreground` and `border-border` in the app
-   was silently a no-op. This block aliases each token into the color
-   namespace so those classes exist again.
+   on. The block above holds raw HSL triplets, so every alias below
+   wraps its token in `hsl(...)` — without that wrapper Tailwind emits
+   `background-color: 0 0% 100%`, which is not a valid colour, and the
+   browser drops the declaration. The result is a page where every
+   surface, border and accent silently falls back to the browser
+   default: a plain HTML page.
 
-   `inline` keeps the generated utilities pointing at `var(--token)` rather
-   than copying the light value, so the `.dark` overrides below still take
-   effect at runtime. Adding a token to the set above means adding its
-   alias here too.
+   `inline` keeps the generated utilities pointing at `var(--token)`
+   rather than copying the light value, so the `.dark` overrides below
+   still take effect at runtime. Adding a token to the set above means
+   adding its alias here too.
    ───────────────────────────────────────────────────────────── */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
 
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
 
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
 
-  --color-popover-bg: var(--popover-bg);
-  --color-popover-border: var(--popover-border);
-  --color-popover-shadow: var(--popover-shadow);
+  --color-popover-bg: hsl(var(--popover-bg));
+  --color-popover-border: hsl(var(--popover-border));
 
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
 
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
 
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
 
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
 
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
 
-  --color-success: var(--success);
-  --color-success-foreground: var(--success-foreground);
-  --color-warning: var(--warning);
-  --color-warning-foreground: var(--warning-foreground);
-  --color-info: var(--info);
-  --color-info-foreground: var(--info-foreground);
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
 
-  --color-highlight: var(--highlight);
-  --color-highlight-foreground: var(--highlight-foreground);
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
 
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
+  --color-info: hsl(var(--info));
+  --color-info-foreground: hsl(var(--info-foreground));
 
-  --color-brand: var(--brand);
-  --color-brand-foreground: var(--brand-foreground);
+  --color-highlight: hsl(var(--highlight));
+  --color-highlight-foreground: hsl(var(--highlight-foreground));
 
-  --color-soft-teal-text: var(--soft-teal-text);
-  --color-soft-teal-bg: var(--soft-teal-bg);
-  --color-soft-coral-text: var(--soft-coral-text);
-  --color-soft-coral-bg: var(--soft-coral-bg);
-  --color-soft-amber-text: var(--soft-amber-text);
-  --color-soft-amber-bg: var(--soft-amber-bg);
-  --color-soft-lavender-text: var(--soft-lavender-text);
-  --color-soft-lavender-bg: var(--soft-lavender-bg);
-  --color-soft-gray-text: var(--soft-gray-text);
-  --color-soft-gray-bg: var(--soft-gray-bg);
-  --color-terracotta-text: var(--terracotta-text);
-  --color-terracotta-bg: var(--terracotta-bg);
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
 
-  --color-sidebar-background: var(--sidebar-background);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-muted: var(--sidebar-muted);
-  --color-sidebar-muted-foreground: var(--sidebar-muted-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
+  --color-brand: hsl(var(--brand));
+  --color-brand-foreground: hsl(var(--brand-foreground));
 
-  --color-status-not-started: var(--status-not-started);
-  --color-status-in-progress: var(--status-in-progress);
-  --color-status-review: var(--status-review);
-  --color-status-approved: var(--status-approved);
-  --color-status-delayed: var(--status-delayed);
-  --color-status-done: var(--status-done);
+  --color-soft-teal-text: hsl(var(--soft-teal-text));
+  --color-soft-teal-bg: hsl(var(--soft-teal-bg));
+  --color-soft-coral-text: hsl(var(--soft-coral-text));
+  --color-soft-coral-bg: hsl(var(--soft-coral-bg));
+  --color-soft-amber-text: hsl(var(--soft-amber-text));
+  --color-soft-amber-bg: hsl(var(--soft-amber-bg));
+  --color-soft-lavender-text: hsl(var(--soft-lavender-text));
+  --color-soft-lavender-bg: hsl(var(--soft-lavender-bg));
+  --color-soft-gray-text: hsl(var(--soft-gray-text));
+  --color-soft-gray-bg: hsl(var(--soft-gray-bg));
+  --color-terracotta-text: hsl(var(--terracotta-text));
+  --color-terracotta-bg: hsl(var(--terracotta-bg));
+
+  --color-sidebar-background: hsl(var(--sidebar-background));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-muted: hsl(var(--sidebar-muted));
+  --color-sidebar-muted-foreground: hsl(var(--sidebar-muted-foreground));
+  --color-sidebar-accent: hsl(var(--sidebar-accent));
+  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --color-sidebar-ring: hsl(var(--sidebar-ring));
+
+  --color-status-not-started: hsl(var(--status-not-started));
+  --color-status-in-progress: hsl(var(--status-in-progress));
+  --color-status-review: hsl(var(--status-review));
+  --color-status-approved: hsl(var(--status-approved));
+  --color-status-delayed: hsl(var(--status-delayed));
+  --color-status-done: hsl(var(--status-done));
+
+  /* Shadows live in their own namespace — a shadow value is not a
+     colour, so `--color-popover-shadow` would only ever have produced
+     nonsense utilities such as `bg-popover-shadow`. */
+  --shadow-popover: var(--popover-shadow);
+  --shadow-dialog: var(--dialog-shadow);
+  --shadow-sheet: var(--sheet-shadow);
 }
 
 /* ── Base Theme (Light) ─────────────────────────────────── */
@@ -234,6 +269,8 @@
     --popover-bg: 20 14.3% 12%;
     --popover-border: 12 6.5% 22%;
     --popover-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    --dialog-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    --sheet-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
 
     --muted: 12 6.5% 15.1%;
     --muted-foreground: 24 5.4% 63.9%;
@@ -327,7 +364,7 @@
   }
 
   .metric-figure {
-    font-family: "DM Serif Display", "Georgia", "Times New Roman", serif;
+    font-family: var(--font-display);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.015em;
     line-height: 1;
@@ -338,27 +375,37 @@
 @layer base {
   html {
     font-size: 14px;
-    font-family:
-      "DM Sans",
-      system-ui,
-      -apple-system,
-      sans-serif;
-  }
-
-  .font-display {
-    font-family: "DM Serif Display", "Georgia", "Times New Roman", serif;
-  }
-
-  * {
-    border-color: hsl(var(--border));
+    font-family: var(--font-sans);
   }
 
   body {
+    font-family: var(--font-sans);
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
     font-feature-settings:
       "rlig" 1,
       "calt" 1;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font-family: inherit;
+    font-size: inherit;
+  }
+
+  /* Tailwind v4's preflight leaves `border-color` at the initial value
+     (`currentColor`), so any element with a border but no explicit
+     border colour renders with the text colour. Restore the tokenised
+     default that v3 gave us. Utilities still win: this rule lives in
+     the `base` layer, which precedes `utilities`. */
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: hsl(var(--border));
   }
 
   /* Custom scrollbar for sidebar */

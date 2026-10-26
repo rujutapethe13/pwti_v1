@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
 
-import { addColumnSchemaWithConnectBoard, renameColumnSchema, duplicateColumnSchema, deleteColumnSchema, reorderColumnsSchema, hideColumnsSchema, freezeColumnSchema, changeColumnTypeSchema, updateColumnOptionsSchema, deleteBoardColumnsSchema } from "../schemas/column-schemas";
+import { addColumnSchemaWithConnectBoard, renameColumnSchema, duplicateColumnSchema, deleteColumnSchema, reorderColumnsSchema, hideColumnsSchema, freezeColumnSchema, changeColumnTypeSchema, updateColumnOptionsSchema, updateColumnLabelsSchema, deleteBoardColumnsSchema } from "../schemas/column-schemas";
 import { ColumnService } from "../services/column-service";
 import type { ApiResponse } from "@/types";
 import type { ColumnDefinition, MigrationPreview, MigrationResult, DropdownOption } from "../types";
@@ -100,9 +100,23 @@ export async function changeColumnType(columnId: string, newType: string, previe
 export async function updateColumnOptions(columnId: string, options: DropdownOption[]): Promise<ApiResponse<ColumnDefinition>> {
   const parsed = updateColumnOptionsSchema.safeParse({ columnId, options });
   if (!parsed.success) {
-    return { data: null, error: "Invalid input", status: 400 };
+    return { data: null, error: parsed.error.issues[0]?.message ?? "Invalid input", status: 400 };
   }
   return ColumnService.updateOptions(parsed.data, "system");
+}
+
+/**
+ * Persist a column's label list.
+ *
+ * For a status column the list is written to `column.settings.labels` — the
+ * array every surface reads from — and mirrored into `settings.options`.
+ */
+export async function updateColumnLabels(columnId: string, labels: DropdownOption[]): Promise<ApiResponse<ColumnDefinition>> {
+  const parsed = updateColumnLabelsSchema.safeParse({ columnId, labels });
+  if (!parsed.success) {
+    return { data: null, error: parsed.error.issues[0]?.message ?? "Invalid input", status: 400 };
+  }
+  return ColumnService.updateLabels(parsed.data, "system");
 }
 
 export async function deleteBoardColumns(boardId: string, columnIds: string[]): Promise<ApiResponse<null>> {

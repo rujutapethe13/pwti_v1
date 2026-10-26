@@ -18,17 +18,18 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, Loader2, Plus, Search, X } from "lucide-react";
+import { ExternalLink, Loader2, Plus, Search, X, Lock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { CellRendererComponentProps } from "./cell-renderer-registry";
-import type { ColumnDefinition, ColumnValue, ConnectedBoardColumnValue, ConnectedBoardLinkItem } from "../../types";
+import type { ColumnDefinition, ColumnValue, ConnectedBoardLinkItem } from "../../types";
 import { supabase } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
+import { normalizeRecordId, parseConnectedBoardLinks } from "../../connected-data/mirror-utils";
 
-type BoardItem = { id: string; title: string };
+type BoardItem = { id: string; title: string; secondary?: string; groupName?: string };
 
 /** Kept for backward-compat with the (now-unused) RelationshipPicker. */
 export interface LinkedRecord {
@@ -39,19 +40,6 @@ export interface LinkedRecord {
 type ConnectedBoardEntry = { workspace_id: string; board_id: string };
 
 // ── Helpers ───────────────────────────────────────────────
-
-function getLinkedItems(value: ColumnValue): ConnectedBoardLinkItem[] {
-  if (
-    value &&
-    typeof value === "object" &&
-    !Array.isArray(value) &&
-    "linked_item_ids" in value
-  ) {
-    const arr = (value as unknown as ConnectedBoardColumnValue).linked_item_ids;
-    return Array.isArray(arr) ? (arr as ConnectedBoardLinkItem[]) : [];
-  }
-  return [];
-}
 
 function getConnectedBoardEntries(column: ColumnDefinition): ConnectedBoardEntry[] {
   const settings = (column.settings ?? {}) as Record<string, unknown>;
@@ -78,6 +66,9 @@ interface ConnectBoardPickerProps {
   activeBoardId: string;
   onActiveBoardChange: (boardId: string) => void;
   boardName: (boardId: string) => string;
+  boardNamesLoading: boolean;
+  boardNameStatus: (boardId: string) => "forbidden" | "resolved" | "fallback" | "loading";
+  initialQuery?: string;
 }
 
 function ConnectBoardPicker({
@@ -92,19 +83,31 @@ function ConnectBoardPicker({
   activeBoardId,
   onActiveBoardChange,
   boardName,
+  boardNamesLoading,
+  boardNameStatus,
+  initialQuery,
 }: ConnectBoardPickerProps) {
   const [query, setQuery] = useState("");
+
+  useEffect(() => {
+    if (open) setQuery(initialQuery ?? "");
+  }, [open, initialQuery]);
 
   const filteredItems = useMemo(() => {
     const q = query.toLowerCase().trim();
     if (!q) return items;
     return items.filter((r) => r.title.toLowerCase().includes(q));
   }, [items, query]);
+  const duplicateTitles = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const item of items) counts.set(item.title, (counts.get(item.title) ?? 0) + 1);
+    return new Set(Array.from(counts.entries()).filter(([, count]) => count > 1).map(([title]) => title));
+  }, [items]);
 
   const isLinked = useCallback(
     (itemId: string) =>
       linkedItems.some(
-        (it) => it.board_id === activeBoardId && it.item_id === itemId,
+        (it) => it.board_id === activeBoardId && normalizeRecordId(it.item_id) === normalizeRecordId(itemId),
       ),
     [linkedItems, activeBoardId],
   );
@@ -112,24 +115,24 @@ function ConnectBoardPicker({
   const toggleItem = useCallback(
     (itemId: string) => {
       const alreadyLinked = linkedItems.some(
-        (it) => it.board_id === activeBoardId && it.item_id === itemId,
+        (it) => it.board_id === activeBoardId && normalizeRecordId(it.item_id) === normalizeRecordId(itemId),
       );
       let next: ConnectedBoardLinkItem[];
       if (alreadyLinked) {
         next = linkedItems.filter(
-          (it) => !(it.board_id === activeBoardId && it.item_id === itemId),
+          (it) => !(it.board_id === activeBoardId && normalizeRecordId(it.item_id) === normalizeRecordId(itemId)),
         );
       } else if (allowMultiple) {
-        next = [...linkedItems, { board_id: activeBoardId, item_id: itemId, workspace_id: "" }];
+        next = [...linkedItems, { board_id: activeBoardId, item_id: itemId, item_name: items.find((item) => item.id === itemId)?.title, workspace_id: "" }];
       } else {
         next = [
           ...linkedItems.filter((it) => it.board_id !== activeBoardId),
-          { board_id: activeBoardId, item_id: itemId, workspace_id: "" },
+          { board_id: activeBoardId, item_id: itemId, item_name: items.find((item) => item.id === itemId)?.title, workspace_id: "" },
         ];
       }
       onSelect(next);
     },
-    [linkedItems, activeBoardId, allowMultiple, onSelect],
+    [linkedItems, activeBoardId, allowMultiple, items, onSelect],
   );
 
   if (connectedBoards.length === 0) {
@@ -169,7 +172,14 @@ function ConnectBoardPicker({
                     : "bg-muted text-muted-foreground hover:bg-muted/70",
                 )}
               >
-                {boardName(entry.board_id)}
+                {boardNamesLoading || boardNameStatus(entry.board_id) === "loading" ? (
+                  <span className="inline-block h-3 w-20 animate-pulse rounded bg-current/20" />
+                ) : (
+                  <span className="max-w-40 truncate" title={boardName(entry.board_id)}>
+                    {boardNameStatus(entry.board_id) === "forbidden" && <Lock className="mr-1 inline size-3" />}
+                    {boardName(entry.board_id)}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -181,7 +191,11 @@ function ConnectBoardPicker({
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={`Search ${boardName(activeBoardId)}...`}
+            placeholder={
+              boardNameStatus(activeBoardId) === "loading"
+                ? "Loading board..."
+                : `Search in ${boardName(activeBoardId)}...`
+            }
             className="h-9"
             autoFocus
           />
@@ -222,7 +236,13 @@ function ConnectBoardPicker({
                   {item.title?.slice(0, 2).toUpperCase() ?? "??"}
                 </div>
                 <span className="min-w-0 flex-1 truncate font-medium text-foreground">
-                  {item.title}
+                  <span className="block truncate">{item.title}</span>
+                  <span className="block truncate text-[11px] font-normal text-muted-foreground" title={item.id}>
+                    {item.secondary ?? item.groupName ?? "No additional details"}
+                    {duplicateTitles.has(item.title) && (
+                      <Badge variant="outline" className="ml-1 px-1 py-0 text-[9px] leading-3">Duplicate name</Badge>
+                    )}
+                  </span>
                 </span>
                 {linked && <X className="size-4 shrink-0 text-primary" />}
               </button>
@@ -232,7 +252,8 @@ function ConnectBoardPicker({
 
         <DialogFooter className="border-t px-4 py-3">
           <div className="text-xs text-muted-foreground">
-            {linkedItems.length} linked
+            {linkedItems.filter((item) => item.board_id === activeBoardId).length} linked from{" "}
+            {boardNameStatus(activeBoardId) === "loading" ? "Loading board..." : boardName(activeBoardId)}
           </div>
           <Button variant="default" size="sm" onClick={() => onOpenChange(false)}>
             Done
@@ -259,29 +280,58 @@ export function ConnectedBoardCellRenderer({
   const [activeBoardId, setActiveBoardId] = useState<string>("");
   const [boardRecords, setBoardRecords] = useState<Record<string, BoardItem[]>>({});
   const [boardNames, setBoardNames] = useState<Record<string, string>>({});
+  const [boardNameStatuses, setBoardNameStatuses] = useState<Record<string, "forbidden" | "resolved" | "fallback" | "loading">>({});
+  const [boardNamesLoading, setBoardNamesLoading] = useState(false);
   const [loadingRecords, setLoadingRecords] = useState(false);
 
   const settings = (column.settings ?? {}) as Record<string, unknown>;
-  const connectedBoards = getConnectedBoardEntries(column);
+  const connectedBoards = useMemo(() => getConnectedBoardEntries(column), [column]);
   const allowMultiple = Boolean(settings.allow_multiple_items ?? true);
+  const previewColumnIds = useMemo(
+    () =>
+      Array.isArray(settings.preview_column_ids)
+        ? settings.preview_column_ids.filter((id): id is string => typeof id === "string").slice(0, 2)
+        : [],
+    [settings.preview_column_ids],
+  );
 
-  const linkedItems = useMemo(() => getLinkedItems(value), [value]);
+  const linkedItems = useMemo(() => parseConnectedBoardLinks(value), [value]);
 
-  // Fetch board names for all connected boards
   const loadBoardNames = useCallback(async (boardIds: string[]) => {
     const uniqueIds = Array.from(new Set(boardIds));
     if (uniqueIds.length === 0) return;
-    const { data } = await supabase
-      .from("boards")
-      .select("id, name")
-      .in("id", uniqueIds);
-    if (data) {
+    setBoardNameStatuses((prev) => ({
+      ...prev,
+      ...Object.fromEntries(uniqueIds.map((id) => [id, "loading"])),
+    }));
+    setBoardNamesLoading(true);
+    let data: { id: string; name: string }[] | null = null;
+    let error = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = await supabase.from("boards").select("id, name").in("id", uniqueIds);
+      data = result.data as { id: string; name: string }[] | null;
+      error = result.error;
+      if (!error) break;
+    }
+    if (error) {
+      console.error("[ConnectedBoardCellRenderer] board-name lookup failed:", error);
+      const forbidden = error.code === "42501" || error.code === "401" || error.code === "403";
+      setBoardNameStatuses((prev) => ({
+        ...prev,
+        ...Object.fromEntries(uniqueIds.map((id) => [id, forbidden ? "forbidden" : "fallback"])),
+      }));
+    } else {
       const map: Record<string, string> = {};
-      for (const b of data as { id: string; name: string }[]) {
-        map[b.id] = b.name;
+      for (const b of data ?? []) {
+        if (b.name?.trim()) map[b.id] = b.name;
       }
       setBoardNames((prev) => ({ ...prev, ...map }));
+      setBoardNameStatuses((prev) => ({
+        ...prev,
+        ...Object.fromEntries(uniqueIds.map((id) => [id, map[id] ? "resolved" : "fallback"])),
+      }));
     }
+    setBoardNamesLoading(false);
   }, []);
 
   // Fetch live items for a board straight from the records table.
@@ -289,38 +339,99 @@ export function ConnectedBoardCellRenderer({
     if (!targetBoardId) return;
     setLoadingRecords(true);
     try {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("records")
-        .select("id, title, board_id")
+        .select("id, title, board_id, group_id, created_at")
         .eq("board_id", targetBoardId)
         .order("created_at", { ascending: true });
+      if (error) {
+        console.error("[ConnectedBoardCellRenderer] record lookup failed:", error);
+        return;
+      }
+      const rows = data ?? [];
+      const groupIds = Array.from(new Set(rows.map((r) => r.group_id).filter(Boolean)));
+      const [{ data: groups }, { data: columns }] = await Promise.all([
+        groupIds.length ? supabase.from("groups").select("id, name").in("id", groupIds) : Promise.resolve({ data: [] }),
+        supabase.from("columns").select("id, label, sort_order").eq("board_id", targetBoardId).is("group_id", null).order("sort_order"),
+      ]);
+      const groupMap = new Map((groups ?? []).map((g) => [g.id, g.name]));
+      const previewIds = previewColumnIds;
+      const values = rows.length && previewIds.length
+        ? (await supabase.from("cell_values").select("record_id, column_id, value").in("record_id", rows.map((r) => r.id)).in("column_id", previewIds)).data ?? []
+        : [];
+      const labels = new Map((columns ?? []).map((c) => [c.id, c.label]));
+      const valueMap = new Map<string, string[]>();
+      for (const cell of values) {
+        const value = typeof cell.value === "string" ? cell.value : cell.value == null ? "" : JSON.stringify(cell.value);
+        if (value) valueMap.set(cell.record_id, [...(valueMap.get(cell.record_id) ?? []), `${labels.get(cell.column_id) ?? ""}: ${value}`]);
+      }
       setBoardRecords((prev) => ({
         ...prev,
-        [targetBoardId]: (data ?? []).map((r) => ({ id: r.id, title: r.title })),
+        [targetBoardId]: rows.map((r) => ({
+          id: r.id,
+          title: r.title ?? "Untitled",
+          groupName: r.group_id ? groupMap.get(r.group_id) : undefined,
+          secondary: [
+            r.group_id ? groupMap.get(r.group_id) : undefined,
+            valueMap.get(r.id)?.join(" · "),
+          ].filter(Boolean).join(" · ") || (r.created_at ? new Date(r.created_at).toLocaleDateString() : undefined),
+        })),
       }));
     } catch {
       // Leave previous data in place on failure.
     } finally {
       setLoadingRecords(false);
     }
-  }, []);
+  }, [previewColumnIds]);
 
   const boardName = useCallback(
-    (id: string) => boardNames[id] ?? id,
+    (id: string) => boardNames[id]?.trim() || "Untitled board",
     [boardNames],
   );
-
-  const recordTitle = useCallback(
-    (id: string, itemId: string) => boardRecords[id]?.find((r) => r.id === itemId)?.title ?? itemId.slice(0, 8),
-    [boardRecords],
+  const boardNameStatus = useCallback(
+    (id: string) => boardNameStatuses[id] ?? "loading",
+    [boardNameStatuses],
   );
+
+  // Resolve linked chips by their ids, independently of picker scope, filters,
+  // pagination, and workspace metadata.
+  const loadLinkedRecords = useCallback(async (links: ConnectedBoardLinkItem[]) => {
+    const byBoard = new Map<string, string[]>();
+    for (const link of links) {
+      const id = normalizeRecordId(link.item_id);
+      if (id) byBoard.set(link.board_id, [...(byBoard.get(link.board_id) ?? []), id]);
+    }
+    await Promise.all(Array.from(byBoard.entries()).map(async ([targetBoardId, ids]) => {
+      const uniqueIds = Array.from(new Set(ids));
+      const { data, error } = await supabase.from("records").select("id, title, board_id").in("id", uniqueIds);
+      if (error) {
+        console.error("[ConnectedBoardCellRenderer] linked-item lookup failed", { targetBoardId, ids: uniqueIds, error });
+        return;
+      }
+      const loaded = (data ?? []).map((row) => ({ id: row.id, title: row.title ?? "Untitled" }));
+      setBoardRecords((prev) => ({ ...prev, [targetBoardId]: [...(prev[targetBoardId] ?? []).filter((item) => !uniqueIds.includes(normalizeRecordId(item.id) ?? "")), ...loaded] }));
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[ConnectedBoardCellRenderer] linked-item diagnosis", {
+          rawConnectValue: value,
+          linkedItems: links,
+          linkedIds: uniqueIds.map((id) => ({ id, type: typeof id, prefix: id.match(/^[A-Za-z]+(?=[:_-])/i)?.[0] ?? null })),
+          loadedIds: loaded.map((item) => item.id),
+          databaseExists: uniqueIds.map((id) => ({ id, exists: loaded.some((item) => normalizeRecordId(item.id) === id) })),
+        });
+      }
+    }));
+  }, [value]);
 
   // Resolve titles for already-linked items (so chips show real names).
   useEffect(() => {
-    const boardIds = Array.from(new Set(linkedItems.map((i) => i.board_id)));
+    const boardIds = Array.from(new Set([
+      ...connectedBoards.map((entry) => entry.board_id),
+      ...linkedItems.map((i) => i.board_id),
+    ]));
     boardIds.forEach((b) => void loadRecords(b));
+    void loadLinkedRecords(linkedItems);
     void loadBoardNames(boardIds);
-  }, [linkedItems, loadRecords, loadBoardNames]);
+  }, [connectedBoards, linkedItems, loadRecords, loadLinkedRecords, loadBoardNames]);
 
   // Reset/select the active board when the picker opens.
   useEffect(() => {
@@ -368,6 +479,12 @@ export function ConnectedBoardCellRenderer({
         activeBoardId={activeBoardId}
         onActiveBoardChange={(id) => setActiveBoardId(id)}
         boardName={boardName}
+        boardNamesLoading={boardNamesLoading}
+        boardNameStatus={boardNameStatus}
+        initialQuery={(() => {
+          const broken = linkedItems.find((item) => !boardRecords[item.board_id]?.some((record) => normalizeRecordId(record.id) === normalizeRecordId(item.item_id)));
+          return broken?.item_name;
+        })()}
       />
     ) : null;
 
@@ -394,15 +511,26 @@ export function ConnectedBoardCellRenderer({
   return (
     <div className="flex flex-wrap items-center gap-1 max-w-full">
       {linkedItems.map((item) => (
+        (() => {
+          const linkedRecord = boardRecords[item.board_id]?.find(
+            (record) => normalizeRecordId(record.id) === normalizeRecordId(item.item_id),
+          );
+          const isBroken = !linkedRecord;
+          return (
         <Badge
           key={`${item.board_id}:${item.item_id}`}
           variant="secondary"
-          className="flex items-center gap-1 text-xs"
-          title={`${boardName(item.board_id)} · ${recordTitle(item.board_id, item.item_id)}`}
+          className={cn("flex items-center gap-1 text-xs", isBroken && "text-destructive line-through")}
+          title={isBroken ? `Item removed · ${item.item_id}` : `${boardName(item.board_id)} · ${linkedRecord.title}`}
         >
           <span className="max-w-[160px] truncate">
-            {recordTitle(item.board_id, item.item_id)}
+            {isBroken ? "Item removed" : linkedRecord.title}
           </span>
+          {isBroken && !readOnly && (
+            <button type="button" className="no-underline text-xs hover:text-foreground" onClick={() => setPickerOpen(true)}>
+              Relink
+            </button>
+          )}
           <ExternalLink className="size-3 shrink-0 opacity-60" />
           {!readOnly && (
             <button
@@ -418,6 +546,8 @@ export function ConnectedBoardCellRenderer({
             </button>
           )}
         </Badge>
+          );
+        })()
       ))}
       {!readOnly && (
         <Button

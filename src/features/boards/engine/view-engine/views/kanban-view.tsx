@@ -59,16 +59,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 import type { ViewRendererProps } from "../view-engine-types";
-import type { BoardRecord, ColumnDefinition, ColumnValue, DropdownOption, KanbanViewSettings } from "../../types";
+import type { BoardRecord, ColumnDefinition, ColumnValue, KanbanViewSettings } from "../../types";
+import { getColumnOptions } from "../../lib/option-lookup";
 
-// ── Default status columns ─────────────────────────────────
-
-const DEFAULT_STATUS_COLUMNS = [
-  { id: "done", label: "Done", color: "#68C37D" },
-  { id: "working-on-it", label: "Working on it", color: "#EBAD54" },
-  { id: "stuck", label: "Stuck", color: "#C5434E" },
-  { id: "not-started", label: "Not Started", color: "#C4C4C4" },
-];
+/**
+ * A cell belongs to a status column when it holds that label's id.
+ *
+ * Cells that still hold the label NAME (a pre-migration cell) are matched as
+ * well, so a card never disappears from the board before the one-time
+ * migration has relinked it.
+ */
+function cellMatchesStatus(value: ColumnValue | undefined, status: { id: string; label: string }): boolean {
+  if (value === null || value === undefined || value === "") return false;
+  const raw = String(value);
+  if (raw === status.id) return true;
+  return raw.toLowerCase() === status.label.toLowerCase();
+}
 
 // ── Sortable Card ──────────────────────────────────────────
 
@@ -416,7 +422,7 @@ function GroupSection({
         {statusColumns.map((statusCol, index) => {
           const statusRecords = group.records.filter((r) => {
             const val = cellValues.get(`${r.id}:${statusColumnId}`);
-            return String(val) === statusCol.id;
+            return cellMatchesStatus(val, statusCol);
           });
           if (statusRecords.length === 0 && !showEmptyGroups) return null;
           const isColCollapsed = collapsedStatusCols.has(statusCol.id);
@@ -545,7 +551,7 @@ function StatusSection({
 
   const statusRecords = records.filter((r) => {
     const val = cellValues.get(`${r.id}:${statusColumnId}`);
-    return String(val) === status.id;
+    return cellMatchesStatus(val, status);
   });
 
   const doneCount = statusRecords.filter((r) => {
@@ -744,31 +750,26 @@ export function KanbanView({
   const divideBySecondaryType = (rawDivideBy.secondaryType ?? null) as "status" | "group" | null;
   const divideBySecondaryColumnId = ((rawDivideBy.secondaryColumnId || "") as string);
 
-  // Resolve status columns for display — use the configured group-by column's options
+  // Resolve status columns for display — read the LIVE labels of the
+  // configured group-by column (never a hardcoded list).
   const groupByColumn = columns.find((c) => c.id === kanbanSettings.groupBy?.columnId);
-  const statusColumnOptions = (groupByColumn?.settings?.options as Array<{ id: string; label: string; color: string }>) || [];
-  const columnStatusColumns = statusColumnOptions.length > 0
-    ? statusColumnOptions
-    : DEFAULT_STATUS_COLUMNS;
+  const statusColumnOptions = getColumnOptions(groupByColumn);
+  const columnStatusColumns = statusColumnOptions;
 
-  // Primary status column and its options
+  // Primary status column and its labels
   const primaryStatusColumn = divideByPrimaryType === "status"
     ? columns.find((c) => c.id === divideByPrimaryColumnId)
     : null;
-  const primaryStatusOptions = primaryStatusColumn
-    ? ((primaryStatusColumn.settings?.options) as Array<{ id: string; label: string; color?: string }>) || []
-    : [];
+  const primaryStatusOptions = getColumnOptions(primaryStatusColumn);
   const primaryStatusColumns = primaryStatusOptions.length > 0
     ? primaryStatusOptions
     : columnStatusColumns;
 
-  // Secondary status column and its options
+  // Secondary status column and its labels
   const secondaryStatusColumn = divideBySecondaryType === "status"
     ? columns.find((c) => c.id === divideBySecondaryColumnId)
     : null;
-  const secondaryStatusOptions = secondaryStatusColumn
-    ? ((secondaryStatusColumn.settings?.options) as Array<{ id: string; label: string; color?: string }>) || []
-    : [];
+  const secondaryStatusOptions = getColumnOptions(secondaryStatusColumn);
   const secondaryStatusColumns = secondaryStatusOptions.length > 0
     ? secondaryStatusOptions
     : columnStatusColumns;
@@ -1015,7 +1016,7 @@ export function KanbanView({
                     {primaryStatusColumns.map((statusOpt, index) => {
                       const statusRecords = records.filter((r) => {
                         const val = cellValues.get(`${r.id}:${divideByStatusColumnId}`);
-                        return String(val) === statusOpt.id;
+                        return cellMatchesStatus(val, statusOpt);
                       });
                       if (statusRecords.length === 0 && !kanbanSettings.showEmptyGroups) return null;
 
@@ -1044,7 +1045,7 @@ export function KanbanView({
                     {primaryStatusColumns.map((statusOpt, index) => {
                       const statusRecords = records.filter((r) => {
                         const val = cellValues.get(`${r.id}:${divideByStatusColumnId}`);
-                        return String(val) === statusOpt.id;
+                        return cellMatchesStatus(val, statusOpt);
                       });
                       if (statusRecords.length === 0 && !kanbanSettings.showEmptyGroups) return null;
 

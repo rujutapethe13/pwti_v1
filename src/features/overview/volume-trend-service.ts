@@ -152,14 +152,19 @@ export async function fetchVolumeTrend(
 ): Promise<VolumeTrendPayload> {
   // Records written moments ago only reach the snapshot on refresh; without it
   // the chart would under-report today's volume.
+  console.log("[TEMP-LOG] fetchVolumeTrend — org:", organizationId, "range:", JSON.stringify(range), "workspaceIds:", workspaceIds);
   await checkAndRefreshSnapshotIfNeeded(supabase);
+
+  const bounds = await fetchDataBounds(supabase, organizationId, workspaceIds);
+  console.log("[TEMP-LOG] volume-trend data bounds:", JSON.stringify(bounds));
 
   const window =
     range.id === "all"
-      ? narrowAllTimeRange(range, await fetchDataBounds(supabase, organizationId, workspaceIds))
+      ? narrowAllTimeRange(range, bounds)
       : range;
 
   const granularity = pickVolumeGranularity(window.days);
+  console.log("[TEMP-LOG] volume-trend narrowed window:", JSON.stringify(window), "granularity:", granularity);
 
   const { data, error } = await supabase.rpc("overview_volume_trend", {
     p_organization_id: organizationId,
@@ -170,12 +175,13 @@ export async function fetchVolumeTrend(
   });
 
   if (error) {
-    console.error("Failed to fetch volume trend:", error);
+    console.error("[TEMP-LOG] overview_volume_trend RPC error:", error.message);
     throw new Error(
       `Failed to fetch volume trend data: ${error.message || String(error)}`,
     );
   }
 
+  console.log("[TEMP-LOG] overview_volume_trend raw result:", JSON.stringify(data));
   const root = (data ?? {}) as Record<string, unknown>;
 
   const received = toZeroFilledSeries(
@@ -190,6 +196,11 @@ export async function fetchVolumeTrend(
     window.to,
     granularity,
   );
+
+  console.log("[TEMP-LOG] volume-trend received buckets:", JSON.stringify(received));
+  console.log("[TEMP-LOG] volume-trend completed buckets:", JSON.stringify(completed));
+  console.log("[TEMP-LOG] volume-trend completedDateAvailable:", toBoolean(root.completed_date_available));
+  console.log("[TEMP-LOG] volume-trend coverage:", JSON.stringify(parseCoverage(root.coverage)));
 
   return {
     range: {

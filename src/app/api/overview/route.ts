@@ -16,6 +16,7 @@ import { pickVolumeGranularity } from "@/features/overview/volume-buckets";
 export async function GET(request: NextRequest) {
   try {
     const organizationId = await getUserOrganizationId();
+    console.log("[TEMP-LOG] Overview API GET — organizationId:", organizationId, "range param:", request.nextUrl.searchParams.get("range"), "from:", request.nextUrl.searchParams.get("from"), "to:", request.nextUrl.searchParams.get("to"));
     if (!organizationId) {
       return NextResponse.json(
         { error: "Unable to determine organization. Please ensure you are a member of a workspace." },
@@ -33,6 +34,7 @@ export async function GET(request: NextRequest) {
     // (/api/overview/volume-trend) so it can own its loading and error state and
     // can return a completed series alongside the received one.
     const range = parseTimeRangeQuery(request.nextUrl.searchParams);
+    console.log("[TEMP-LOG] Parsed range:", JSON.stringify(range));
 
     // Refresh the materialized snapshot if a DB trigger marked it dirty
     // (records/cell_values insertions set needs_refresh = true).
@@ -44,13 +46,13 @@ export async function GET(request: NextRequest) {
     // three section services narrow it, so without doing the same here this
     // route would echo `1900-01-01` and the page would caption the header
     // "Jan 1, 1900 – ..." while the sections above it showed the real span.
-    const window = narrowAllTimeRange(
-      range,
-      await fetchDataBounds(supabase, organizationId, null),
-    );
+    const dataBounds = await fetchDataBounds(supabase, organizationId, null);
+    console.log("[TEMP-LOG] Data bounds:", JSON.stringify(dataBounds));
+    const window = narrowAllTimeRange(range, dataBounds);
     const rangeFrom = window.from;
     const rangeTo = window.to;
     const { fromIso, toIso } = toTimestampBounds(window);
+    console.log("[TEMP-LOG] Narrowed window:", JSON.stringify(window));
 
     // ── 1. Workload by team (range-scoped) ──
 
@@ -67,6 +69,8 @@ export async function GET(request: NextRequest) {
       .gte("job_date", rangeFrom)
       .lte("job_date", rangeTo)
       .range(0, WORKLOAD_ROW_CEILING);
+
+    console.log("[TEMP-LOG] Workload query — rows:", workloadResult.data?.length ?? 0, "error:", workloadResult.error?.message ?? "none");
 
     if (
       workloadResult.data &&

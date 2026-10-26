@@ -30,6 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { CalendarViewSettings, ColumnDefinition } from "../../types";
+import { getColumnOptions } from "../../lib/option-lookup";
 
 // ── Props ──────────────────────────────────────────────────
 
@@ -44,6 +45,9 @@ interface CalendarSettingsPanelProps {
 // ── Section IDs ─────────────────────────────────────────────
 
 type SectionId = "columns" | "timeRange" | "colorBy" | "labelBy" | "additional" | "groups";
+
+/** Sentinel id used by the "Color by" dropdown for board groups. */
+const GROUP_COLOR_SOURCE = "__group__";
 
 // ── Component ───────────────────────────────────────────────
 
@@ -61,9 +65,28 @@ export function CalendarSettingsPanel({
   const personColumns = columns.filter((c) => c.type === "person");
   const selectedDateCount = settings.selectedDateColumns.length;
 
-  // Get status options with colors from the first status column
+  // Get the status labels (with colors) from the first status column — read
+  // from the live column, never from a hardcoded list.
   const statusCol = statusColumns[0];
-  const statusOptions = (statusCol?.settings?.options as Array<{ id: string; label: string; color: string }>) || [];
+  const statusOptions = getColumnOptions(statusCol);
+
+  // The colour source is stored as a column id; show its label.
+  const colorByLabel = (() => {
+    if (settings.colorByColumnId === GROUP_COLOR_SOURCE) return "Group";
+    if (settings.colorByColumnId) {
+      const column = columns.find((c) => c.id === settings.colorByColumnId);
+      if (column) return column.label;
+    }
+    if (settings.colorBy === "group") return "Group";
+    if (settings.colorBy === "person") return personColumns[0]?.label || "Owner / Person";
+    if (settings.colorBy === "status") {
+      return statusCol?.label && statusColumns.length > 0 ? statusCol.label : "Status";
+    }
+    if (settings.colorBy === "board") return "Board";
+    return "None";
+  })();
+
+  const weekStart = settings.weekStart ?? settings.firstDayOfWeek ?? 0;
 
   const toggleSection = (section: SectionId) => {
     setExpandedSection((prev) => (prev === section ? null : section));
@@ -220,28 +243,52 @@ export function CalendarSettingsPanel({
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex h-8 w-full items-center rounded-md border border-input bg-background px-3 text-sm">
-                  {settings.colorBy === "none" && "None"}
-                  {settings.colorBy === "status" && statusCol?.label && statusColumns.length > 0 ? statusCol.label : "Status"}
-                  {settings.colorBy === "person" && (personColumns[0]?.label || "Owner / Person")}
-                  {settings.colorBy === "group" && "Group"}
-                  {settings.colorBy === "board" && "Board"}
+                  {colorByLabel}
                   <ChevronDown className="ml-auto size-3.5 opacity-50" />
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent className="w-full">
-                <DropdownMenuItem onSelect={() => onSettingsChange({ colorBy: "none" })}>None</DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    onSettingsChange({ colorBy: "none", colorByColumnId: "" })
+                  }
+                >
+                  None
+                </DropdownMenuItem>
                 {statusColumns.map((col) => (
-                  <DropdownMenuItem key={col.id} onSelect={() => onSettingsChange({ colorBy: "status" })}>
+                  <DropdownMenuItem
+                    key={col.id}
+                    onSelect={() =>
+                      onSettingsChange({ colorBy: "status", colorByColumnId: col.id })
+                    }
+                  >
                     {col.label}
                   </DropdownMenuItem>
                 ))}
                 {personColumns.map((col) => (
-                  <DropdownMenuItem key={col.id} onSelect={() => onSettingsChange({ colorBy: "person" })}>
+                  <DropdownMenuItem
+                    key={col.id}
+                    onSelect={() =>
+                      onSettingsChange({ colorBy: "person", colorByColumnId: col.id })
+                    }
+                  >
                     {col.label}
                   </DropdownMenuItem>
                 ))}
-                <DropdownMenuItem onSelect={() => onSettingsChange({ colorBy: "group" })}>Group</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => onSettingsChange({ colorBy: "board" })}>Board</DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    onSettingsChange({ colorBy: "group", colorByColumnId: GROUP_COLOR_SOURCE })
+                  }
+                >
+                  Group
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onSelect={() =>
+                    onSettingsChange({ colorBy: "board", colorByColumnId: "" })
+                  }
+                >
+                  Board
+                </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
             {/* Show status color legend when coloring by status */}
@@ -395,6 +442,29 @@ export function CalendarSettingsPanel({
               </div>
               <span className="text-sm text-foreground">Hide item names</span>
             </label>
+            <div className="space-y-1">
+              <label className="text-sm text-muted-foreground">Week starts on</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button className="flex h-8 w-full items-center rounded-md border border-input bg-background px-3 text-sm">
+                    {weekStart === 1 ? "Monday" : "Sunday"}
+                    <ChevronDown className="ml-auto size-3.5 opacity-50" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent className="w-full">
+                  <DropdownMenuItem
+                    onSelect={() => onSettingsChange({ weekStart: 1, firstDayOfWeek: 1 })}
+                  >
+                    Monday
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => onSettingsChange({ weekStart: 0, firstDayOfWeek: 0 })}
+                  >
+                    Sunday
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
             <div className="space-y-1">
               <label className="text-sm text-muted-foreground">Default event duration</label>
               <DropdownMenu>

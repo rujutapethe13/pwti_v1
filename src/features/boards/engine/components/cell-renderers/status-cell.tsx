@@ -2,15 +2,18 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown } from "lucide-react";
+import { toast } from "sonner";
 import type { CellRendererComponentProps } from "./cell-renderer-registry";
 import { resolveDisplayValue } from "./cell-renderer-registry";
 import type { DropdownOption } from "@/features/boards/engine/types";
-import { updateColumnOptions } from "@/features/boards/engine/actions";
+import { updateColumnLabels } from "@/features/boards/engine/actions";
 import { SelectModePanel, EditLabelsPanel, PRESET_COLORS, DEFAULT_COLORS, getContrastColor } from "@/features/boards/engine/components/cell-options-popup";
-import { getColumnOptions, resolveOptionDisplay } from "@/features/boards/engine/lib/option-lookup";
+import { findOptionForValue, getColumnOptions, sanitizeLabels } from "@/features/boards/engine/lib/option-lookup";
 
 type DropdownMode = "select" | "edit";
+
+/** Colour of a cell that holds no value (or a value that is not a label). */
+const EMPTY_CELL_COLOR = "#C4C4C4";
 
 export function StatusCell({
   value,
@@ -18,34 +21,80 @@ export function StatusCell({
   onChange,
   onKeyDown: _onKeyDown,
   column,
+  onUpdateColumnLabels,
 }: CellRendererComponentProps) {
-  const options = getColumnOptions(column);
+  /**
+   * The LIVE label list of the column.
+   *
+   * This is the only source the cell, the picker and the Edit Labels panel
+   * read from — never a hardcoded list and never a copy taken at mount. The
+   * column handed to a cell IS the live column of the store, so a label
+   * change is picked up on the next render.
+   */
+  const labels = getColumnOptions(column);
 
-  // The cell stores the option id; the column's options list provides the
-  // label. An id with no matching option renders "Unknown option" rather than
-  // leaking the raw id.
-  const resolved = resolveOptionDisplay(options, resolveDisplayValue(value));
-  const effectiveValue = resolved.label;
-  const effectiveId = resolved.option?.id ?? "";
-  const matchedOption = resolved.option;
+  const rawValue = resolveDisplayValue(value);
+  const isEmpty = rawValue === "" || rawValue === null || rawValue === undefined;
+  // The cell stores the label id; the id is resolved against the live labels.
+  const matchedOption = isEmpty ? null : (findOptionForValue(labels, rawValue) ?? null);
+  const isUnmatched = !isEmpty && !matchedOption;
+
+  /**
+   * The edit draft. `null` means "not editing" — the picker then renders the
+   * live labels. A draft is a copy of the live labels plus the user's
+   * unsaved edits; it is discarded by Cancel / X and written by Apply.
+   *
+   * The draft is kept in a ref as well: renaming a label commits on blur, and
+   * the Apply click that follows must see that rename even though React has
+   * not re-rendered yet.
+   */
+  const draftRef = useRef<DropdownOption[] | null>(null);
+  const [draft, setDraftState] = useState<DropdownOption[] | null>(null);
+  const [deletedIds, setDeletedIds] = useState<string[]>([]);
+
+  const updateDraft = useCallback((next: DropdownOption[] | null) => {
+    draftRef.current = next;
+    setDraftState(next);
+  }, []);
+
+  const currentDraft = useCallback(
+    () => draftRef.current ?? labels.map((opt) => ({ ...opt })),
+    [labels],
+  );
 
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<DropdownMode>("select");
-  const [localOptions, setLocalOptions] = useState<DropdownOption[]>(options);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [editColor, setEditColor] = useState(PRESET_COLORS[9]);
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const warnedRef = useRef<Set<string>>(new Set());
 
-  // An unknown option gets a neutral grey so it is visibly distinct from a
-  // real, resolved status.
-  const cellColor = matchedOption?.color ?? DEFAULT_COLORS[effectiveValue] ?? "#3b82f6";
-  const cellTextColor = getContrastColor(cellColor);
+  // The list the panel renders: the draft while editing, the live labels
+  // otherwise.
+  const panelOptions = draft ?? labels;
+
+  const cellColor =
+    matchedOption?.color ??
+    (matchedOption ? (DEFAULT_COLORS[matchedOption.label] ?? EMPTY_CELL_COLOR) : EMPTY_CELL_COLOR);
+  const cellTextColor = matchedOption?.variant === "light" ? "#323338" : getContrastColor(cellColor);
+  const displayText = matchedOption?.label ?? "";
+
+  // A cell whose value is not one of the column's labels renders empty (grey)
+  // instead of leaking an id or an "Unknown option" string.
+  useEffect(() => {
+    if (!isUnmatched) return;
+    const key = `${column.id}:${rawValue}`;
+    if (warnedRef.current.has(key)) return;
+    warnedRef.current.add(key);
+    console.warn(
+      `[StatusCell] Value "${rawValue}" is not a label of column ${column.id}. The cell renders empty.`,
+    );
+  }, [isUnmatched, column.id, rawValue]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -57,11 +106,13 @@ export function StatusCell({
         setEditingId(null);
         setColorPickerId(null);
         setMenuId(null);
+        updateDraft(null);
+        setDeletedIds([]);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [updateDraft]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -72,6 +123,8 @@ export function StatusCell({
           setEditingId(null);
           setColorPickerId(null);
           setMenuId(null);
+          updateDraft(null);
+          setDeletedIds([]);
         } else {
           setIsOpen(false);
           setMode("select");
@@ -84,7 +137,7 @@ export function StatusCell({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, mode]);
+  }, [isOpen, mode, updateDraft]);
 
   useEffect(() => {
     if (editingId && editInputRef.current) {
@@ -93,24 +146,48 @@ export function StatusCell({
     }
   }, [editingId]);
 
-  const persistOptions = useCallback(
-    async (nextOptions: DropdownOption[]) => {
-      const result = await updateColumnOptions(column.id, nextOptions);
-      if (result.data) {
-        window.dispatchEvent(
-          new CustomEvent("column-options-updated", { detail: { columnId: column.id, options: nextOptions } }),
-        );
+  /**
+   * Write a label list.
+   *
+   * The list is handed to the board's update function, which writes it to the
+   * live column in the store AND to the database. The panel is only closed
+   * when that succeeded.
+   */
+  const persistLabels = useCallback(
+    async (next: DropdownOption[]): Promise<boolean> => {
+      const sanitized = sanitizeLabels(next);
+      if (sanitized.length === 0) {
+        toast.error("A column needs at least one label.");
+        return false;
       }
-      return result;
+
+      if (onUpdateColumnLabels) {
+        return await onUpdateColumnLabels(column.id, sanitized);
+      }
+
+      // Standalone fallback (no board store wired up): write to the server.
+      const result = await updateColumnLabels(column.id, sanitized);
+      if (result.error || !result.data) {
+        toast.error(result.error ?? "Failed to save labels.");
+        return false;
+      }
+      window.dispatchEvent(
+        new CustomEvent("column-options-updated", {
+          detail: { columnId: column.id, options: sanitized },
+        }),
+      );
+      return true;
     },
-    [column.id],
+    [column.id, onUpdateColumnLabels],
   );
 
   const handleOpen = useCallback(() => {
     setIsOpen(true);
-    setLocalOptions(options);
     setMode("select");
-  }, [options]);
+    // Opening the picker always starts from the live labels.
+    updateDraft(null);
+    setDeletedIds([]);
+  }, [updateDraft]);
 
   const handleSelect = useCallback(
     (nextId: string) => {
@@ -120,35 +197,28 @@ export function StatusCell({
       setEditingId(null);
       setColorPickerId(null);
       setMenuId(null);
+      updateDraft(null);
     },
-    [onChange],
+    [onChange, updateDraft],
   );
 
   const handleStartEdit = useCallback((option: DropdownOption) => {
     setEditingId(option.id);
     setEditValue(option.label);
-    setEditColor(option.color ?? DEFAULT_COLORS[option.label] ?? PRESET_COLORS[9]);
     setMenuId(null);
   }, []);
 
-  const handleEditConfirm = useCallback(async () => {
+  /** Renaming a label only changes the draft — Apply writes it. */
+  const handleEditConfirm = useCallback(() => {
     if (!editingId) return;
     const trimmed = editValue.trim();
     if (!trimmed) return;
-    setSaving(true);
-    try {
-      const nextOptions = localOptions.map((opt) =>
-        opt.id === editingId ? { ...opt, label: trimmed, color: editColor } : opt,
-      );
-      const result = await persistOptions(nextOptions);
-      if (result.data) {
-        setLocalOptions(nextOptions);
-      }
-    } finally {
-      setSaving(false);
-      setEditingId(null);
-    }
-  }, [editingId, editValue, editColor, localOptions, persistOptions]);
+    updateDraft(
+      currentDraft().map((opt) => (opt.id === editingId ? { ...opt, label: trimmed } : opt)),
+    );
+    setEditingId(null);
+    setEditValue("");
+  }, [editingId, editValue, currentDraft, updateDraft]);
 
   const handleEditKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -158,7 +228,6 @@ export function StatusCell({
       } else if (e.key === "Escape") {
         setEditingId(null);
         setEditValue("");
-        setEditColor(PRESET_COLORS[9]);
       }
     },
     [handleEditConfirm],
@@ -171,69 +240,61 @@ export function StatusCell({
       label: "",
       color: PRESET_COLORS[0],
     };
-    setLocalOptions((prev) => [...prev, newOption]);
+    updateDraft([...currentDraft(), newOption]);
     setEditingId(newId);
     setEditValue("");
-    setEditColor(PRESET_COLORS[0]);
     setMenuId(null);
-  }, []);
+  }, [currentDraft, updateDraft]);
 
-  const handleDelete = useCallback(
-    async (id: string) => {
-      const optionToDelete = localOptions.find((opt) => opt.id === id);
-      if (!optionToDelete) return;
+  const handleDelete = useCallback((id: string) => {
+    updateDraft(currentDraft().filter((opt) => opt.id !== id));
+    setDeletedIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
+    setEditingId(null);
+    setEditValue("");
+    setMenuId(null);
+  }, [currentDraft, updateDraft]);
 
-      const confirmed = window.confirm(
-        `Delete '${optionToDelete.label || "this label"}'? Cells using this label will reset to empty.`,
-      );
-      if (!confirmed) return;
+  const handleColorSelect = useCallback((optionId: string, color: string) => {
+    const isLight = (() => {
+      const c = color.replace("#", "").trim();
+      const full = c.length === 3 ? c.split("").map((x) => x + x).join("") : c;
+      if (full.length !== 6) return false;
+      const r = parseInt(full.slice(0, 2), 16);
+      const g = parseInt(full.slice(2, 4), 16);
+      const b = parseInt(full.slice(4, 6), 16);
+      const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+      return luminance > 0.85;
+    })();
 
-      setSaving(true);
-      try {
-        if (matchedOption?.id === id) {
-          onChange?.("");
-        }
-        const nextOptions = localOptions.filter((opt) => opt.id !== id);
-        const result = await persistOptions(nextOptions);
-        if (result.data) {
-          setLocalOptions(nextOptions);
-        }
-      } finally {
-        setSaving(false);
-        setEditingId(null);
-        setMenuId(null);
-      }
-    },
-    [localOptions, matchedOption, onChange, persistOptions],
-  );
+    updateDraft(
+      currentDraft().map((opt) =>
+        opt.id === optionId
+          ? { ...opt, color, variant: isLight ? ("light" as const) : ("default" as const) }
+          : opt,
+      ),
+    );
+    setColorPickerId(null);
+  }, [currentDraft, updateDraft]);
 
-  const handleColorSelect = useCallback(
-    (optionId: string, color: string) => {
-      setLocalOptions((prev) => {
-        const next = prev.map((opt) =>
-          opt.id === optionId ? { ...opt, color } : opt,
-        );
-        return next;
-      });
-      setColorPickerId(null);
-    },
-    [],
-  );
-
+  /**
+   * Apply the draft.
+   *
+   * The panel is only closed when the write succeeded; on failure the draft
+   * is kept so the user can retry, and the error is surfaced by the update
+   * function.
+   */
   const handleApply = useCallback(async () => {
     setSaving(true);
     try {
-      const cleaned = localOptions
-        .filter((opt) => opt.label.trim() !== "")
-        .map(({ id, label, color }) => ({
-          id,
-          label: label.trim(),
-          ...(color ? { color } : {}),
-        }));
-      const result = await persistOptions(cleaned);
-      if (result.data) {
-        setLocalOptions(cleaned);
+      const next = draftRef.current ?? labels;
+      const ok = await persistLabels(next);
+      if (!ok) return;
+      // A cell that pointed at a deleted label is reset to empty.
+      if (matchedOption && deletedIds.includes(matchedOption.id)) {
+        onChange?.("");
       }
+      updateDraft(null);
+      setDeletedIds([]);
       setMode("select");
       setEditingId(null);
       setColorPickerId(null);
@@ -241,15 +302,17 @@ export function StatusCell({
     } finally {
       setSaving(false);
     }
-  }, [localOptions, persistOptions]);
+  }, [labels, deletedIds, matchedOption, onChange, persistLabels, updateDraft]);
 
+  /** Cancel / X — the draft is discarded, the live labels stay. */
   const handleCancel = useCallback(() => {
-    setLocalOptions(options);
+    updateDraft(null);
+    setDeletedIds([]);
     setMode("select");
     setEditingId(null);
     setColorPickerId(null);
     setMenuId(null);
-  }, [options]);
+  }, [updateDraft]);
 
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; openUpward: boolean }>({
     top: 0,
@@ -270,7 +333,7 @@ export function StatusCell({
       const r = triggerRef.current?.getBoundingClientRect();
       if (!r) return;
       setTriggerRect({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
-      const dropdownHeight = mode === "edit" ? 350 : localOptions.length * 44 + 20;
+      const dropdownHeight = mode === "edit" ? 350 : panelOptions.length * 44 + 20;
       const dropdownWidth = 280;
       const spaceBelow = window.innerHeight - r.bottom;
       const spaceAbove = r.top;
@@ -295,15 +358,15 @@ export function StatusCell({
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [isOpen, mode, localOptions.length]);
+  }, [isOpen, mode, panelOptions.length]);
 
   if (readOnly) {
     return (
       <div
-        className="flex h-full w-full items-center justify-center px-4 py-2 text-sm font-bold -mx-4 -my-2"
-        style={{ backgroundColor: cellColor, color: cellTextColor }}
+        className="flex h-full w-full items-center justify-center px-4 py-2 text-sm font-bold"
+        style={{ backgroundColor: cellColor, color: cellTextColor, borderRadius: "2px" }}
       >
-        {effectiveValue || "—"}
+        {displayText}
       </div>
     );
   }
@@ -314,11 +377,20 @@ export function StatusCell({
         ref={triggerRef}
         type="button"
         onClick={handleOpen}
-        className="flex h-full w-full items-center justify-between px-4 py-2 text-left text-sm font-bold -mx-4 -my-2 border-0 bg-transparent shadow-none cursor-pointer transition-colors focus-visible:ring-1 focus-visible:ring-ring focus-visible:outline-none"
-        style={{ backgroundColor: cellColor, color: cellTextColor }}
+        className="flex h-full w-full items-center justify-center px-4 py-2 text-center text-sm font-bold border-0 bg-transparent shadow-none cursor-pointer transition-all focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:outline-none"
+        style={{
+          backgroundColor: cellColor,
+          color: cellTextColor,
+          borderRadius: "2px",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.filter = "brightness(0.95)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.filter = "brightness(1)";
+        }}
       >
-        <span className="truncate">{effectiveValue || "Select..."}</span>
-        <ChevronDown className="size-3.5 shrink-0 opacity-80" />
+        <span className="truncate w-full">{displayText}</span>
       </button>
       {isOpen &&
         triggerRect &&
@@ -336,40 +408,46 @@ export function StatusCell({
                   ? triggerRect.top - 16
                   : window.innerHeight - triggerRect.bottom - 16,
                 overflowY: "auto",
+                borderRadius: "8px",
+                boxShadow: "0px 4px 8px rgba(0, 0, 0, 0.12)",
               }}
             >
               {mode === "edit" ? (
                 <EditLabelsPanel
-                    localOptions={localOptions}
-                    editingId={editingId}
-                    editValue={editValue}
-                    colorPickerId={colorPickerId}
-                    menuId={menuId}
-                    saving={saving}
-                    isStatus
-                    editInputRef={editInputRef}
-                   onStartEdit={handleStartEdit}
-                   onEditConfirm={handleEditConfirm}
-                   onEditKeyDown={handleEditKeyDown}
-                   onColorSelect={handleColorSelect}
-                   onDelete={handleDelete}
-                   onAddLabel={handleAddLabel}
-                    onApply={handleApply}
-                    onCancel={handleCancel}
-                    onSetEditValue={setEditValue}
-                    onSetColorPickerId={setColorPickerId}
-                    onSetMenuId={setMenuId}
-                  />
-               ) : (
-                   <SelectModePanel
-                     options={localOptions}
-                     effectiveId={effectiveId}
-                     onSelect={handleSelect}
-                     onEnterEdit={() => setMode("edit")}
-                     onAddLabel={handleAddLabel}
-                     isStatus
-                     variant="solid"
-                   />
+                  localOptions={panelOptions}
+                  editingId={editingId}
+                  editValue={editValue}
+                  colorPickerId={colorPickerId}
+                  menuId={menuId}
+                  saving={saving}
+                  isStatus
+                  editInputRef={editInputRef}
+                  onStartEdit={handleStartEdit}
+                  onEditConfirm={handleEditConfirm}
+                  onEditKeyDown={handleEditKeyDown}
+                  onColorSelect={handleColorSelect}
+                  onDelete={handleDelete}
+                  onAddLabel={handleAddLabel}
+                  onApply={handleApply}
+                  onCancel={handleCancel}
+                  onSetEditValue={setEditValue}
+                  onSetColorPickerId={setColorPickerId}
+                  onSetMenuId={setMenuId}
+                />
+              ) : (
+                <SelectModePanel
+                  options={panelOptions}
+                  effectiveId={matchedOption?.id ?? ""}
+                  onSelect={handleSelect}
+                  onEnterEdit={() => {
+                    // Start editing from a copy of the live labels.
+                    updateDraft(labels.map((opt) => ({ ...opt })));
+                    setMode("edit");
+                  }}
+                  onAddLabel={handleAddLabel}
+                  isStatus
+                  variant="solid"
+                />
               )}
             </div>,
             document.body,

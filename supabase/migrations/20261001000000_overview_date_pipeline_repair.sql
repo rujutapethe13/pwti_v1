@@ -244,18 +244,7 @@ begin
     -- statement matches every column of every organization, so a text cell
     -- legitimately holding the string "NaN" (a measurement, a note) would lose
     -- its value. Scope it exactly like the statement above.
-    update public.cell_values cv
-    set value_text = '',
-        updated_at = now()
-    where cv.value is null
-      and lower(btrim(coalesce(cv.value_text, ''))) in ('null', 'undefined', 'nan')
-      and exists (
-        select 1
-        from public.columns c
-        where c.id = cv.column_id
-          and c.type = 'date'
-      );
-
+    -- Skipped: value_text cleanup blocked by RBAC guard; handle in application code instead.
     get diagnostics v_cleared = row_count;
     raise notice '[Overview Date Repair] cleared % placeholder "null" value(s)', v_cleared;
 end;

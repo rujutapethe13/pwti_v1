@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { columnTypeRegistry } from "../column-registry";
 import {
+  getColumnOptions,
   normalizeOptions,
   resolveOptionDisplay,
   stableOptionId,
@@ -490,7 +491,7 @@ export function validateMappings(
         errors.push(`"${m.fileColumn}" is mapped to a column that no longer exists.`);
       }
       if (target && isOptionColumn(target)) {
-        const opts = normalizeOptions(target.settings?.options);
+        const opts = getColumnOptions(target);
         const emptyLabels = opts.filter((o) => !o.label && o.id).map((o) => o.id);
         if (emptyLabels.length > 0) {
           warnings.push(
@@ -591,7 +592,10 @@ export function buildNewColumnsFromMappings(
     const def = columnTypeRegistry[type];
     const settings: Record<string, unknown> = {};
     if (def?.defaultOptions) {
-      settings.options = def.defaultOptions.map((opt) => ({ ...opt }));
+      const defaults = def.defaultOptions.map((opt) => ({ ...opt }));
+      settings.options = defaults;
+      // A status column's labels are canonical — keep both in sync.
+      if (type === "status") settings.labels = defaults;
     }
     const baseSlug = slugifyKey(m.action.label);
     let slugifiedKey = baseSlug;
@@ -732,7 +736,7 @@ function coerceForColumn(
       const rawString = typeof raw === "string" ? raw : String(raw);
       const rawTarget = optionMapping?.targetLabel ?? rawString;
       const targetValue = /^opt[-_]import[-_]\d/i.test(rawTarget) ? rawString : rawTarget;
-      const options = normalizeOptions(column.settings?.options);
+      const options = getColumnOptions(column);
       const exactOption = options.find((option) => option.id === targetValue);
       if (exactOption) return exactOption.id;
       const matchedOption = options.find(
@@ -908,7 +912,7 @@ export function resolveOptionIdForColumn(
   value: ColumnValue,
 ): ColumnValue {
   if (typeof value !== "string" || value.length === 0) return value;
-  const options = normalizeOptions(column.settings?.options);
+  const options = getColumnOptions(column);
   if (options.some((o) => o.id === value)) return value;
   const byLabel = options.find((o) => o.label.toLowerCase() === value.toLowerCase());
   return byLabel ? byLabel.id : value;
@@ -941,7 +945,7 @@ export function reconcileDropdownColumnOptions(
   column: ColumnDefinition,
   cellValues: Array<{ recordId: string; value: ColumnValue }>,
 ): DropdownColumnRepair {
-  const existing = normalizeOptions(column.settings?.options);
+  const existing = getColumnOptions(column);
   const labelKey = (l: string) => l.toLowerCase();
   const idToOption = new Map<string, DropdownOption>();
   const labelToOption = new Map<string, DropdownOption>();
@@ -1000,11 +1004,14 @@ export function reconcileDropdownColumnOptions(
     relinks.push({ recordId: cell.recordId, value: opt.id });
   }
 
+  const merged = [...existing, ...additions];
   const updatedColumn: ColumnDefinition = {
     ...column,
     settings: {
       ...column.settings,
-      options: [...existing, ...additions],
+      options: merged,
+      // A status column's labels are canonical — keep both in sync.
+      ...(column.type === "status" ? { labels: merged } : {}),
     },
     updatedAt: new Date().toISOString(),
   };
@@ -1054,7 +1061,7 @@ export function applyOptionMappingsToColumns(
     if (!fileColumn) return column;
 
     const perFile = optionMappings[fileColumn] ?? {};
-    const existing = normalizeOptions(column.settings?.options);
+    const existing = getColumnOptions(column);
     const labelToOption = new Map<string, DropdownOption>();
     for (const opt of existing) {
       if (opt.label) labelToOption.set(opt.label.toLowerCase(), opt);
@@ -1116,11 +1123,14 @@ export function applyOptionMappingsToColumns(
 
     if (additions.length === 0) return column;
 
+    const merged = [...existing, ...additions];
     return {
       ...column,
       settings: {
         ...column.settings,
-        options: [...existing, ...additions],
+        options: merged,
+        // A status column's labels are canonical — keep both in sync.
+        ...(column.type === "status" ? { labels: merged } : {}),
       },
       updatedAt: new Date().toISOString(),
     };
@@ -1256,7 +1266,7 @@ export function getExportValue(
   // multi_select stores an array of option IDs / labels / objects.
   if (column.type === "multi_select") {
     if (Array.isArray(cell)) {
-      const options = normalizeOptions(column.settings?.options);
+      const options = getColumnOptions(column);
       return cell
         .map((v) => resolveOptionLabelFromValue(options, v))
         .filter((v) => v !== "")
@@ -1346,7 +1356,7 @@ export function getExportValue(
  *  into the option's display label. Handles option-ID strings, label strings,
  *  and `{ label, color }` objects. */
 function resolveOptionLabel(column: ColumnDefinition, cell: ColumnValue): string {
-  return resolveOptionDisplay(normalizeOptions(column.settings?.options), cell).label;
+  return resolveOptionDisplay(getColumnOptions(column), cell).label;
 }
 
 /** Given a normalized option list and a single value (ID, label, or object),

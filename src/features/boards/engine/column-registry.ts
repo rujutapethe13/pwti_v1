@@ -1,4 +1,19 @@
-import type { ColumnSettingField, ColumnTypeDefinition, ColumnTypeKey } from "./types";
+import type { ColumnSettingField, ColumnTypeDefinition, ColumnTypeKey, DropdownOption } from "./types";
+
+/**
+ * The four standard labels every Status column starts with.
+ *
+ * This is the single definition of the default Status palette — the column
+ * registry, the "new column" flow, the Edit Labels picker and the one-time
+ * migration all read it, so a newly created Status column and a migrated
+ * one look identical.
+ */
+export const DEFAULT_STATUS_LABELS: DropdownOption[] = [
+  { id: "opt-done", label: "Done", color: "#67C37D" },
+  { id: "opt-working-on-it", label: "Working on it", color: "#EDAE52" },
+  { id: "opt-stuck", label: "Stuck", color: "#C5414E" },
+  { id: "opt-not-started", label: "Not Started", color: "#C4C4C4" },
+];
 
 const generalSettings: ColumnSettingField[] = [
   { name: "label", label: "Label", type: "text", section: "general", description: "User-facing column label." },
@@ -67,12 +82,7 @@ export const columnTypeRegistry: Record<ColumnTypeKey, ColumnTypeDefinition> = {
   currency: definition("currency", { label: "Currency", description: "Money value with locale formatting.", defaultValue: 0, compatibleTypes: ["number", "progress"] }),
   date: definition("date", { label: "Date", description: "Single date value.", defaultValue: null, compatibleTypes: ["timeline", "text"] }),
   timeline: definition("timeline", { label: "Timeline", description: "Date range or schedule block.", defaultValue: { start: null, end: null }, compatibleTypes: ["date"] }),
-   status: definition("status", { label: "Status", description: "Discrete workflow state.", defaultValue: "", compatibleTypes: ["priority", "dropdown", "tags"], defaultOptions: [
-    { id: "opt-not-started", label: "Not Started", color: "#C4C4C4" },
-    { id: "opt-working-on-it", label: "Working on it", color: "#EBAD54" },
-    { id: "opt-done", label: "Done", color: "#68C37D" },
-    { id: "opt-stuck", label: "Stuck", color: "#C5434E" },
-  ] }),
+   status: definition("status", { label: "Status", description: "Discrete workflow state.", defaultValue: "", compatibleTypes: ["priority", "dropdown", "tags"], defaultOptions: DEFAULT_STATUS_LABELS.map((opt) => ({ ...opt })) }),
   priority: definition("priority", { label: "Priority", description: "Priority label or score.", defaultValue: "normal", compatibleTypes: ["status", "dropdown"] }),
   dropdown: definition("dropdown", { label: "Dropdown", description: "Single-select option list.", defaultValue: "", compatibleTypes: ["status", "priority", "tags"] }),
   multi_select: definition("multi_select", { label: "Multi Select", description: "Multi-select option list.", defaultValue: [], compatibleTypes: ["tags"] }),

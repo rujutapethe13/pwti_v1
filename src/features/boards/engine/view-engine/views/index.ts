@@ -74,6 +74,7 @@ function TableViewRenderer(props: ViewRendererProps) {
     cellValues: props.cellValues,
     groups: props.groups as unknown as Group[] | undefined,
     onCellChange: props.onCellChange,
+    onNewItem: props.onNewItem,
     // The pinned title header renders from the board's own title column
     // label. The legacy `primaryColumnLabel` is deliberately NOT a fallback:
     // it used to hold an unrelated data column's name.
@@ -91,6 +92,8 @@ function TableViewRenderer(props: ViewRendererProps) {
     onColumnResize: ops.onColumnResize,
     onColumnReorder: ops.onColumnReorder,
     onUpdateColumnSettings: ops.onUpdateColumnSettings,
+    onConfigureMirror: ops.onConfigureMirror,
+    onUpdateColumnLabels: ops.onUpdateColumnLabels,
     columnWidths: ops.columnWidths,
     onColumnUpdateDescription: ops.onColumnUpdateDescription,
     onColumnToggleRestrictEditing: ops.onColumnToggleRestrictEditing,
@@ -109,6 +112,7 @@ function TableViewRenderer(props: ViewRendererProps) {
     onDuplicateGroup: groupOps.onDuplicateGroup,
     onToggleGroupCollapse: groupOps.onToggleGroupCollapse,
     onUpdateGroupTitleColumnLabel: groupOps.onUpdateGroupTitleColumnLabel,
+    onUpdateGroupColumnMode: groupOps.onUpdateGroupColumnMode,
     onBulkArchive: props.onBulkArchive,
     onBulkDelete: props.onBulkDelete,
     onRowDelete: props.onRowDelete,
@@ -189,4 +193,3 @@ export { TimelineView } from "./timeline-view";
 export { GalleryView } from "./gallery-view";
 export { ChartView } from "./chart-view";
 export { DashboardView } from "./dashboard/dashboard-view";
-

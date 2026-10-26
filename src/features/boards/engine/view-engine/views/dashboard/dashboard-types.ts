@@ -15,7 +15,7 @@ import type {
   StatusBucketMap,
 } from "./column-roles";
 import { RECORD_TITLE_COLUMN_ID } from "./column-roles";
-import { findOptionForValue, normalizeOptions } from "../../../lib/option-lookup";
+import { findOptionForValue, getColumnOptions as getLiveColumnOptions } from "../../../lib/option-lookup";
 export type { ColumnTypeKey };
 export type { ClientAliasMap, DashboardColumnRoles, DashboardMeasure, StatusBucketMap };
 export { RECORD_TITLE_COLUMN_ID };
@@ -304,11 +304,13 @@ export interface StatusLabel {
 
 /**
  * Resolve the option labels a status/label/dropdown column actually carries.
+ *
  * These are the user-defined labels; renaming/adding/removing them is
- * reflected automatically because we read straight from column.settings.options.
+ * reflected automatically because we read straight from the live column
+ * (a status column's `settings.labels`).
  */
 export function getColumnOptions(column: ColumnDefinition): StatusLabel[] {
-  return normalizeOptions(column.settings?.options);
+  return getLiveColumnOptions(column);
 }
 
 /** True if a column can supply a dynamic set of discrete labels for filtering. */

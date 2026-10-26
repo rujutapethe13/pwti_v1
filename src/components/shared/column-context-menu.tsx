@@ -52,6 +52,7 @@ import {
 import { ConfirmDialog } from "@/features/boards/engine";
 import { ColumnSettingsPanel } from "@/features/boards/engine/components/column-settings-panel";
 import { columnTypeRegistry } from "@/features/boards/engine/column-registry";
+import { getColumnOptions as getLiveColumnOptions } from "@/features/boards/engine/lib/option-lookup";
 import type { ColumnDefinition, ColumnValue, ConnectedBoardColumnSettings } from "@/features/boards/engine/types";
 import { cn } from "@/lib/utils";
 import { ColumnTypePicker, ENABLED_TYPES } from "@/features/boards/engine/components/column-type-picker";
@@ -65,10 +66,12 @@ interface ColumnContextMenuProps {
   onDuplicateWithValues?: (columnId: string) => void;
   onToggleHidden?: (columnId: string) => void;
   onToggleFrozen?: (columnId: string) => void;
+  onSetPrimary?: (columnId: string) => void;
   onChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onDelete?: (columnId: string) => void;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
+  onConfigureMirror?: (column: ColumnDefinition) => void;
   onFilter?: (columnId: string) => void;
   onSort?: (columnId: string, direction: "asc" | "desc") => void;
   onCollapse?: (columnId: string) => void;
@@ -238,10 +241,15 @@ const FILTER_OPERATORS: Record<string, Array<{ value: string; label: string }>> 
   ],
 };
 
+/**
+ * The labels of a column.
+ *
+ * Read from the LIVE column (a status column's `settings.labels`, every other
+ * option column's `settings.options`) so the filter values always match what
+ * the cells show.
+ */
 function getColumnOptions(column: ColumnDefinition): Array<{ id: string; label: string; color?: string }> {
-  const settingsOptions = (column.settings?.options as Array<{ id: string; label: string; color?: string }>) || null;
-  const registryOptions = columnTypeRegistry[column.type]?.defaultOptions || null;
-  return settingsOptions || (registryOptions?.map((opt) => ({ ...opt })) ?? []);
+  return getLiveColumnOptions(column);
 }
 
 function getFilterPlaceholder(operator: string): string {
@@ -276,6 +284,7 @@ export function ColumnContextMenu({
   onDuplicateWithValues,
   onToggleHidden,
   onToggleFrozen,
+  onSetPrimary,
   onChangeType,
   onDelete,
   onAddColumn,
@@ -292,6 +301,7 @@ export function ColumnContextMenu({
   onSetFilter,
   onClearFilter,
   onUpdateColumnSettings,
+  onConfigureMirror,
   onToggleCollapse,
   columnDescription,
   restrictEditing,
@@ -461,6 +471,21 @@ export function ColumnContextMenu({
               </DropdownMenuItem>
             </DropdownMenuSubContent>
           </DropdownMenuSub>
+          {column.type === "mirror" && (
+            <DropdownMenuItem onSelect={() => onConfigureMirror?.(column)}>
+              <Link2 className="mr-2 size-3.5" />
+              Edit mirror settings
+            </DropdownMenuItem>
+          )}
+          {onSetPrimary && (
+            <DropdownMenuItem
+              disabled={column.isPrimary || !["text", "long_text", "email", "phone", "url"].includes(column.type)}
+              onSelect={() => onSetPrimary(column.id)}
+            >
+              <Columns className="mr-2 size-3.5" />
+              {column.isPrimary ? "Primary column" : "Set as primary column"}
+            </DropdownMenuItem>
+          )}
 
           {/* ── AI-powered actions (section label) ─────── */}
           <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
@@ -519,6 +544,19 @@ export function ColumnContextMenu({
           <DropdownMenuItem onSelect={() => onToggleCollapse?.(column.id)}>
             <ArrowLeftRight className="mr-2 size-3.5" />
             {isCollapsed ? "Expand column" : "Collapse"}
+          </DropdownMenuItem>
+
+          <DropdownMenuItem onSelect={() => onToggleFrozen?.(column.id)}>
+            <Columns className={cn("mr-2 size-3.5", column.frozen && "text-primary")} />
+            {column.frozen ? "Unpin from left" : "Pin to left"}
+          </DropdownMenuItem>
+
+          <DropdownMenuItem
+            disabled={column.isPrimary}
+            onSelect={() => onToggleHidden?.(column.id)}
+          >
+            <EyeOff className="mr-2 size-3.5" />
+            {column.isPrimary ? "Hide column (primary cannot be hidden)" : "Hide column"}
           </DropdownMenuItem>
 
           {/* ── Wrap text ──────────────────────────────── */}

@@ -443,11 +443,19 @@ export async function importWithColumnCleanup(
           });
       }
 
-      return {
-        data: { createdCount, importErrors, deletedColumns },
-        error: null,
-        status: 200,
-      };
+       // Refresh materialized Overview/Client 360 snapshot so imported data
+       // shows up immediately without a manual refresh.
+       try {
+         await serviceClient.rpc("refresh_client_360_snapshot");
+       } catch (err) {
+         console.error("[import] snapshot refresh failed:", err);
+       }
+
+       return {
+         data: { createdCount, importErrors, deletedColumns },
+         error: null,
+         status: 200,
+       };
     } catch (err) {
       const message = err instanceof Error ? err.message : "Import failed";
       console.error("[import] Transaction failed:", err);

@@ -26,6 +26,7 @@ import type {
   DuplicateGroupInput,
   CollapseGroupInput,
   DeleteGroupInput,
+  GroupColumnModeInput,
 } from "../schemas/group-schemas";
 
 const groupRepo = new GroupRepository();
@@ -124,12 +125,38 @@ async function createGroupColumns(params: {
 }
 
 export const GroupService = {
+  async setColumnMode(
+    input: GroupColumnModeInput,
+    _actorUserId: string,
+  ): Promise<ApiResponse<Group>> {
+    const existing = await groupRepo.findById(input.groupId);
+    if (!existing.data) return { data: null, error: "Group not found", status: 404 };
+    if (existing.data.columnMode === input.mode) return existing;
+
+    if (input.mode === "custom" && input.copyBoardColumns) {
+      const shared = await columnRepo.findByBoard(existing.data.boardId);
+      if (shared.error) return { data: null, error: shared.error, status: shared.status };
+      await createGroupColumns({
+        boardId: existing.data.boardId,
+        organizationId: existing.data.organizationId,
+        workspaceId: existing.data.workspaceId,
+        groupId: existing.data.id,
+        explicitColumns: (shared.data ?? []).map((column) => ({
+          key: column.key,
+          label: column.label,
+          type: column.type,
+        })),
+      });
+    }
+
+    return groupRepo.update(input.groupId, { columnMode: input.mode });
+  },
   async create(input: CreateGroupInput, actorUserId: string): Promise<ApiResponse<Group>> {
     // Determine the next order value
     const existingResult = await groupRepo.findByBoard(input.boardId);
     const nextOrder = existingResult.data ? existingResult.data.length : 0;
 
-    const columnMode = input.columnMode ?? "shared";
+    const columnMode = input.columnMode ?? "inherit";
 
     const group: Group = {
       id: crypto.randomUUID(),
@@ -385,4 +412,3 @@ export const GroupService = {
     return { data: null, error: null, status: 200 };
   },
 };
-

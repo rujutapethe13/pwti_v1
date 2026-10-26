@@ -35,6 +35,8 @@ export type AggregationMode =
   | DateAggregation
   | TextAggregation;
 
+export const EXTRA_AGGREGATIONS = ["countUnique", "distribution", "showAll", "unique"] as const;
+
 export function isNumberAggregation(mode: string): mode is NumberAggregation {
   return (NUMBER_AGGREGATIONS as readonly string[]).includes(mode);
 }
@@ -115,6 +117,11 @@ export function aggregateValues(
     return { display: defined.length, detail: `${defined.length} items` };
   }
 
+  if (mode === "countUnique" || mode === "unique") {
+    const labels = defined.map((v) => JSON.stringify(v));
+    return { display: new Set(labels).size, detail: "Unique values" };
+  }
+
   if (isNumberAggregation(mode)) {
     const nums = defined.map(toNumber).filter((n) => !Number.isNaN(n));
     if (nums.length === 0) return { display: null, detail: "—" };
@@ -149,6 +156,14 @@ export function aggregateValues(
 
   // text / status (default to list behaviour for unknown modes)
   const labels = defined.map((v) => (typeof v === "string" ? v : String(v)));
+  if (mode === "distribution") {
+    const counts = new Map<string, number>();
+    for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
+    return {
+      display: [...counts.entries()].map(([label, count]) => `${label}: ${count}`).join(", "),
+      detail: "Distribution",
+    };
+  }
   if (mode === "filter") {
     const target = filterValue ?? "";
     const matching = labels.filter((l) => l === target).length;

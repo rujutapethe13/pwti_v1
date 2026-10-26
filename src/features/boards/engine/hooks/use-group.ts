@@ -4,15 +4,17 @@ import { useCallback, useState } from "react";
 import { toast } from "sonner";
 
 import { createGroup, renameGroup, reorderGroups, deleteGroup, collapseGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, updateGroupTitleColumnLabel } from "../actions/group-actions";
+import { DEFAULT_STATUS_LABELS } from "../column-registry";
 import type { DropdownOption, Group } from "../types";
 import { useUndoStack } from "./use-undo";
 
-const DEFAULT_STATUS_OPTIONS: DropdownOption[] = [
-  { id: "opt-not-started", label: "Not Started", color: "#94a3b8" },
-  { id: "opt-working-on-it", label: "Working on it", color: "#EBAD54" },
-  { id: "opt-stuck", label: "Stuck", color: "#C5434E" },
-  { id: "opt-done", label: "Done", color: "#68C37D" },
-];
+/**
+ * The status options a new group starts with.
+ *
+ * The same four standard labels (and the same palette) a Status column
+ * uses — one definition for the whole engine.
+ */
+const DEFAULT_STATUS_OPTIONS: DropdownOption[] = DEFAULT_STATUS_LABELS.map((opt) => ({ ...opt }));
 
 interface UseGroupReturn {
   groups: Group[];
@@ -26,7 +28,7 @@ interface UseGroupReturn {
     color?: string;
     statusOptions?: DropdownOption[];
     titleColumnLabel?: string;
-    columnMode?: "shared" | "custom";
+    columnMode?: "inherit" | "custom";
     copyFromGroupId?: string;
     columns?: Array<{ key: string; label: string; type: string }>;
   }) => Promise<string | void>;
@@ -56,7 +58,7 @@ export function useGroup(initialGroups: Group[] = []): UseGroupReturn {
       color?: string;
       statusOptions?: DropdownOption[];
       titleColumnLabel?: string;
-      columnMode?: "shared" | "custom";
+      columnMode?: "inherit" | "custom";
       copyFromGroupId?: string;
       columns?: Array<{ key: string; label: string; type: string }>;
     }) => {

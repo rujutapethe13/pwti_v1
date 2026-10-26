@@ -66,6 +66,7 @@ import { CellRenderer } from "./cell-renderer";
 import { ColumnTypePicker } from "./column-type-picker";
 import { AddGroupPopover, type AddGroupPayload } from "./add-group-popover";
 import { DEFAULT_TITLE_COLUMN_LABEL } from "../lib/title-column";
+import { getPrimaryColumn } from "../lib/primary-column";
 import { ConnectBoardColumnModal } from "./connect-board-column-modal";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useSelection } from "../hooks/use-selection";
@@ -75,6 +76,7 @@ import type {
   BoardRecord,
   ColumnDefinition,
   ColumnValue,
+  DropdownOption,
   Group,
 } from "../types";
 import type { ColumnTypeKey, ConnectedBoardColumnSettings } from "../types";
@@ -97,7 +99,6 @@ const PRESET_COLORS = [
 
 const DEFAULT_COLUMN_WIDTH = 180;
 const ROW_CHECKBOX_WIDTH = 48;
-const ROW_TITLE_MIN_WIDTH = 220;
 const STATUS_OPTIONS = [
   { id: "status-todo", name: "To-Do", color: "#94a3b8" },
   { id: "status-inprogress", name: "In Progress", color: "#3b82f6" },
@@ -133,6 +134,7 @@ export interface TableViewProps {
   onColumnDuplicateWithValues?: (columnId: string) => void;
   onColumnToggleHidden?: (columnId: string) => void;
   onColumnToggleFrozen?: (columnId: string) => void;
+  onColumnSetPrimary?: (columnId: string) => void;
   onColumnChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onColumnToggleWrapText?: (columnId: string) => void;
    onColumnDelete?: (columnId: string) => void;
@@ -140,6 +142,12 @@ export interface TableViewProps {
   deletingColumnId?: string | null;
   onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
+  onConfigureMirror?: (column: ColumnDefinition) => void;
+  /**
+   * Persist a column's label list (Edit Labels "Apply").
+   * Resolves to `true` only when the store AND the database were updated.
+   */
+  onUpdateColumnLabels?: (columnId: string, labels: DropdownOption[]) => Promise<boolean>;
   onColumnUpdateDescription?: (columnId: string, description: string) => void;
   onColumnToggleRestrictEditing?: (columnId: string) => void;
   onColumnToggleRestrictView?: (columnId: string) => void;
@@ -175,6 +183,7 @@ export interface TableViewProps {
   onToggleGroupCollapse?: (groupId: string, collapsed: boolean) => void;
   /** Persist a group's own title column label */
   onUpdateGroupTitleColumnLabel?: (groupId: string, titleColumnLabel: string) => void;
+  onUpdateGroupColumnMode?: (groupId: string, mode: "inherit" | "custom", copyBoardColumns?: boolean) => void;
   /** New item callback */
   onNewItem?: (groupId?: string | null) => void;
   /** Record title change callback */
@@ -202,10 +211,12 @@ function SortableColumnHeaderWrapper({
   onDuplicateWithValues,
   onToggleHidden,
   onToggleFrozen,
+  onSetPrimary,
   onChangeType,
   onDelete,
   onAddColumn,
   onUpdateColumnSettings,
+  onConfigureMirror,
   sortColumnId,
   sortDirection,
   onSort,
@@ -234,6 +245,7 @@ function SortableColumnHeaderWrapper({
   onDuplicateWithValues?: (columnId: string) => void;
   onToggleHidden?: (columnId: string) => void;
   onToggleFrozen?: (columnId: string) => void;
+  onSetPrimary?: (columnId: string) => void;
   onChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onDelete?: (columnId: string) => void;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
@@ -255,6 +267,7 @@ function SortableColumnHeaderWrapper({
   isCollapsed?: boolean;
   isWrapped?: boolean;
   deleteLoading?: boolean;
+  onConfigureMirror?: (column: ColumnDefinition) => void;
 }) {
   const {
     attributes,
@@ -288,10 +301,12 @@ function SortableColumnHeaderWrapper({
         onDuplicateWithValues={onDuplicateWithValues}
         onToggleHidden={onToggleHidden}
         onToggleFrozen={onToggleFrozen}
+        onSetPrimary={onSetPrimary}
         onChangeType={onChangeType}
         onDelete={onDelete}
         onAddColumn={onAddColumn}
         onUpdateColumnSettings={onUpdateColumnSettings}
+        onConfigureMirror={onConfigureMirror}
         sortColumnId={sortColumnId}
         sortDirection={sortDirection}
         onSort={onSort}
@@ -500,6 +515,7 @@ function GroupHeaderMenu({
   onUpdateGroupColor,
   onUpdateGroupStatusOptions,
   onRenameTitleColumn,
+  onUpdateGroupColumnMode,
 }: {
   group: Group;
   _boardId: string;
@@ -511,6 +527,7 @@ function GroupHeaderMenu({
   onUpdateGroupColor?: (groupId: string, color: string | null) => void;
   onUpdateGroupStatusOptions?: (groupId: string, statusOptions: Array<{ id: string; label: string; color?: string }>) => void;
   onRenameTitleColumn?: (groupId: string) => void;
+  onUpdateGroupColumnMode?: (groupId: string, mode: "inherit" | "custom", copyBoardColumns?: boolean) => void;
 }) {
   const [colorPickerOpen, setColorPickerOpen] = useState(false);
   const [editingStatus, setEditingStatus] = useState(false);
@@ -575,6 +592,31 @@ function GroupHeaderMenu({
           <DropdownMenuItem onSelect={() => onRenameTitleColumn(group.id)}>
             Rename title column
           </DropdownMenuItem>
+        )}
+        {onUpdateGroupColumnMode && (
+          <>
+            <DropdownMenuSeparator />
+            {group.columnMode !== "custom" && (
+              <DropdownMenuItem onSelect={() => {
+                const copy = window.confirm("Copy the current board columns into this group? Select Cancel to start with only the title column.");
+                onUpdateGroupColumnMode(group.id, "custom", copy);
+              }}>
+                Use independent columns for this group
+              </DropdownMenuItem>
+            )}
+            {group.columnMode === "custom" && (
+              <DropdownMenuItem onSelect={() => {
+                if (window.confirm("Switch to board columns? Custom columns and their data will be hidden, not deleted.")) {
+                  onUpdateGroupColumnMode(group.id, "inherit");
+                }
+              }}>
+                Use board columns (shared)
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => onUpdateGroupColumnMode(group.id, "inherit")}>
+              Reset to board columns
+            </DropdownMenuItem>
+          </>
         )}
         <DropdownMenuSub>
           <DropdownMenuSubTrigger>
@@ -707,11 +749,13 @@ export function TableView({
   onColumnDuplicateWithValues,
   onColumnToggleHidden,
   onColumnToggleFrozen,
+  onColumnSetPrimary,
   onColumnChangeType,
   onColumnDelete,
   deletingColumnId,
   onColumnAdd,
   onUpdateColumnSettings,
+  onUpdateColumnLabels,
   onColumnUpdateDescription,
   onColumnToggleRestrictEditing,
   onColumnToggleRestrictView,
@@ -724,6 +768,7 @@ export function TableView({
   onBulkDelete,
   bulkArchiveLoading,
   bulkDeleteLoading,
+  onConfigureMirror,
   groups,
   onNewItem,
   onRecordTitleChange,
@@ -741,6 +786,7 @@ export function TableView({
   onDuplicateGroup,
   onToggleGroupCollapse,
   onUpdateGroupTitleColumnLabel,
+  onUpdateGroupColumnMode,
   onScrollBottom,
   loadingMore,
   hasMore,
@@ -958,35 +1004,11 @@ export function TableView({
   const [addColumnAfterId, setAddColumnAfterId] = useState<string | null>(null);
   const [connectBoardAfterId, setConnectBoardAfterId] = useState<string | null>(null);
 
-  const [recordColumnLabel, setRecordColumnLabel] = useState(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
-  const [recordTitleWidth, setRecordTitleWidth] = useState(ROW_TITLE_MIN_WIDTH);
-
-  const [primaryColumnRenameOpen, setPrimaryColumnRenameOpen] = useState(false);
-  const primaryColumnRenameInputRef = useRef<HTMLInputElement>(null);
-
   /** Per-group title column rename (the group keeps its own label). */
   const [groupTitleRename, setGroupTitleRename] = useState<{
     groupId: string;
     label: string;
   } | null>(null);
-
-  // Sync the header label from the persisted board/group label — but only when
-  // the prop actually changes. The previous effect also depended on
-  // `recordColumnLabel`, so every keystroke in the rename input was reverted.
-  useEffect(() => {
-    setRecordColumnLabel(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
-  }, [titleColumnLabel]);
-
-  useEffect(() => {
-    if (primaryColumnRenameOpen && primaryColumnRenameInputRef.current) {
-      primaryColumnRenameInputRef.current.focus();
-      primaryColumnRenameInputRef.current.select();
-    }
-  }, [primaryColumnRenameOpen]);
-
-  const handleRecordTitleResize = useCallback((newWidth: number) => {
-    setRecordTitleWidth(newWidth);
-  }, []);
 
   const handleAddColumn = useCallback(
     (type: ColumnTypeKey, afterColumnId?: string) => {
@@ -1023,25 +1045,12 @@ export function TableView({
   );
 
   // ── Visible rows / columns ─────────────────────────────
-  const { frozenColumns, nonFrozenColumns } = useMemo(() => {
-    const frozen: ColumnDefinition[] = [];
-    const nonFrozen: ColumnDefinition[] = [];
-    for (const col of columns) {
-      // The primary/title column (key "name") is rendered by its own header
-      // cell above; skip it here so its column id is never duplicated.
-      if (col.key === "name") continue;
-      if (col.frozen) {
-        frozen.push(col);
-      } else {
-        nonFrozen.push(col);
-      }
-    }
-    return { frozenColumns: frozen, nonFrozenColumns: nonFrozen };
-  }, [columns]);
-
   const allVisibleColumns = useMemo(
-    () => [...frozenColumns, ...nonFrozenColumns],
-    [frozenColumns, nonFrozenColumns],
+    () =>
+      [...columns]
+        .filter((column) => !column.groupId)
+        .sort((a, b) => a.order - b.order),
+    [columns],
   );
 
   const visibleColumns = useMemo(() => {
@@ -1088,7 +1097,7 @@ export function TableView({
       if (!focusedCell) return;
       const { rowIdx, colIdx } = focusedCell;
       const maxRow = visibleRecords.length - 1;
-      const maxCol = visibleColumns.length + 1; // +1 for title column
+      const maxCol = visibleColumns.length;
 
       let newRow = rowIdx;
       let newCol = colIdx;
@@ -1163,7 +1172,7 @@ export function TableView({
 
   // ── Grid template ──────────────────────────────────────
   const columnWidthsList = useMemo(() => {
-    const widths = [`${ROW_CHECKBOX_WIDTH}px`, `${recordTitleWidth}px`];
+    const widths = [`${ROW_CHECKBOX_WIDTH}px`];
     for (const col of visibleColumns) {
       if (collapsedColumns.has(col.id)) {
         widths.push("10px");
@@ -1172,7 +1181,24 @@ export function TableView({
       }
     }
     return widths.join(" ");
-  }, [visibleColumns, columnWidths, collapsedColumns, recordTitleWidth]);
+  }, [visibleColumns, columnWidths, collapsedColumns]);
+
+  const getRowColumns = useCallback((record: BoardRecord) => {
+    const group = groups?.find((candidate) => candidate.id === record.groupId);
+    if (group?.columnMode === "custom") {
+      return columns.filter((column) => column.groupId === group.id && !column.hidden);
+    }
+    return visibleColumns;
+  }, [columns, groups, visibleColumns]);
+
+  const getRowWidths = useCallback((rowColumns: ColumnDefinition[]) => {
+    return [
+      `${ROW_CHECKBOX_WIDTH}px`,
+      ...rowColumns.map((column) =>
+        collapsedColumns.has(column.id) ? "10px" : `${getColumnWidth(column, columnWidths)}px`,
+      ),
+    ].join(" ");
+  }, [collapsedColumns, columnWidths]);
 
   // ── Virtual scrolling state ─────────────────────────────
   // Record rows are py-3 (24px) around an h-8 control (32px) = 56px,
@@ -1205,7 +1231,7 @@ export function TableView({
       if (!focusedCell) return;
       const { rowIdx, colIdx } = focusedCell;
       const maxRow = visibleRecords.length - 1;
-      const maxCol = visibleColumns.length + 1; // +1 for title column
+      const maxCol = visibleColumns.length;
 
       let newRow = rowIdx;
       let newCol = colIdx;
@@ -1294,8 +1320,12 @@ export function TableView({
       const isCollapsed = collapsedGroups.has(entry.groupId ?? "null");
       if (isCollapsed) return [];
       // Group header + records + add-row button
-      const headerHeight = entry.group ? GROUP_HEADER_HEIGHT : 0;
-      const addRowHeight = entry.records.length > 0 ? ROW_HEIGHT : 0;
+      const headerHeight = entry.group
+        ? entry.group.columnMode === "custom"
+          ? GROUP_HEADER_HEIGHT + 36
+          : GROUP_HEADER_HEIGHT
+        : 0;
+      const addRowHeight = ROW_HEIGHT;
       return [
         {
           type: "header" as const,
@@ -1444,129 +1474,6 @@ export function TableView({
                 />
               </div>
 
-              {/* Record title header */}
-               <div
-                 className="group relative flex items-center border-r border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground sticky left-0 z-20 overflow-hidden"
-                 style={{ width: recordTitleWidth, minWidth: recordTitleWidth }}
-                 onDoubleClick={() => setPrimaryColumnRenameOpen(true)}
-               >
-                 <span className="truncate">{recordColumnLabel}</span>
-                 <DropdownMenu>
-                   <DropdownMenuTrigger asChild>
-                     <button
-                       type="button"
-                       className="ml-auto flex size-5 shrink-0 items-center justify-center rounded opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent"
-                       aria-label="Column menu"
-                     >
-                       <MoreHorizontal className="size-3.5" />
-                     </button>
-                   </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="w-44">
-                      <DropdownMenuItem onSelect={() => setPrimaryColumnRenameOpen(true)}>
-                        <Pencil className="mr-2 size-3.5" />
-                        Rename
-                      </DropdownMenuItem>
-                      {onColumnDelete && columns.find((c) => c.key === "name") && (
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onSelect={() => {
-                            const col = columns.find((c) => c.key === "name");
-                            if (col) onColumnDelete(col.id);
-                          }}
-                        >
-                          <Trash2 className="mr-2 size-3.5" />
-                          Delete column
-                        </DropdownMenuItem>
-                      )}
-                    </DropdownMenuContent>
-                 </DropdownMenu>
-                 <div
-                   className="absolute right-0 top-0 z-20 h-full w-1.5 cursor-col-resize"
-                   onMouseDown={(e) => {
-                     e.preventDefault();
-                     e.stopPropagation();
-                     const startX = e.clientX;
-                     const startWidth = recordTitleWidth;
-                     const handleMouseMove = (moveEvent: MouseEvent) => {
-                       const delta = moveEvent.clientX - startX;
-                       const newWidth = Math.max(120, Math.min(600, startWidth + delta));
-                       setRecordTitleWidth(newWidth);
-                     };
-                     const handleMouseUp = (upEvent: MouseEvent) => {
-                       const delta = upEvent.clientX - startX;
-                       const finalWidth = Math.max(120, Math.min(600, startWidth + delta));
-                       handleRecordTitleResize(finalWidth);
-                       if (typeof document !== 'undefined') {
-                         document.removeEventListener("mousemove", handleMouseMove);
-                         document.removeEventListener("mouseup", handleMouseUp);
-                         document.body.style.cursor = "";
-                         document.body.style.userSelect = "";
-                       }
-                     };
-                     if (typeof document !== 'undefined') {
-                       document.addEventListener("mousemove", handleMouseMove);
-                       document.addEventListener("mouseup", handleMouseUp);
-                       document.body.style.cursor = "col-resize";
-                       document.body.style.userSelect = "none";
-                     }
-                   }}
-                 >
-                   <div className="mx-auto h-full w-0.5 rounded-full bg-border opacity-60 transition-opacity group-hover:opacity-100" />
-                 </div>
-               </div>
-
-                {/* Primary column rename dialog */}
-                <Dialog open={primaryColumnRenameOpen} onOpenChange={setPrimaryColumnRenameOpen}>
-                 <DialogContent className="sm:max-w-sm">
-                   <DialogHeader>
-                     <DialogTitle>Rename column</DialogTitle>
-                   </DialogHeader>
-                    <div className="py-4">
-                      <Input
-                        ref={primaryColumnRenameInputRef}
-                        value={recordColumnLabel}
-                        onChange={(e) => setRecordColumnLabel(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") {
-                            const trimmed = (e.target as HTMLInputElement).value.trim();
-                            if (trimmed && trimmed !== (titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL)) {
-                              onTitleColumnRename?.(trimmed);
-                            }
-                            setPrimaryColumnRenameOpen(false);
-                          } else if (e.key === "Escape") {
-                            setRecordColumnLabel(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
-                            setPrimaryColumnRenameOpen(false);
-                          }
-                        }}
-                        placeholder="Column label"
-                        className="h-7 text-xs"
-                      />
-                    </div>
-                    <DialogFooter>
-                      <Button
-                        variant="outline"
-                        onClick={() => {
-                          setRecordColumnLabel(titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL);
-                          setPrimaryColumnRenameOpen(false);
-                        }}
-                      >
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          const trimmed = recordColumnLabel.trim();
-                          if (trimmed && trimmed !== (titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL)) {
-                            onTitleColumnRename?.(trimmed);
-                          }
-                          setPrimaryColumnRenameOpen(false);
-                        }}
-                      >
-                        Save
-                      </Button>
-                    </DialogFooter>
-                 </DialogContent>
-               </Dialog>
-
                 {/* Per-group title column rename dialog */}
                 <Dialog
                   open={groupTitleRename !== null}
@@ -1644,20 +1551,29 @@ export function TableView({
                       </button>
                     );
                   }
+                  const headerColumn =
+                    column.pinned === true && titleColumnLabel
+                      ? { ...column, label: titleColumnLabel }
+                      : column;
                   return (
                     <SortableColumnHeaderWrapper
                       key={column.id}
-                      column={column}
+                      column={headerColumn}
                       columns={columns}
-                      frozen={column.frozen}
+                      frozen={column.pinned === true}
                       hidden={column.hidden}
                       width={getColumnWidth(column, columnWidths)}
                       onResize={onColumnResize}
-                      onRename={onColumnRename}
+                      onRename={(columnId, label) =>
+                        column.pinned === true
+                          ? onTitleColumnRename?.(label)
+                          : onColumnRename?.(columnId, label)
+                      }
                       onDuplicate={onColumnDuplicate}
                       onDuplicateWithValues={onColumnDuplicateWithValues}
                       onToggleHidden={onColumnToggleHidden}
                       onToggleFrozen={onColumnToggleFrozen}
+                      onSetPrimary={onColumnSetPrimary}
                       onChangeType={onColumnChangeType}
                       onDelete={onColumnDelete}
                       onAddColumn={onColumnAdd}
@@ -1711,7 +1627,7 @@ export function TableView({
                 <div key={`header-${item.groupId}`} style={style}>
                   <div
                     className="flex items-center gap-2 border-l-2 bg-muted/30 px-4 py-2 text-sm font-medium"
-                    style={{ borderLeftColor: group?.color ?? "#94a3b8" }}
+                    style={{ borderLeftColor: group?.color ?? "#94a3b8", paddingLeft: ROW_CHECKBOX_WIDTH + 16 }}
                   >
                     <button
                       onClick={() => toggleGroup(group!.id)}
@@ -1761,6 +1677,11 @@ export function TableView({
                         {group!.name}
                       </span>
                     )}
+                    {group!.columnMode === "custom" && (
+                      <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground" title="This group has its own columns">
+                        Custom columns
+                      </span>
+                    )}
                     <span className="text-xs text-muted-foreground">{groupRecords.length}</span>
                     <GroupHeaderMenu
                       group={group!}
@@ -1785,13 +1706,27 @@ export function TableView({
                             DEFAULT_TITLE_COLUMN_LABEL,
                         });
                       }}
+                      onUpdateGroupColumnMode={onUpdateGroupColumnMode}
                     />
                   </div>
+                  {group!.columnMode === "custom" && (
+                    <div className="flex items-center gap-0 border-b border-border bg-muted/10 pl-12 text-xs text-muted-foreground">
+                      <span className="w-[220px] shrink-0 border-r border-border px-3 py-2 font-medium">
+                        {group!.titleColumnLabel ?? titleColumnLabel ?? DEFAULT_TITLE_COLUMN_LABEL}
+                      </span>
+                      {columns.filter((column) => column.groupId === group!.id && !column.hidden).map((column) => (
+                        <span key={column.id} className="min-w-[180px] border-r border-border px-3 py-2">
+                          {column.label}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               );
             }
             if (item.type === "row" && item.record) {
               const record = item.record;
+              const rowColumns = getRowColumns(record);
               const isSelected = selection.isSelected(record.id);
               return (
                 <div
@@ -1801,7 +1736,7 @@ export function TableView({
                     isSelected && "bg-accent/30",
                     focusedCell?.rowIdx === actualIdx && "ring-1 ring-inset ring-primary/20",
                   )}
-                  style={{ gridTemplateColumns: columnWidthsList, ...style }}
+                  style={{ gridTemplateColumns: getRowWidths(rowColumns), ...style }}
                   role="row"
                   aria-selected={isSelected}
                 >
@@ -1820,45 +1755,7 @@ export function TableView({
                       aria-label={`Select ${record.title}`}
                     />
                   </div>
-                  <div
-                    className={cn(
-                      "sticky left-0 z-20 bg-white px-4 py-3 group border-r border-border overflow-hidden",
-                      isSelected && "bg-accent/30",
-                    )}
-                    data-cell-row={actualIdx}
-                    data-cell-col={0}
-                    onClick={() => setFocusedCell({ rowIdx: actualIdx, colIdx: 0 })}
-                    style={{ width: recordTitleWidth, minWidth: recordTitleWidth }}
-                  >
-                    <div className="flex items-center min-w-0">
-                      <Input
-                        value={record.title}
-                        onChange={(e) => onRecordTitleChange?.(record.id, e.target.value)}
-                        onKeyDown={(e) => {
-                          e.stopPropagation();
-                          if (e.key === "Enter") {
-                            e.stopPropagation();
-                            (e.target as HTMLElement).blur();
-                          }
-                        }}
-                        placeholder="Type here..."
-                        className="h-8 border-0 bg-transparent flex-1 min-w-0 text-sm font-medium shadow-none focus-visible:bg-muted/50 focus-visible:ring-1 focus-visible:ring-ring"
-                      />
-                      <div className="ml-auto shrink-0">
-                        <RowMenu
-                          recordId={record.id}
-                          _recordTitle={record.title}
-                          groups={groups}
-                          currentGroupId={record.groupId}
-                          onMoveToGroup={onMoveToGroup}
-                          onMoveToStatus={onMoveToStatus}
-                          onDelete={onRowDelete}
-                          onDuplicate={onRowDuplicate}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                  {visibleColumns.map((column, colIdx) => {
+                  {rowColumns.map((column, colIdx) => {
                     if (collapsedColumns.has(column.id)) {
                       return (
                         <div
@@ -1866,7 +1763,7 @@ export function TableView({
                           className="flex items-center justify-center border-r border-border bg-white"
                           style={{ width: 10, minWidth: 10 }}
                           data-cell-row={actualIdx}
-                          data-cell-col={colIdx + 1}
+                          data-cell-col={colIdx}
                         >
                           <button
                             onClick={() => handleToggleCollapse(column.id)}
@@ -1878,21 +1775,23 @@ export function TableView({
                         </div>
                       );
                     }
-                    const value = cellValues.get(getCellKey(record.id, column.id)) ?? column.defaultValue;
+                    const isPrimary = column.id === getPrimaryColumn(columns, { groupId: record.groupId })?.id;
+                    const value = cellValues.get(getCellKey(record.id, column.id))
+                      ?? (isPrimary ? record.title : column.defaultValue);
                     return (
                       <div
                         key={column.id}
                         className={cn(
                           "px-4 py-2 align-top border-r border-border bg-white overflow-hidden",
-                          column.frozen && "sticky left-0 z-10 shadow-sm",
-                          isSelected && column.frozen && "bg-accent/30",
+                          column.pinned === true && "sticky left-0 z-10 shadow-sm",
+                          isSelected && column.pinned === true && "bg-accent/30",
                           wrappedColumns.has(column.id)
                             ? "whitespace-normal break-words"
                             : "whitespace-nowrap",
                         )}
                         data-cell-row={actualIdx}
-                        data-cell-col={colIdx + 1}
-                        onClick={() => setFocusedCell({ rowIdx: actualIdx, colIdx: colIdx + 1 })}
+                        data-cell-col={colIdx}
+                        onClick={() => setFocusedCell({ rowIdx: actualIdx, colIdx })}
                       >
                         <CellRenderer
                           board={board}
@@ -1900,17 +1799,37 @@ export function TableView({
                           record={record}
                           value={value}
                           readOnly={restrictEditingColumns.has(column.id)}
-                          onChange={(nextValue) =>
-                            onCellChange?.({
-                              recordId: record.id,
-                              columnId: column.id,
-                              value: nextValue,
-                            })
-                          }
+                          onUpdateColumnLabels={onUpdateColumnLabels}
+                          onConfigureMirror={onConfigureMirror}
+                          onChange={(nextValue) => {
+                            onCellChange?.({ recordId: record.id, columnId: column.id, value: nextValue });
+                            if (isPrimary && typeof nextValue === "string") {
+                              onRecordTitleChange?.(record.id, nextValue);
+                            }
+                          }}
                         />
                       </div>
                     );
                   })}
+                </div>
+              );
+            }
+            if (item.type === "addRow") {
+              return (
+                <div
+                  key={`add-row-${item.groupId ?? "ungrouped"}`}
+                  style={{ ...style, height: ROW_HEIGHT }}
+                  className="flex items-center border-b border-border"
+                >
+                  <button
+                    type="button"
+                    className="flex h-full items-center gap-2 px-4 text-sm text-muted-foreground hover:text-foreground"
+                    style={{ paddingLeft: ROW_CHECKBOX_WIDTH + 16 }}
+                    onClick={() => onNewItem?.(item.groupId)}
+                  >
+                    <Plus className="size-4" />
+                    Add item
+                  </button>
                 </div>
               );
             }
@@ -1947,6 +1866,7 @@ export function TableView({
             <>
               <div
                 className="flex items-center gap-2 border-b border-border px-4 py-2 text-xs text-muted-foreground hover:bg-accent/50 cursor-pointer"
+                style={{ paddingLeft: ROW_CHECKBOX_WIDTH + 16 }}
                 onClick={() => setShowAddGroupPopover(true)}
               >
                 <Plus className="size-3.5" />
@@ -1958,7 +1878,7 @@ export function TableView({
                     id: g.id,
                     name: g.name ?? (g as { title?: string }).title ?? "Group",
                     color: g.color,
-                    columnCount: (g.columns?.length ?? 0),
+                    columnCount: 0,
                   }))}
                   onConfirm={async (payload) => {
                     const result = await onAddGroup(payload);
@@ -1985,9 +1905,6 @@ export function TableView({
               <div className="flex items-center justify-center border-r border-border px-2 py-2 text-xs font-medium text-muted-foreground">
                 Sum
               </div>
-              <div className="sticky left-0 z-10 bg-white px-4 py-2 text-xs font-medium text-muted-foreground">
-                Total
-              </div>
               {visibleColumns.map((column) => {
                 if (collapsedColumns.has(column.id)) {
                   return <div key={`collapsed-footer-${column.id}`} style={{ width: 10, minWidth: 10 }} />;
@@ -1999,7 +1916,7 @@ export function TableView({
                     key={`footer-${column.id}`}
                     className={cn(
                       "px-4 py-2 align-top text-sm font-medium tabular-nums",
-                      column.frozen && "sticky left-0 z-10 bg-card shadow-sm",
+                      column.pinned === true && "sticky left-0 z-10 bg-card shadow-sm",
                     )}
                   >
                     {sum.toLocaleString()}
@@ -2169,4 +2086,3 @@ export function TableView({
     </div>
   );
 }
-

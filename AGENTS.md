@@ -112,3 +112,15 @@ that actually holds records — seeded demo organizations exist with none.
 - Changing an RPC's argument list creates an overload rather than replacing the old
   function, and PostgREST keeps exposing both. `create or replace` with a new signature
   must be paired with an explicit `drop function if exists <old signature>;`.
+
+## Board column layout model
+
+Columns are defined once in the board's column library (`columns`) and cell values
+remain keyed by `cell_values.column_id`. `board_column_layouts` stores the board
+default order, widths, and hidden column ids. `group_column_layouts` stores one
+layout per structural group: `mode = 'inherit'` resolves the board layout, while
+`mode = 'custom'` resolves its own ordered column id list and display settings.
+Layouts reference column ids; they do not own columns. Removing or hiding a column
+from a group therefore never deletes its cell values, and adding it back restores
+the values. Missing/deleted ids are filtered when a layout is resolved. Existing
+groups are seeded as `inherit`, preserving the current board rendering.

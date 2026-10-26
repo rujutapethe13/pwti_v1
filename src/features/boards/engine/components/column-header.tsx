@@ -44,10 +44,12 @@ export interface ColumnHeaderProps {
   onDuplicateWithValues?: (columnId: string) => void;
   onToggleHidden?: (columnId: string) => void;
   onToggleFrozen?: (columnId: string) => void;
+  onSetPrimary?: (columnId: string) => void;
   onChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onDelete?: (columnId: string) => void;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
+  onConfigureMirror?: (column: ColumnDefinition) => void;
   /** Whether a delete operation is in progress for this column */
   deleteLoading?: boolean;
   sortColumnId?: string;
@@ -228,10 +230,12 @@ export function ColumnHeader({
   onDuplicateWithValues,
   onToggleHidden,
   onToggleFrozen,
+  onSetPrimary,
   onChangeType,
   onDelete,
   onAddColumn,
   onUpdateColumnSettings,
+  onConfigureMirror,
   sortColumnId,
   sortDirection,
   onSort,
@@ -412,10 +416,12 @@ export function ColumnHeader({
         onDuplicateWithValues={onDuplicateWithValues}
         onToggleHidden={onToggleHidden}
         onToggleFrozen={onToggleFrozen}
+        onSetPrimary={onSetPrimary}
         onChangeType={onChangeType}
         onDelete={onDelete}
         onAddColumn={onAddColumn}
         onUpdateColumnSettings={onUpdateColumnSettings}
+        onConfigureMirror={onConfigureMirror}
         onSort={handleSortClick}
         sortColumnId={sortColumnId}
         sortDirection={sortDirection}

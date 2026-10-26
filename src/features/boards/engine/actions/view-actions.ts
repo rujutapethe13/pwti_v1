@@ -1,10 +1,41 @@
 "use server";
 
 import { createServiceClient } from "@/lib/supabase/server";
-import { updateViewSchema, duplicateViewSchema, deleteViewSchema } from "../schemas/view-schemas";
+import {
+  createViewSchema,
+  updateViewSchema,
+  duplicateViewSchema,
+  deleteViewSchema,
+} from "../schemas/view-schemas";
 import { ViewService } from "../services/view-service";
 import type { ApiResponse } from "@/types";
 import type { BoardView } from "../types";
+
+export async function createView(input: {
+  boardId: string;
+  organizationId?: string;
+  workspaceId?: string;
+  name: string;
+  type: string;
+  settings?: Record<string, unknown>;
+}): Promise<ApiResponse<BoardView>> {
+  const parsed = createViewSchema.safeParse({
+    boardId: input.boardId,
+    organizationId: input.organizationId,
+    workspaceId: input.workspaceId,
+    name: input.name,
+    type: input.type,
+    settings: input.settings ?? {},
+  });
+  if (!parsed.success) {
+    return {
+      data: null,
+      error: parsed.error.flatten().fieldErrors as unknown as string,
+      status: 400,
+    };
+  }
+  return ViewService.create(parsed.data, "system");
+}
 
 export async function renameView(viewId: string, name: string): Promise<ApiResponse<BoardView>> {
   const parsed = updateViewSchema.safeParse({ viewId, name });

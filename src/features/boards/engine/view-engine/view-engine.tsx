@@ -33,6 +33,9 @@ export function ViewEngine({
   view,
   onUpdateView,
   onCellChange,
+  onRecordCreate,
+  onRecordTitleChange,
+  onNewItem,
   columnOps,
   groupOps,
   onBulkArchive,
@@ -78,6 +81,9 @@ export function ViewEngine({
       })),
       settings,
       onCellChange,
+      onRecordCreate,
+      onRecordTitleChange,
+      onNewItem,
       columnOps,
       groupOps,
       onSettingsChange: (partialSettings) => {
@@ -93,7 +99,7 @@ export function ViewEngine({
       bulkArchiveLoading,
       bulkDeleteLoading,
     }),
-    [board, view, columns, records, cellValues, groups, settings, onCellChange, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
+    [board, view, columns, records, cellValues, groups, settings, onCellChange, onRecordCreate, onRecordTitleChange, onNewItem, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
   );
 
   if (!viewPlugin || viewPlugin.placeholder) {
@@ -132,4 +138,3 @@ export function ViewEngine({
 
   return <RendererComponent {...rendererProps} />;
 }
-

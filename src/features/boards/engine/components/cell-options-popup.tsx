@@ -6,22 +6,33 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { DropdownOption } from "@/features/boards/engine/types";
+import { DEFAULT_STATUS_LABELS } from "@/features/boards/engine/column-registry";
 
-const PRESET_COLORS = [
-  "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
-  "#22c55e", "#10b981", "#14b8a6", "#06b6d4", "#0ea5e9",
-  "#3b82f6", "#6366f1", "#8b5cf6", "#a855f7", "#d946ef",
-  "#ec4899", "#f43f5e", "#78716c", "#71717a", "#64748b",
-  "#94a3b8", "#b91c1c", "#c2410c", "#a16207", "#4d7c0f",
-  "#15803d", "#0f766e", "#0e7490", "#1d4ed8", "#4338ca",
+// Base colors per the spec (row by row)
+const STATUS_BASE_COLORS = [
+  "#3D7F4C", "#ADCF45", "#C9B452", "#F4CC3D",
+  "#E8794A", "#F0B0B2", "#E8807B", "#A8404F",
+  "#CC3070", "#E86BC0", "#E8A8EC", "#9558D6",
+  "#7852CF", "#744088", "#3D2090", "#5C5CD6",
+  "#35508F", "#759CF5", "#7ECBC4", "#8CCDF8",
+  "#84AECB", "#9FADBC", "#777777", "#333333",
+  "#7A5548", "#D48CB8", "#B8A68C", "#B3E0F2",
+  "#C49484", "#4670D8", "#2D5A60", "#BBAAF0",
+  "#B0C0E6", "#9C9BB8", "#50403D",
 ];
 
-const DEFAULT_COLORS: Record<string, string> = {
-  Done: "#22c55e",
-  "Working on it": "#f59e0b",
-  Stuck: "#ef4444",
-  "Not Started": "#94a3b8",
-};
+// Keep old PRESET_COLORS for backward compatibility
+const PRESET_COLORS = STATUS_BASE_COLORS;
+
+/**
+ * Fallback colour per standard label name.
+ *
+ * Derived from the column registry so the picker, the cell renderer and a
+ * newly created Status column all agree on the same palette.
+ */
+const DEFAULT_COLORS: Record<string, string> = Object.fromEntries(
+  DEFAULT_STATUS_LABELS.map((option) => [option.label, option.color ?? "#C4C4C4"]),
+);
 
 function getContrastColor(hex?: string): string {
   if (!hex) return "#1f2937";
@@ -43,13 +54,14 @@ function getLightVariant(hex: string): string {
   const g = parseInt(c.slice(2, 4), 16);
   const b = parseInt(c.slice(4, 6), 16);
   if ([r, g, b].some(Number.isNaN)) return hex;
-  const lr = Math.round(r + (255 - r) * 0.65);
-  const lg = Math.round(g + (255 - g) * 0.65);
-  const lb = Math.round(b + (255 - b) * 0.65);
+  // Mix with white at 55% per spec
+  const lr = Math.round(r + (255 - r) * 0.55);
+  const lg = Math.round(g + (255 - g) * 0.55);
+  const lb = Math.round(b + (255 - b) * 0.55);
   return `#${lr.toString(16).padStart(2, "0")}${lg.toString(16).padStart(2, "0")}${lb.toString(16).padStart(2, "0")}`;
 }
 
-export { getLightVariant, getContrastColor, PRESET_COLORS, DEFAULT_COLORS };
+export { getLightVariant, getContrastColor, PRESET_COLORS, DEFAULT_COLORS, STATUS_BASE_COLORS };
 
 export interface SelectModePanelProps {
   options: DropdownOption[];
@@ -64,56 +76,60 @@ export interface SelectModePanelProps {
 export function SelectModePanel({ options, effectiveId, onSelect, onEnterEdit, onAddLabel, isStatus = false, variant = "solid" }: SelectModePanelProps) {
   return (
     <div className="flex max-h-80 flex-col">
-      <div className="flex-1 overflow-y-auto p-1.5">
-        <div className="flex flex-col gap-0.5">
+      <div className="flex-1 overflow-y-auto p-2">
+        <div className="flex flex-col gap-2">
           {options.map((option) => {
-            const optionColor = option.color ?? DEFAULT_COLORS[option.label] ?? "#3b82f6";
+            const optionColor = option.color ?? DEFAULT_COLORS[option.label] ?? "#C4C4C4";
             const isSelected = option.id === effectiveId;
             const isSubtle = variant === "subtle";
+            const textColor = isSubtle ? "inherit" : (option.variant === "light" ? "#323338" : getContrastColor(optionColor));
             return (
               <button
                 key={option.id}
                 type="button"
                 onClick={() => onSelect(option.id)}
                 className={cn(
-                  "flex w-full items-center rounded-md px-3 py-2 text-left text-sm font-medium transition-colors",
+                  "flex w-full items-center px-3 py-2 text-center text-sm font-medium transition-colors",
                   isSubtle && isSelected && "bg-accent",
                 )}
                 style={
                   !isSubtle
                     ? {
-                        backgroundColor: isSelected ? optionColor : "transparent",
-                        color: isSelected ? getContrastColor(optionColor) : "inherit",
+                        backgroundColor: optionColor,
+                        color: textColor,
+                        borderRadius: "2px",
+                        height: "32px",
                       }
                     : undefined
                 }
               >
-                <span
-                  className="mr-2 size-3 rounded-sm shrink-0"
-                  style={{ backgroundColor: optionColor }}
-                />
-                <span className="truncate flex-1">{option.label}</span>
-                {isSelected && <Check className="size-3.5 shrink-0 text-muted-foreground" />}
+                {isSubtle ? (
+                  <>
+                    <span
+                      className="mr-2 size-3 rounded-sm shrink-0"
+                      style={{ backgroundColor: optionColor }}
+                    />
+                    <span className="truncate flex-1">{option.label}</span>
+                    {isSelected && <Check className="size-3.5 shrink-0 text-muted-foreground" />}
+                  </>
+                ) : (
+                  <span className="w-full text-center truncate">{option.label || " "}</span>
+                )}
               </button>
             );
           })}
         </div>
       </div>
-      <div className="border-t border-border p-1.5 space-y-0.5">
+      <div className="border-t border-border p-2 space-y-1">
         <button
           type="button"
           onClick={onEnterEdit}
-          className="flex w-full items-center justify-center rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent"
         >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0">
+            <path d="M11.3333 2.00004C11.5084 1.82494 11.7163 1.68605 11.9447 1.59129C12.1731 1.49653 12.4173 1.44775 12.6667 1.44775C12.916 1.44775 13.1602 1.49653 13.3886 1.59129C13.617 1.68605 13.8249 1.82494 14 2.00004C14.1751 2.17513 14.314 2.383 14.4087 2.6114C14.5035 2.8398 14.5523 3.08403 14.5523 3.33337C14.5523 3.58271 14.5035 3.82694 14.4087 4.05534C14.314 4.28374 14.1751 4.49161 14 4.66671L5.00001 13.6667L1.33334 14.6667L2.33334 11L11.3333 2.00004Z" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
           Edit Labels
-        </button>
-        <button
-          type="button"
-          onClick={onAddLabel}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-        >
-          <Plus className="size-3.5" />
-          New label
         </button>
       </div>
     </div>
@@ -167,13 +183,13 @@ export function EditLabelsPanel({
     <div className="flex max-h-96 flex-col rounded-lg" style={{ width: 320 }}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-xs font-medium text-foreground">Edit Labels</span>
+        <span className="text-sm font-medium text-foreground">Edit Labels</span>
         <button
           type="button"
           onClick={onCancel}
           className="flex size-6 items-center justify-center rounded text-muted-foreground hover:text-foreground"
         >
-          <span className="text-xs">✕</span>
+          <X className="size-4" />
         </button>
       </div>
 
@@ -182,7 +198,7 @@ export function EditLabelsPanel({
         <div className="space-y-1">
           {localOptions.map((option) => {
             const isEditing = editingId === option.id;
-            const optionColor = option.color ?? DEFAULT_COLORS[option.label] ?? "#3b82f6";
+            const optionColor = option.color ?? DEFAULT_COLORS[option.label] ?? "#C4C4C4";
             return (
               <div
                 key={option.id}
@@ -201,10 +217,14 @@ export function EditLabelsPanel({
                       className="flex size-6 shrink-0 items-center justify-center rounded border border-border hover:border-primary"
                       title="Pick color"
                     >
-                      <span
-                        className="block size-3.5 rounded-sm"
+                      <div
+                        className="flex size-4 items-center justify-center rounded-sm"
                         style={{ backgroundColor: optionColor }}
-                      />
+                      >
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" xmlns="http://www.w3.org/2000/svg">
+                          <path d="M1.66666 6.66667L3.33332 8.33333L8.33332 3.33333M1.66666 3.33333L3.33332 5L5 3.33333" stroke={getContrastColor(optionColor)} strokeWidth="1" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </div>
                     </button>
                   )}
 
@@ -222,15 +242,15 @@ export function EditLabelsPanel({
                     <button
                       type="button"
                       onClick={() => onStartEdit(option)}
-                      className="flex-1 truncate px-2 py-1 text-left text-xs text-foreground hover:bg-accent"
+                      className="flex-1 truncate px-2 py-1 text-left text-xs text-foreground hover:bg-accent rounded"
                     >
                       {option.label || (
-                        <span className="text-muted-foreground italic">Empty label</span>
+                        <span className="text-muted-foreground italic">Add Label</span>
                       )}
                     </button>
                   )}
 
-                  <div className="relative opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="relative">
                     <button
                       type="button"
                       onClick={() => onSetMenuId(menuId === option.id ? null : option.id)}
@@ -239,16 +259,23 @@ export function EditLabelsPanel({
                       <MoreHorizontal className="size-3.5" />
                     </button>
                     {menuId === option.id && (
-                      <div className="absolute right-0 top-full z-[var(--z-popover)] mt-0.5 w-24 popover-surface">
+                      <div className="absolute right-0 top-full z-[var(--z-popover)] mt-0.5 w-28 popover-surface">
                         <button
                           type="button"
                           onClick={() => {
                             onDelete(option.id);
                             onSetMenuId(null);
                           }}
-                          className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-destructive hover:bg-accent"
+                          className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-foreground hover:bg-accent"
                         >
                           Delete
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onSetMenuId(null)}
+                          className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left text-xs text-foreground hover:bg-accent"
+                        >
+                          Reorder
                         </button>
                       </div>
                     )}
@@ -257,31 +284,56 @@ export function EditLabelsPanel({
 
                 {isStatus && colorPickerId === option.id && (
                   <div className="mt-1.5 popover-surface p-2">
-                    <div className="grid grid-cols-7 gap-1">
-                      {PRESET_COLORS.map((color) => (
-                        <div key={color} className="flex flex-col gap-0.5">
-                          <button
-                            type="button"
-                            onClick={() => onColorSelect(option.id, color)}
-                            className={cn(
-                              "size-4 rounded-sm border border-border hover:scale-110 transition-transform",
-                              optionColor === color && "ring-1 ring-ring",
-                            )}
-                            style={{ backgroundColor: color }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onColorSelect(option.id, getLightVariant(color))
-                            }
-                            className={cn(
-                              "size-4 rounded-sm border border-border hover:scale-110 transition-transform",
-                              optionColor === getLightVariant(color) && "ring-1 ring-ring",
-                            )}
-                            style={{ backgroundColor: getLightVariant(color) }}
-                          />
-                        </div>
+                    <div className="mb-1 text-xs text-muted-foreground">Colors</div>
+                    <div className="grid grid-cols-4 gap-1 mb-2">
+                      {STATUS_BASE_COLORS.map((color) => (
+                        <button
+                          key={color}
+                          type="button"
+                          onClick={() => {
+                            onColorSelect(option.id, color);
+                            // Also set as default variant
+                          }}
+                          className={cn(
+                            "size-10 rounded-sm border border-border hover:scale-105 transition-transform relative",
+                            optionColor === color && "ring-2 ring-blue-500",
+                          )}
+                          style={{ backgroundColor: color }}
+                        >
+                          {optionColor === color && (
+                            <svg className="absolute inset-0 m-auto" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M2 6L4.5 8.5L10 3" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
+                        </button>
                       ))}
+                    </div>
+                    <div className="mb-1 text-xs text-muted-foreground">Light shades</div>
+                    <div className="grid grid-cols-4 gap-1">
+                      {STATUS_BASE_COLORS.map((color) => {
+                        const lightColor = getLightVariant(color);
+                        return (
+                          <button
+                            key={`light-${color}`}
+                            type="button"
+                            onClick={() => {
+                              onColorSelect(option.id, lightColor);
+                              // Mark as light variant - we'll need to pass this info
+                            }}
+                            className={cn(
+                              "size-10 rounded-sm border border-border hover:scale-105 transition-transform relative",
+                              optionColor === lightColor && "ring-2 ring-blue-500",
+                            )}
+                            style={{ backgroundColor: lightColor }}
+                          >
+                            {optionColor === lightColor && (
+                              <svg className="absolute inset-0 m-auto" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                <path d="M2 6L4.5 8.5L10 3" stroke="#323338" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 )}
@@ -293,11 +345,24 @@ export function EditLabelsPanel({
         <button
           type="button"
           onClick={onAddLabel}
-          className="mt-2 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          className="mt-2 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent"
         >
-          <Plus className="size-3.5" />
-          New label
+          <Plus className="size-4" />
+          + New label
         </button>
+        {isStatus && (
+          <button
+            type="button"
+            onClick={() => {}}
+            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.2"/>
+              <path d="M8 5V8L10 10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+            </svg>
+            Auto-assign labels
+          </button>
+        )}
       </div>
 
       {/* Footer */}
@@ -306,7 +371,7 @@ export function EditLabelsPanel({
           type="button"
           onClick={onCancel}
           disabled={saving}
-          className="rounded-md px-2 py-1 text-xs hover:bg-accent disabled:opacity-50"
+          className="rounded-md px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-50"
         >
           Cancel
         </button>
@@ -314,16 +379,9 @@ export function EditLabelsPanel({
           type="button"
           onClick={onApply}
           disabled={saving}
-          className="flex items-center gap-1 rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground disabled:opacity-50"
+          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground disabled:opacity-50"
         >
-          {saving ? (
-            "Saving..."
-          ) : (
-            <>
-              <Check className="size-3.5" />
-              Apply
-            </>
-          )}
+          {saving ? "Saving..." : "Apply"}
         </button>
       </div>
     </div>

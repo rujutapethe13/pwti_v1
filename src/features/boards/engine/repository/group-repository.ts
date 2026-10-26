@@ -30,9 +30,9 @@ export class GroupRepository extends BaseRepository<Group> {
       statusOptions: row.status_options
         ? (row.status_options as Group["statusOptions"])
         : undefined,
-      columnMode: (this.asString(row.column_mode ?? row.columnMode, "shared") === "custom"
+      columnMode: (this.asString(row.column_mode ?? row.columnMode, "inherit") === "custom"
         ? "custom"
-        : "shared") as Group["columnMode"],
+        : "inherit") as Group["columnMode"],
       titleColumnLabel: this.asString(row.title_column_label ?? row.titleColumnLabel) || undefined,
     };
   }
@@ -103,4 +103,3 @@ export class GroupRepository extends BaseRepository<Group> {
     return typeof value === "number" && Number.isFinite(value) ? value : fallback;
   }
 }
-

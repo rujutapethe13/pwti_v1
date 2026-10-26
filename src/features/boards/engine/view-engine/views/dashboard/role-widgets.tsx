@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PillToggle, StretchCheckbox } from "./dashboard-shared";
 import type { ColumnDefinition, ColumnValue } from "../../../types";
+import { findOptionForValue, getColumnOptions, isOptionColumnType } from "../../../lib/option-lookup";
 import {
   applyFilters,
   filterRecordsByGroups,
@@ -470,7 +471,14 @@ export const JobsTableContent = memo(function JobsTableContent(props: RoleWidget
       return key ? clientGroupLabel(key, props.clientAliases) : "—";
     }
     if (role === "status") {
-      return raw === undefined || raw === null || raw === "" ? "—" : String(raw);
+      if (raw === undefined || raw === null || raw === "") return "—";
+      // A status cell stores the label id — show the label of the live column.
+      const column = props.columns.find((c) => c.id === props.roles.status);
+      if (column && isOptionColumnType(column.type)) {
+        const match = findOptionForValue(getColumnOptions(column), String(raw));
+        return match?.label ?? "—";
+      }
+      return String(raw);
     }
     return normalizeText(raw) || "—";
   };

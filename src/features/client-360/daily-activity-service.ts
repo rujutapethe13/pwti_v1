@@ -129,9 +129,11 @@ async function runSnapshotRefresh(supabase: SupabaseClient): Promise<void> {
       .eq("id", true)
       .maybeSingle();
 
+    console.log("[TEMP-LOG] Snapshot refresh state:", JSON.stringify(state));
     if (state?.needs_refresh) {
       console.warn("[Client 360] Snapshot is stale — refreshing...");
-      await supabase.rpc("refresh_client_360_snapshot");
+      const { data: refreshData, error: refreshError } = await supabase.rpc("refresh_client_360_snapshot");
+      console.log("[TEMP-LOG] refresh_client_360_snapshot result:", JSON.stringify(refreshData), "error:", refreshError?.message ?? "none");
 
       await supabase
         .from("client_360_refresh_state")

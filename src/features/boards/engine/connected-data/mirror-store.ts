@@ -18,11 +18,12 @@
 
 import { demoBoardPageData } from "../demo-data";
 import type { ColumnDefinition, ColumnValue, BoardRecord } from "../types";
+import { normalizeRecordId } from "./mirror-utils";
 
 export type StoreListener = () => void;
 
 const CELL_KEY = (boardId: string, recordId: string, columnId: string) =>
-  `${boardId}::${recordId}::${columnId}`;
+  `${boardId}::${normalizeRecordId(recordId) ?? recordId}::${columnId}`;
 
 export class MirrorStore {
   private cells = new Map<string, ColumnValue>();
@@ -43,22 +44,31 @@ export class MirrorStore {
       this.columns.set(boardId, board.columns.slice());
       this.records.set(boardId, board.records.slice());
       for (const [key, value] of board.cellValues) {
-        const [recordId, columnId] = key.split(":");
-        this.cells.set(CELL_KEY(boardId, recordId, columnId), value);
+        const separator = key.lastIndexOf(":");
+        if (separator < 1) continue;
+        const recordId = normalizeRecordId(key.slice(0, separator));
+        const columnId = key.slice(separator + 1);
+        if (recordId) this.cells.set(CELL_KEY(boardId, recordId, columnId), value);
       }
     }
   }
 
   /** Replace a board's cell values from a live source (the open page's state). */
-  syncBoard(boardId: string, cellValues: Map<string, ColumnValue>): void {
+  syncBoard(
+    boardId: string,
+    cellValues: Map<string, ColumnValue>,
+    columns?: ColumnDefinition[],
+    records?: BoardRecord[],
+  ): void {
     const board = demoBoardPageData[boardId];
-    if (board) {
-      this.columns.set(boardId, board.columns.slice());
-      this.records.set(boardId, board.records.slice());
-    }
+    this.columns.set(boardId, columns?.slice() ?? board?.columns.slice() ?? this.columns.get(boardId) ?? []);
+    this.records.set(boardId, records?.slice() ?? board?.records.slice() ?? this.records.get(boardId) ?? []);
     for (const [key, value] of cellValues.entries()) {
-      const [recordId, columnId] = key.split(":");
-      this.cells.set(CELL_KEY(boardId, recordId, columnId), value);
+      const separator = key.lastIndexOf(":");
+      if (separator < 1) continue;
+      const recordId = normalizeRecordId(key.slice(0, separator));
+      const columnId = key.slice(separator + 1);
+      if (recordId) this.cells.set(CELL_KEY(boardId, recordId, columnId), value);
     }
     this.notify();
   }
@@ -69,10 +79,24 @@ export class MirrorStore {
     this.notify();
   }
 
+  syncRecords(boardId: string, records: BoardRecord[]): void {
+    const existing = new Map<string, BoardRecord>();
+    for (const record of this.records.get(boardId) ?? []) {
+      const id = normalizeRecordId(record.id);
+      if (id) existing.set(id, record);
+    }
+    for (const record of records) {
+      const id = normalizeRecordId(record.id);
+      if (id) existing.set(id, record);
+    }
+    this.records.set(boardId, Array.from(existing.values()));
+    this.notify();
+  }
+
   // ── Reads ────────────────────────────────────────────────────
 
   getCellValue(boardId: string, recordId: string, columnId: string): ColumnValue {
-    return this.cells.get(CELL_KEY(boardId, recordId, columnId)) ?? null;
+    return this.cells.get(CELL_KEY(boardId, normalizeRecordId(recordId) ?? recordId, columnId)) ?? null;
   }
 
   getColumn(boardId: string, columnId: string): ColumnDefinition | undefined {
@@ -88,7 +112,8 @@ export class MirrorStore {
   }
 
   getRecord(boardId: string, recordId: string): BoardRecord | undefined {
-    return this.getRecords(boardId).find((r) => r.id === recordId);
+    const normalized = normalizeRecordId(recordId);
+    return this.getRecords(boardId).find((r) => normalizeRecordId(r.id) === normalized);
   }
 
   getColumnsByType(boardId: string, type: ColumnDefinition["type"]): ColumnDefinition[] {

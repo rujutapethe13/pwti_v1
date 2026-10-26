@@ -3,18 +3,55 @@
 /**
  * Calendar View Renderer
  *
- * A full-featured calendar view driven by user-selected Date column(s).
- * Supports Month, Week, and Day views with colored chips, labels,
- * and a settings panel for full customization.
+ * A monday.com-style calendar driven by a user-selected Date column.
  *
- * ── Key Design Decisions ───────────────────────────────────
- * - Custom-built using CSS Grid + date-fns (no heavy calendar library)
- * - Click chip → open record detail
- * - Renders metadata only; owns no data
- * - Settings scoped per-view via onSettingsChange
+ * ── Layout ────────────────────────────────────────────────
+ * - Toolbar: view name · Today · chevrons · period title ·
+ *   Day|Week|Month toggle · Filter · Color by · Date column
+ * - Month: 7 columns × 5-6 rows that fill the available height
+ * - Week: 7 columns, items stacked per day
+ * - Day: single column list
+ *
+ * ── Items ─────────────────────────────────────────────────
+ * Every row whose date column has a value renders as a pill on that
+ * day. The pill colour comes from the "Color by" column (Status by
+ * default) and uses the very same label colours the Status column
+ * shows. A pill whose colour is a light shade is drawn as a tinted
+ * background with a coloured left edge and dark text; a saturated
+ * colour is drawn as a full fill with white text.
+ *
+ * ── Interactions ──────────────────────────────────────────
+ * - Drag a pill onto another day to reschedule that row
+ * - Hover an empty day to add a new row pre-filled with that date
+ * - Arrow keys move the focused day, Enter opens, Esc closes
+ * - Unscheduled side panel lists rows with no date
+ *
+ * Dates are always parsed as LOCAL dates so a row dated 2026-01-29
+ * never drifts onto 2026-01-30 because of a UTC offset.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  rectIntersection,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
 import {
   addDays,
   addMonths,
@@ -22,9 +59,6 @@ import {
   endOfMonth,
   endOfWeek,
   format,
-  isAfter,
-  isBefore,
-  isPast,
   isSameDay,
   isSameMonth,
   isToday,
@@ -34,704 +68,938 @@ import {
   subWeeks,
 } from "date-fns";
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
-  User,
   Filter,
+  Inbox,
+  Plus,
   Settings,
-  CalendarDays,
-  ChevronDown,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { ViewRendererProps } from "../view-engine-types";
-import type { CalendarViewSettings, ColumnValue, ColumnDefinition } from "../../types";
+import type {
+  BoardRecord,
+  CalendarViewSettings,
+  ColumnDefinition,
+  ColumnValue,
+} from "../../types";
+import { findOptionForValue, getColumnOptions } from "../../lib/option-lookup";
+import { parseCalendarDate, startOfLocalDay, toDayKey } from "./calendar-date-utils";
 import { CalendarSettingsPanel } from "./calendar-settings-panel";
 import { AdvancedFilterPanel } from "./advanced-filter-panel";
+import { CalendarItemPanel } from "./calendar-item-panel";
 
-// ── Types ──────────────────────────────────────────────────
+// ── Design tokens (monday.com) ──────────────────────────────
 
-interface CalendarEvent {
-  id: string;
-  title: string;
-  date: string;
-  recordId: string;
-  groupId?: string | null;
-  color?: string;
-  label?: string;
+const MONDAY = {
+  text: "#323338",
+  muted: "#676879",
+  border: "#D0D4E4",
+  inputBorder: "#C3C6D4",
+  accent: "#0073EA",
+  accentDark: "#0063C7",
+  weekend: "#FAFAFB",
+  outside: "#F1F2F5",
+  hover: "#F7F8FA",
+  dropTarget: "#E9F2FD",
+  neutral: "#C3C6D4",
+} as const;
+
+/** Height of the date-number strip at the top of every day cell. */
+const DATE_STRIP_HEIGHT = 28;
+/** Vertical slot reserved for one lane of multi-day bars. */
+const BAR_SLOT_HEIGHT = 28;
+/** Height of a single pill / bar. */
+const PILL_HEIGHT = 24;
+/** Pills rendered inline before the "+N more" link appears. */
+const MAX_INLINE_ITEMS = 3;
+
+/** Sentinel id used by the "Color by" dropdown for board groups. */
+const GROUP_COLOR_SOURCE = "__group__";
+
+type CalendarMode = "month" | "week" | "day";
+
+// ── Date helpers ────────────────────────────────────────────
+
+// Re-exported so the view and its helpers share one implementation.
+export { parseCalendarDate, startOfLocalDay, toDayKey } from "./calendar-date-utils";
+
+// ── Colour helpers ──────────────────────────────────────────
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
+  let cleaned = hex.trim().replace("#", "");
+  if (cleaned.length === 3) {
+    cleaned = cleaned
+      .split("")
+      .map((char) => char + char)
+      .join("");
+  }
+  if (cleaned.length !== 6) return null;
+  const r = Number.parseInt(cleaned.slice(0, 2), 16);
+  const g = Number.parseInt(cleaned.slice(2, 4), 16);
+  const b = Number.parseInt(cleaned.slice(4, 6), 16);
+  if ([r, g, b].some((channel) => Number.isNaN(channel))) return null;
+  return { r, g, b };
 }
 
-// ── Color palette for people/owners ────────────────────────
+/** True when the colour is a light shade that needs dark text on top. */
+export function isLightColor(hex: string): boolean {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return false;
+  const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+  return luminance > 0.62;
+}
+
+/** Blend a colour towards white. `amount` 0 = unchanged, 1 = white. */
+function tintColor(hex: string, amount: number): string {
+  const rgb = hexToRgb(hex);
+  if (!rgb) return hex;
+  const mix = (channel: number) => Math.round(channel + (255 - channel) * amount);
+  return `rgb(${mix(rgb.r)}, ${mix(rgb.g)}, ${mix(rgb.b)})`;
+}
+
+// ── Fallback palettes ───────────────────────────────────────
+
+const STATUS_FALLBACK_COLORS: Record<string, string> = {
+  done: "#00C875",
+  "working on it": "#FDAB3D",
+  stuck: "#E2445C",
+  "not started": "#C4C4C4",
+  "to do": "#C4C4C4",
+  "in progress": "#579BFC",
+  "on hold": "#A25DDC",
+  review: "#A25DDC",
+};
+
+function getStatusColor(status: string): string {
+  return STATUS_FALLBACK_COLORS[status.trim().toLowerCase()] ?? "#579BFC";
+}
 
 const PERSON_COLORS = [
-  "#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6",
-  "#ec4899", "#06b6d4", "#84cc16", "#f97316", "#6366f1",
+  "#579BFC",
+  "#A25DDC",
+  "#FF642E",
+  "#00C875",
+  "#FDAB3D",
+  "#FF1582",
+  "#E2445C",
+  "#037F4C",
+  "#A8C6FA",
+  "#0086D0",
 ];
 
-function getPersonColor(index: number): string {
-  return PERSON_COLORS[index % PERSON_COLORS.length];
-}
-
-function hashString(str: string): number {
+function hashString(value: string): number {
   let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+  for (let i = 0; i < value.length; i++) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
     hash |= 0;
   }
   return Math.abs(hash);
 }
 
 const GROUP_FALLBACK_COLORS = [
-  "#6366f1", "#8b5cf6", "#ec4899", "#f43f5e", "#f97316",
-  "#f59e0b", "#84cc16", "#10b981", "#06b6d4", "#0ea5e9",
-  "#3b82f6", "#d946ef", "#14b8a6", "#eab308", "#22c55e",
+  "#579BFC",
+  "#A25DDC",
+  "#FF642E",
+  "#00C875",
+  "#FDAB3D",
+  "#FF1582",
+  "#E2445C",
+  "#037F4C",
+  "#0086D0",
+  "#9CDD01",
 ];
 
 function getGroupFallbackColor(groupId: string): string {
+  if (!groupId) return "#579BFC";
   return GROUP_FALLBACK_COLORS[hashString(groupId) % GROUP_FALLBACK_COLORS.length];
 }
 
-// ── Event builders ──────────────────────────────────────────
+// ── Item model ──────────────────────────────────────────────
 
-function buildEvents(
-  records: ViewRendererProps["records"],
-  dateColumnId: string,
+interface CalendarItem {
+  id: string;
+  recordId: string;
+  title: string;
+  /** The record's own title, without any secondary label. */
+  recordTitle: string;
+  /** First day the item covers (local midnight). */
+  start: Date;
+  /** Last day the item covers (local midnight, >= start). */
+  end: Date;
+  color: string;
+  /** True when the colour is a light shade → dark text. */
+  light: boolean;
+}
+
+interface ColorOption {
+  id: string;
+  label: string;
+}
+
+/** Columns that can drive the item colour. */
+function colorSourceOptions(columns: ColumnDefinition[]): ColorOption[] {
+  const options: ColorOption[] = [{ id: "", label: "None" }];
+  for (const column of columns) {
+    if (
+      column.type === "status" ||
+      column.type === "priority" ||
+      column.type === "dropdown" ||
+      column.type === "multi_select" ||
+      column.type === "person"
+    ) {
+      options.push({ id: column.id, label: column.label });
+    }
+  }
+  options.push({ id: GROUP_COLOR_SOURCE, label: "Group" });
+  return options;
+}
+
+/**
+ * Resolve which column drives the item colour.
+ *
+ * `colorByColumnId` is the canonical setting. When it is missing we
+ * fall back to the legacy `colorBy` union and finally to the first
+ * Status column, which is the documented default.
+ */
+function resolveColorSourceId(
+  settings: CalendarViewSettings,
+  columns: ColumnDefinition[],
+): string {
+  if (typeof settings.colorByColumnId === "string") return settings.colorByColumnId;
+
+  switch (settings.colorBy) {
+    case "status":
+      return columns.find((c) => c.type === "status")?.id ?? "";
+    case "person":
+      return columns.find((c) => c.type === "person")?.id ?? "";
+    case "group":
+      return GROUP_COLOR_SOURCE;
+    default:
+      break;
+  }
+
+  return columns.find((c) => c.type === "status")?.id ?? "";
+}
+
+function resolveItemColor(
+  sourceId: string,
+  record: BoardRecord,
+  cellValues: Map<string, ColumnValue>,
+  columns: ColumnDefinition[],
+  groups: ViewRendererProps["groups"],
+): string {
+  if (!sourceId) return MONDAY.neutral;
+
+  if (sourceId === GROUP_COLOR_SOURCE) {
+    const group = groups.find((g) => g.id === record.groupId);
+    return group?.color || getGroupFallbackColor(record.groupId ?? "");
+  }
+
+  const column = columns.find((c) => c.id === sourceId);
+  if (!column) return MONDAY.neutral;
+
+  const value = cellValues.get(`${record.id}:${column.id}`);
+
+  if (column.type === "person") {
+    return PERSON_COLORS[hashString(String(value ?? "")) % PERSON_COLORS.length];
+  }
+
+  const options = getColumnOptions(column);
+  const option = findOptionForValue(options, value);
+  if (option?.color) return option.color;
+  if (option?.label) return getStatusColor(option.label);
+
+  return getStatusColor(String(value ?? ""));
+}
+
+function buildSecondaryLabel(
+  record: BoardRecord,
   cellValues: Map<string, ColumnValue>,
   settings: CalendarViewSettings,
   columns: ColumnDefinition[],
   groups: ViewRendererProps["groups"],
-  boardName?: string,
-): CalendarEvent[] {
-  if (!dateColumnId) return [];
-
-  const events: CalendarEvent[] = [];
-  const colorBy = settings.colorBy;
-  const labelBy = settings.labelBy;
-
-  // Find relevant columns for color/label
-  const statusCol = columns.find((c) => c.type === "status");
-  const personCol = columns.find((c) => c.type === "person");
-
-  // Build a unified option lookup across every option-style column
-  // (status, priority, dropdown). Imported rows frequently carry raw
-  // option IDs (e.g. "opt-import-<timestamp>-<n>") — internal metadata
-  // that should NEVER surface as the user-facing label or legend entry.
-  // For each column we map id → label and label → label so resolution
-  // works regardless of which shape the cell currently stores.
-  const optionLabelByValue = new Map<string, string>();
-  const optionColorByValue = new Map<string, string>();
-  for (const col of columns) {
-    if (col.type !== "status" && col.type !== "priority" && col.type !== "dropdown") continue;
-    const opts = (col.settings?.options as Array<{ id?: string; label?: string; color?: string }>) || [];
-    for (const opt of opts) {
-      if (opt.id) {
-        optionLabelByValue.set(opt.id.toLowerCase(), opt.label ?? opt.id);
-        if (opt.color) optionColorByValue.set(opt.id.toLowerCase(), opt.color);
-      }
-      if (opt.label) {
-        optionLabelByValue.set(opt.label.toLowerCase(), opt.label);
-        if (opt.color) optionColorByValue.set(opt.label.toLowerCase(), opt.color);
-      }
+  boardName: string,
+): string {
+  for (const source of settings.labelBy) {
+    if (source === "board") return boardName;
+    if (source === "group") {
+      return groups.find((g) => g.id === record.groupId)?.name ?? "";
     }
+    const column = columns.find((c) => c.id === source);
+    if (!column) continue;
+    const raw = cellValues.get(`${record.id}:${column.id}`);
+    if (raw === null || raw === undefined) continue;
+    if (
+      column.type === "status" ||
+      column.type === "priority" ||
+      column.type === "dropdown"
+    ) {
+      const option = findOptionForValue(getColumnOptions(column), raw);
+      if (option?.label) return option.label;
+      continue;
+    }
+    return String(raw);
+  }
+  return "";
+}
+
+interface BuiltItems {
+  items: CalendarItem[];
+  /** Rows whose date cell is empty. */
+  unscheduled: BoardRecord[];
+}
+
+function buildCalendarItems(args: {
+  records: BoardRecord[];
+  cellValues: Map<string, ColumnValue>;
+  dateColumnId: string;
+  endDateColumnId: string;
+  colorSourceId: string;
+  settings: CalendarViewSettings;
+  columns: ColumnDefinition[];
+  groups: ViewRendererProps["groups"];
+  boardName: string;
+}): BuiltItems {
+  const {
+    records,
+    cellValues,
+    dateColumnId,
+    endDateColumnId,
+    colorSourceId,
+    settings,
+    columns,
+    groups,
+    boardName,
+  } = args;
+
+  const items: CalendarItem[] = [];
+  const unscheduled: BoardRecord[] = [];
+
+  if (!dateColumnId) {
+    return { items, unscheduled: [...records] };
   }
 
-  // Resolve a stored cell value (option ID or raw label) to a
-  // human-readable label. Falls back to the raw value when no match
-  // is found so non-option columns render unchanged.
-  const resolveOptionLabel = (val: string): string => {
-    if (!val) return val;
-    const lowerVal = val.toLowerCase();
-    const resolved = optionLabelByValue.get(lowerVal);
-    if (resolved) return resolved;
-    // If the value looks like an internal import-batch ID, hide it from
-    // the UI entirely. It's traceability metadata, not a display name.
-    if (/^opt-import-\d/.test(lowerVal)) return "";
-    return val;
-  };
-
-  // Resolve a stored cell value to its configured option color. Falls
-  // back to undefined when no match exists; callers decide the default.
-  const resolveOptionColor = (val: string): string | undefined => {
-    if (!val) return undefined;
-    return optionColorByValue.get(val.toLowerCase());
-  };
-
   for (const record of records) {
-    const key = `${record.id}:${dateColumnId}`;
-    const value = cellValues.get(key);
-    if (!value) continue;
+    const rawDate = cellValues.get(`${record.id}:${dateColumnId}`);
+    const start = parseCalendarDate(rawDate);
 
-    const dateStr = String(value);
-    if (!dateStr || dateStr.length < 10) continue;
-
-    // Skip hidden groups
-    if (settings.visibleGroups.length > 0 && record.groupId && settings.visibleGroups.includes(record.groupId)) {
+    if (!start) {
+      unscheduled.push(record);
       continue;
     }
 
-    // Determine color
-    let color = "#6366f1";
-    if (colorBy === "status" && statusCol) {
-      const statusVal = cellValues.get(`${record.id}:${statusCol.id}`);
-      const statusStr = String(statusVal || "");
-      // Prefer the configured option color (covers status/priority/
-      // dropdown) then the built-in status palette.
-      color = resolveOptionColor(statusStr) || getStatusColor(statusStr);
-    } else if (colorBy === "person" && personCol) {
-      const personVal = cellValues.get(`${record.id}:${personCol.id}`);
-      color = getPersonColor(hashString(String(personVal || "")));
-    } else if (colorBy === "group" && record.groupId) {
-      const group = groups.find((g) => g.id === record.groupId);
-      color = group?.color || getGroupFallbackColor(record.groupId);
+    let end = start;
+    if (endDateColumnId) {
+      const rawEnd = cellValues.get(`${record.id}:${endDateColumnId}`);
+      const parsedEnd = parseCalendarDate(rawEnd);
+      if (parsedEnd && parsedEnd.getTime() > start.getTime()) end = parsedEnd;
     }
 
-    // Determine label: {Client Name} | {selected field value}
-    let label = record.title;
-    if (labelBy.length > 0 && !settings.hideItemNames) {
-      let secondaryValue = "";
-      for (const labelType of labelBy) {
-        if (labelType === "board") {
-          secondaryValue = boardName || "Board";
-          break;
-        } else if (labelType === "group" && record.groupId) {
-          const group = groups.find((g) => g.id === record.groupId);
-          secondaryValue = group?.name || "";
-          break;
-        } else {
-          // It's a column ID
-          const col = columns.find((c) => c.id === labelType);
-          if (col) {
-            const val = cellValues.get(`${record.id}:${col.id}`);
-            const rawVal = String(val || "");
-            // Resolve every option-style column (status, priority,
-            // dropdown) from its stored ID/label to the human-readable
-            // label. Internal import-batch IDs (opt-import-*) resolve
-            // to "" and are intentionally excluded from the label.
-            if (
-              col.type === "status" ||
-              col.type === "priority" ||
-              col.type === "dropdown"
-            ) {
-              secondaryValue = resolveOptionLabel(rawVal);
-            } else {
-              secondaryValue = rawVal;
-            }
-            break;
-          }
-        }
-      }
-      if (secondaryValue) {
-        label = `${record.title} | ${secondaryValue}`;
-      }
-    } else if (settings.hideItemNames) {
-      label = "";
-    }
+    const color = resolveItemColor(colorSourceId, record, cellValues, columns, groups);
 
-    events.push({
-      id: `event-${record.id}`,
-      title: record.title,
-      date: dateStr.slice(0, 10),
+    const secondary = settings.hideItemNames
+      ? ""
+      : buildSecondaryLabel(record, cellValues, settings, columns, groups, boardName);
+
+    const title = settings.hideItemNames
+      ? ""
+      : secondary
+        ? `${record.title} · ${secondary}`
+        : record.title;
+
+    items.push({
+      id: `item:${record.id}`,
       recordId: record.id,
-      groupId: record.groupId,
+      title,
+      recordTitle: record.title,
+      start,
+      end,
       color,
-      label,
+      light: isLightColor(color),
     });
   }
-  return events;
+
+  return { items, unscheduled };
 }
 
-function getStatusColor(status: string): string {
-  const colors: Record<string, string> = {
-    done: "#22c55e",
-    "working on it": "#f59e0b",
-    stuck: "#ef4444",
-    "not started": "#9ca3af",
-    "to do": "#9ca3af",
-    "in progress": "#3b82f6",
-  };
-  return colors[status.toLowerCase()] || "#6366f1";
+// ── Row layout (multi-day bars) ─────────────────────────────
+
+interface RowBar {
+  item: CalendarItem;
+  startCol: number;
+  endCol: number;
+  lane: number;
 }
 
-function getEventsForDay(events: CalendarEvent[], day: Date): CalendarEvent[] {
-  return events.filter((event) => {
-    try {
-      const eventDate = new Date(event.date + "T00:00:00");
-      return isSameDay(eventDate, day);
-    } catch {
-      return false;
+interface RowLayout {
+  bars: RowBar[];
+  /** Items that render as a chip inside a single cell. */
+  chipsByColumn: CalendarItem[][];
+  /** Every item that covers each column (chips + bars passing over it). */
+  itemsByColumn: CalendarItem[][];
+  /** Number of lanes used by the multi-day bars. */
+  laneCount: number;
+}
+
+function computeRowLayout(week: Date[], items: CalendarItem[]): RowLayout {
+  const chipsByColumn: CalendarItem[][] = week.map(() => []);
+  const itemsByColumn: CalendarItem[][] = week.map(() => []);
+  const bars: RowBar[] = [];
+
+  const weekStart = week[0]?.getTime() ?? 0;
+  const weekEnd = week[week.length - 1]?.getTime() ?? 0;
+
+  for (const item of items) {
+    const startTime = item.start.getTime();
+    const endTime = item.end.getTime();
+    if (endTime < weekStart || startTime > weekEnd) continue;
+
+    // Every day the item covers inside this week.
+    for (let index = 0; index < week.length; index++) {
+      const day = week[index];
+      if (day.getTime() >= startTime && day.getTime() <= endTime) {
+        itemsByColumn[index]?.push(item);
+      }
     }
-  });
+
+    const firstInside = week.findIndex((day) => day.getTime() >= startTime);
+    const startCol = firstInside === -1 ? 0 : firstInside;
+    const lastCol = week.reduce(
+      (acc, day, index) => (day.getTime() <= endTime ? index : acc),
+      0,
+    );
+    const endCol = Math.min(week.length - 1, lastCol);
+
+    if (endCol > startCol) {
+      bars.push({ item, startCol, endCol, lane: 0 });
+    } else {
+      chipsByColumn[startCol]?.push(item);
+    }
+  }
+
+  // Assign lanes so overlapping bars never sit on top of each other.
+  // Sorting by start column keeps the greedy assignment correct.
+  bars.sort((a, b) => a.startCol - b.startCol || a.endCol - b.endCol);
+  const laneEnd: number[] = [];
+  for (const bar of bars) {
+    let lane = 0;
+    while (lane < laneEnd.length && (laneEnd[lane] ?? -1) >= bar.startCol) lane += 1;
+    laneEnd[lane] = bar.endCol;
+    bar.lane = lane;
+  }
+
+  const laneCount = bars.length > 0 ? Math.max(...bars.map((bar) => bar.lane)) + 1 : 0;
+
+  return { bars, chipsByColumn, itemsByColumn, laneCount };
 }
 
-// ── Month/Year Dropdowns ────────────────────────────────────
+// ── Pill ────────────────────────────────────────────────────
 
-function MonthYearPicker({
-  currentDate,
-  onSelect,
+function CalendarPill({
+  item,
+  onClick,
+  isEditing = false,
+  onRename,
+  className,
+  style,
 }: {
-  currentDate: Date;
-  onSelect: (date: Date) => void;
+  item: CalendarItem;
+  onClick?: () => void;
+  isEditing?: boolean;
+  onRename?: (title: string) => void;
+  className?: string;
+  style?: CSSProperties;
 }) {
-  const months = [
-    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-  ];
-  const currentYear = currentDate.getFullYear();
-  const years = Array.from({ length: 11 }, (_, i) => currentYear - 5 + i);
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.id });
+
+  const background = item.light ? tintColor(item.color, 0.86) : item.color;
+  const textColor = item.light ? MONDAY.text : "#FFFFFF";
+  const borderLeft = item.light ? `4px solid ${item.color}` : "4px solid transparent";
+
+  if (isEditing) {
+    return (
+      <input
+        autoFocus
+        defaultValue={item.recordTitle || item.title}
+        onFocus={(e) => e.currentTarget.select()}
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onRename?.(e.currentTarget.value);
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            onRename?.(item.recordTitle || item.title);
+          }
+        }}
+        onBlur={(e) => onRename?.(e.currentTarget.value)}
+        className="h-6 w-full min-w-0 rounded-[4px] border border-[#0073EA] bg-white px-1.5 text-[12px] text-[#323338] outline-none"
+      />
+    );
+  }
 
   return (
-    <div className="flex items-center gap-1">
-      {/* Month dropdown */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-8 px-2 text-xs font-medium">
-            {months[currentDate.getMonth()]}
-            <ChevronDown className="ml-1 size-3 opacity-50" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-24">
-          {months.map((month, idx) => (
-            <DropdownMenuItem
-              key={month}
-              onSelect={() => {
-                const newDate = new Date(currentDate);
-                newDate.setMonth(idx);
-                onSelect(newDate);
-              }}
-              className={cn(currentDate.getMonth() === idx && "font-medium text-primary")}
-            >
-              {month}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-
-      {/* Year dropdown */}
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="sm" className="h-8 px-2 text-xs font-medium">
-            {currentYear}
-            <ChevronDown className="ml-1 size-3 opacity-50" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-20 max-h-48 overflow-y-auto">
-          {years.map((year) => (
-            <DropdownMenuItem
-              key={year}
-              onSelect={() => {
-                const newDate = new Date(currentDate);
-                newDate.setFullYear(year);
-                onSelect(newDate);
-              }}
-              className={cn(currentDate.getFullYear() === year && "font-medium text-primary")}
-            >
-              {year}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick?.();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          onClick?.();
+        }
+      }}
+      title={item.title}
+      className={cn(
+        "flex h-6 w-full min-w-0 cursor-pointer items-center rounded-[4px] pr-1 pl-1.5 text-[12px] leading-none transition-[box-shadow,transform]",
+        "hover:-translate-y-px hover:shadow-[0_2px_6px_rgba(0,0,0,0.18)]",
+        isDragging && "opacity-40",
+        className,
+      )}
+      style={{
+        backgroundColor: background,
+        color: textColor,
+        borderLeft,
+        touchAction: "none",
+        ...style,
+      }}
+    >
+      <span className="truncate">{item.title}</span>
     </div>
   );
 }
 
-// ── Day Cell ───────────────────────────────────────────────
+// ── "+N more" popover ───────────────────────────────────────
+
+function DayMorePopover({ items }: { items: CalendarItem[] }) {
+  const hidden = items.length - MAX_INLINE_ITEMS;
+  if (hidden <= 0) return null;
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          className="shrink-0 px-1 text-left text-[11px] font-medium text-[#0073EA] hover:underline"
+        >
+          +{hidden} more
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={4}
+        className="w-[240px] rounded-[8px] p-2"
+        style={{
+          backgroundColor: "#ffffff",
+          border: "1px solid #D0D4E4",
+          boxShadow: "0 4px 12px rgba(0, 0, 0, 0.12)",
+          color: MONDAY.text,
+        }}
+      >
+        <div className="max-h-[220px] overflow-y-auto">
+          {items.map((item) => (
+            <div
+              key={item.id}
+              className="flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[12px] hover:bg-[#F7F8FA]"
+            >
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ backgroundColor: item.color }}
+                aria-hidden="true"
+              />
+              <span className="truncate">{item.title}</span>
+            </div>
+          ))}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ── Day cell ────────────────────────────────────────────────
+
+interface DayCellProps {
+  day: Date;
+  allItems: CalendarItem[];
+  chips: CalendarItem[];
+  isOutside: boolean;
+  isWeekend: boolean;
+  isFocused: boolean;
+  topOffset: number;
+  stripHeight: number;
+  showDate: boolean;
+  editingItemId: string | null;
+  onDayClick: (day: Date) => void;
+  onItemClick: (item: CalendarItem) => void;
+  onCreateItem: (day: Date) => void;
+  onRenameItem: (item: CalendarItem, title: string) => void;
+}
 
 function DayCell({
   day,
-  events,
-  isCurrentMonth,
-  isTodayDay,
-  onClick,
-  onEventClick,
-  hideItemNames,
-  isWeekend = false,
-}: {
-  day: Date;
-  events: CalendarEvent[];
-  isCurrentMonth: boolean;
-  isTodayDay: boolean;
-  onClick: () => void;
-  onEventClick: (event: CalendarEvent) => void;
-  hideItemNames: boolean;
-  isWeekend?: boolean;
-}) {
+  allItems,
+  chips,
+  isOutside,
+  isWeekend,
+  isFocused,
+  topOffset,
+  stripHeight,
+  showDate,
+  editingItemId,
+  onDayClick,
+  onItemClick,
+  onCreateItem,
+  onRenameItem,
+}: DayCellProps) {
+  const { setNodeRef, isOver } = useDroppable({ id: `day:${toDayKey(day)}` });
+  const isEmpty = allItems.length === 0;
+  const visibleChips = chips.slice(0, MAX_INLINE_ITEMS);
+
   return (
     <div
+      ref={setNodeRef}
       className={cn(
-        "min-h-[100px] border-r border-b border-border/60 p-1 transition-colors",
-        isCurrentMonth ? "bg-background" : "bg-muted/30",
-        isWeekend && "bg-muted/20",
+        "group relative flex min-h-0 flex-col border-r border-b",
+        isOutside ? "bg-[#F1F2F5]" : isWeekend ? "bg-[#FAFAFB]" : "bg-white",
+        isOver && "bg-[#E9F2FD]",
+        isFocused && "ring-2 ring-[#0073EA] ring-inset",
       )}
+      style={{ borderColor: MONDAY.border }}
     >
-      <button
-        onClick={onClick}
-        className={cn(
-          "mb-1 flex size-6 items-center justify-center rounded-full text-xs font-medium",
-          isTodayDay && "bg-primary text-primary-foreground",
-          !isTodayDay && isCurrentMonth && !isWeekend && "text-foreground",
-          !isTodayDay && isCurrentMonth && isWeekend && "text-muted-foreground/60",
-          !isTodayDay && !isCurrentMonth && "text-muted-foreground/50",
-        )}
+      <div
+        className="flex shrink-0 items-start justify-between px-1 pt-0.5"
+        style={{ height: stripHeight }}
       >
-        {format(day, "d")}
-      </button>
-      <div className={cn("space-y-0.5", !isCurrentMonth && "opacity-70")}>
-        {events.slice(0, 3).map((event) => (
+        {showDate ? (
           <button
-            key={event.id}
-            onClick={(e) => {
-              e.stopPropagation();
-              onEventClick(event);
-            }}
-            className="w-full truncate rounded px-1.5 py-0.5 text-[9px] font-medium text-left text-white hover:opacity-80 transition-opacity"
-            style={{ backgroundColor: event.color || "#6366f1" }}
-          >
-            {!hideItemNames && (event.label || event.title)}
-          </button>
-        ))}
-        {events.length > 3 && (
-          <span className="px-1 text-[9px] text-muted-foreground">
-            +{events.length - 3} more
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ── Month View ─────────────────────────────────────────────
-
-function MonthView({
-  currentDate,
-  events,
-  onDayClick,
-  onEventClick,
-  hideItemNames,
-  firstDayOfWeek,
-  hideWeekends,
-}: {
-  currentDate: Date;
-  events: CalendarEvent[];
-  onDayClick: (date: Date) => void;
-  onEventClick: (event: CalendarEvent) => void;
-  hideItemNames: boolean;
-  firstDayOfWeek: 0 | 1;
-  hideWeekends: boolean;
-}) {
-  const monthStart = startOfMonth(currentDate);
-  const monthEnd = endOfMonth(currentDate);
-  const calendarStart = startOfWeek(monthStart, { weekStartsOn: firstDayOfWeek });
-  const calendarEnd = endOfWeek(monthEnd, { weekStartsOn: firstDayOfWeek });
-
-  const weeks = useMemo(() => {
-    const days: Date[][] = [];
-    let day = calendarStart;
-    while (day <= calendarEnd) {
-      const week: Date[] = [];
-      for (let i = 0; i < 7; i++) {
-        week.push(day);
-        day = addDays(day, 1);
-      }
-      days.push(week);
-    }
-    return days;
-  }, [calendarStart, calendarEnd]);
-
-  const dayLabels = firstDayOfWeek === 1
-    ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-    : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-  // Determine which column indices are weekends (0=Sun, 6=Sat)
-  const isWeekendCol = (colIndex: number): boolean => {
-    if (firstDayOfWeek === 1) {
-      // Mon-Sun: Sat=5, Sun=6
-      return colIndex === 5 || colIndex === 6;
-    } else {
-      // Sun-Sat: Sun=0, Sat=6
-      return colIndex === 0 || colIndex === 6;
-    }
-  };
-
-  return (
-    <div>
-      <div className="grid grid-cols-7 border-b border-border">
-        {dayLabels.map((day, idx) => (
-          <div
-            key={day}
+            type="button"
+            onClick={() => onDayClick(day)}
             className={cn(
-              "px-2 py-2 text-xs font-medium",
-              hideWeekends && isWeekendCol(idx)
-                ? "text-muted-foreground/40"
-                : "text-muted-foreground",
+              "flex size-6 items-center justify-center rounded-full text-[13px] font-medium",
+              isToday(day) && "bg-[#0073EA] text-white",
+              !isToday(day) && isOutside && "text-[#A8ADBD]",
+              !isToday(day) && !isOutside && "text-[#323338]",
             )}
           >
-            {day}
-          </div>
-        ))}
-      </div>
-      <div className="grid grid-cols-7">
-        {weeks.flat().map((day, idx) => {
-          const colIndex = idx % 7;
-          const isWeekend = hideWeekends && isWeekendCol(colIndex);
-          return (
-            <DayCell
-              key={idx}
-              day={day}
-              events={getEventsForDay(events, day)}
-              isCurrentMonth={isSameMonth(day, currentDate)}
-              isTodayDay={isToday(day)}
-              onClick={() => onDayClick(day)}
-              onEventClick={onEventClick}
-              hideItemNames={hideItemNames}
-              isWeekend={isWeekend}
-            />
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-// ── Week View (with time grid) ──────────────────────────────
-
-function WeekView({
-  currentDate,
-  events,
-  onEventClick,
-  showHours,
-  hideItemNames,
-  firstDayOfWeek,
-  hideWeekends,
-}: {
-  currentDate: Date;
-  events: CalendarEvent[];
-  onEventClick: (event: CalendarEvent) => void;
-  showHours: boolean;
-  hideItemNames: boolean;
-  firstDayOfWeek: 0 | 1;
-  hideWeekends: boolean;
-}) {
-  const weekStart = startOfWeek(currentDate, { weekStartsOn: firstDayOfWeek });
-  const days: Date[] = [];
-  let day = weekStart;
-  for (let i = 0; i < 7; i++) {
-    if (hideWeekends && (i === 0 || i === 6) && firstDayOfWeek === 1) continue;
-    if (hideWeekends && (i === 5 || i === 6) && firstDayOfWeek === 0) continue;
-    days.push(day);
-    day = addDays(day, 1);
-  }
-
-  const hours = Array.from({ length: 13 }, (_, i) => i + 8); // 8 AM - 8 PM
-
-  return (
-    <div className="flex flex-col">
-      {/* Day headers */}
-      <div className="grid border-b border-border" style={{ gridTemplateColumns: `60px repeat(${days.length}, 1fr)` }}>
-        <div className="border-r border-border/60" />
-        {days.map((d) => (
-          <div key={d.toISOString()} className="border-r border-border/60 px-2 py-2 text-center">
-            <div className="text-xs text-muted-foreground">{format(d, "EEE")}</div>
-            <div className={cn(
-              "text-sm font-medium",
-              isToday(d) ? "text-primary" : "text-foreground",
-            )}>
-              {format(d, "d")}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Time grid */}
-      <div className="relative overflow-y-auto" style={{ maxHeight: 500 }}>
-        {showHours ? (
-          hours.map((hour) => (
-            <div
-              key={hour}
-              className="grid border-b border-border/40"
-              style={{ gridTemplateColumns: `60px repeat(${days.length}, 1fr)`, minHeight: 50 }}
-            >
-              <div className="border-r border-border/60 px-2 py-1 text-[9px] text-muted-foreground">
-                {hour}:00
-              </div>
-              {days.map((d) => (
-                <div key={d.toISOString()} className="border-r border-border/60" />
-              ))}
-            </div>
-          ))
+            {format(day, "d")}
+          </button>
         ) : (
-          <div
-            className="grid"
-            style={{ gridTemplateColumns: `60px repeat(${days.length}, 1fr)`, minHeight: 300 }}
+          <span />
+        )}
+
+        {isEmpty && (
+          <button
+            type="button"
+            onClick={() => onCreateItem(day)}
+            aria-label={`Add an item on ${format(day, "MMMM d, yyyy")}`}
+            className="flex size-5 items-center justify-center rounded-[4px] text-[#676879] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[#EDEFF2] focus-visible:opacity-100"
           >
-            <div className="border-r border-border/60" />
-            {days.map((d) => (
-              <div key={d.toISOString()} className="border-r border-border/60 p-1">
-                <div className="space-y-0.5">
-                  {getEventsForDay(events, d).slice(0, 4).map((event) => (
-                    <button
-                      key={event.id}
-                      onClick={() => onEventClick(event)}
-                      className="w-full truncate rounded px-1.5 py-0.5 text-[9px] font-medium text-left text-white hover:opacity-80"
-                      style={{ backgroundColor: event.color || "#6366f1" }}
-                    >
-                      {!hideItemNames && (event.label || event.title)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+            <Plus className="size-3.5" />
+          </button>
         )}
+      </div>
+
+      <div
+        className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-1 pb-1"
+        style={{ paddingTop: topOffset }}
+      >
+        {visibleChips.map((item) => (
+          <CalendarPill
+            key={item.id}
+            item={item}
+            isEditing={editingItemId === item.id}
+            onRename={(title) => onRenameItem(item, title)}
+            onClick={() => onItemClick(item)}
+          />
+        ))}
+        <DayMorePopover items={allItems} />
       </div>
     </div>
   );
 }
 
-// ── Day View (with time grid) ──────────────────────────────
+// ── Week row (shared by month + week views) ─────────────────
 
-function DayView({
-  currentDate,
-  events,
-  onEventClick,
-  showHours,
-  hideItemNames,
-}: {
-  currentDate: Date;
-  events: CalendarEvent[];
-  onEventClick: (event: CalendarEvent) => void;
-  showHours: boolean;
-  hideItemNames: boolean;
-}) {
-  const dayEvents = getEventsForDay(events, currentDate);
-  const hours = Array.from({ length: 13 }, (_, i) => i + 8);
-
-  return (
-    <div className="flex flex-col">
-      {/* Day header */}
-      <div className="border-b border-border px-4 py-3">
-        <div className="text-xs text-muted-foreground">{format(currentDate, "EEEE")}</div>
-        <div className="text-lg font-semibold text-foreground">{format(currentDate, "MMMM d, yyyy")}</div>
-      </div>
-
-      {/* Time grid */}
-      <div className="relative overflow-y-auto" style={{ maxHeight: 500 }}>
-        {showHours ? (
-          hours.map((hour) => (
-            <div key={hour} className="grid grid-cols-[60px_1fr] border-b border-border/40" style={{ minHeight: 50 }}>
-              <div className="border-r border-border/60 px-2 py-1 text-[9px] text-muted-foreground">
-                {hour}:00
-              </div>
-              <div className="p-1" />
-            </div>
-          ))
-        ) : (
-          <div className="p-4 space-y-2">
-            {dayEvents.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No events for this day.</p>
-            ) : (
-              dayEvents.map((event) => (
-                <button
-                  key={event.id}
-                  onClick={() => onEventClick(event)}
-                  className="w-full rounded-lg p-3 text-left text-sm font-medium text-white hover:opacity-80"
-                  style={{ backgroundColor: event.color || "#6366f1" }}
-                >
-                  {!hideItemNames && (event.label || event.title)}
-                </button>
-              ))
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+interface WeekRowProps {
+  week: Date[];
+  items: CalendarItem[];
+  currentMonth: Date;
+  focusedDay: Date | null;
+  editingItemId: string | null;
+  showDate: boolean;
+  onDayClick: (day: Date) => void;
+  onItemClick: (item: CalendarItem) => void;
+  onCreateItem: (day: Date) => void;
+  onRenameItem: (item: CalendarItem, title: string) => void;
 }
 
-// ── Color Legend ────────────────────────────────────────────
-
-function ColorLegend({
-  events,
-  colorBy,
-  groups,
-  columns,
-}: {
-  events: CalendarEvent[];
-  colorBy: string;
-  groups: ViewRendererProps["groups"];
-  columns: ColumnDefinition[];
-}) {
-  if (colorBy === "none") return null;
-
-  let legendItems: Array<{ label: string; color: string }> = [];
-  if (colorBy === "group") {
-    legendItems = groups.map((g) => ({ label: g.name, color: g.color || getGroupFallbackColor(g.id) }));
-  } else if (colorBy === "board") {
-    legendItems = [{ label: "All items", color: "#6366f1" }];
-  } else if (colorBy === "status") {
-    // For status coloring, build the legend directly from the configured
-    // status options (label + color from the column settings). This
-    // guarantees the legend uses real column data instead of first-sample
-    // label strings, which previously surfaced raw import-batch IDs.
-    const statusCol = columns.find((c) => c.type === "status");
-    const statusOptions = (statusCol?.settings?.options as Array<{
-      id?: string;
-      label?: string;
-      color?: string;
-    }>) || [];
-    const eventColors = new Set(events.map((e) => e.color).filter(Boolean));
-    legendItems = statusOptions
-      .filter((opt) => opt.color && (eventColors.size === 0 || eventColors.has(opt.color)))
-      .map((opt) => ({ label: opt.label || opt.id || "", color: opt.color || "#6366f1" }));
-    // Fall back to first-sample labels if the status options list is empty
-    // (e.g. column has no settings yet) — still avoiding raw opt-import IDs.
-    if (legendItems.length === 0) {
-      const seen = new Map<string, string>();
-      for (const event of events) {
-        if (!event.color || seen.has(event.color)) continue;
-        seen.set(event.color, event.color);
-      }
-      for (const [, color] of seen) {
-        const sample = events.find((e) => e.color === color);
-        if (!sample) continue;
-        const parts = (sample.label || "").split(" | ");
-        const tail = parts.length > 1 ? parts[parts.length - 1].trim() : "";
-        const candidate = tail && !/^opt-import-/i.test(tail) ? tail : sample.title;
-        legendItems.push({ label: candidate, color });
-      }
-    }
-  } else {
-    // Person / other coloring: dedupe by color and pick a human label
-    // from the first matching event's title (skipping raw opt-import IDs).
-    const seen = new Map<string, string>();
-    for (const event of events) {
-      if (!event.color || seen.has(event.color)) continue;
-      const parts = (event.label || "").split(" | ");
-      const tail = parts.length > 1 ? parts[parts.length - 1].trim() : "";
-      const candidate = tail && !/^opt-import-/i.test(tail) ? tail : event.title;
-      seen.set(event.color, candidate);
-    }
-    legendItems = Array.from(seen.entries()).map(([color, label]) => ({ label, color }));
-  }
-
-  if (legendItems.length === 0) return null;
+function WeekRow({
+  week,
+  items,
+  currentMonth,
+  focusedDay,
+  editingItemId,
+  showDate,
+  onDayClick,
+  onItemClick,
+  onCreateItem,
+  onRenameItem,
+}: WeekRowProps) {
+  const layout = useMemo(() => computeRowLayout(week, items), [week, items]);
+  const stripHeight = showDate ? DATE_STRIP_HEIGHT : 0;
+  const topOffset = stripHeight + layout.laneCount * BAR_SLOT_HEIGHT;
 
   return (
-    <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-2">
-      {legendItems.map((item) => (
-        <div key={item.label} className="flex items-center gap-1.5">
-          <span className="size-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-          <span className="text-[9px] text-muted-foreground">{item.label}</span>
+    <div className="relative grid min-h-0 grid-cols-7" style={{ gridColumn: "1 / -1" }}>
+      {week.map((day, index) => (
+        <DayCell
+          key={day.toISOString()}
+          day={day}
+          allItems={layout.itemsByColumn[index] ?? []}
+          chips={layout.chipsByColumn[index] ?? []}
+          isOutside={!isSameMonth(day, currentMonth)}
+          isWeekend={day.getDay() === 0 || day.getDay() === 6}
+          isFocused={focusedDay ? isSameDay(day, focusedDay) : false}
+          topOffset={topOffset}
+          stripHeight={stripHeight}
+          showDate={showDate}
+          editingItemId={editingItemId}
+          onDayClick={onDayClick}
+          onItemClick={onItemClick}
+          onCreateItem={onCreateItem}
+          onRenameItem={onRenameItem}
+        />
+      ))}
+
+      {layout.bars.map((bar) => (
+        <div
+          key={bar.item.id}
+          className="absolute z-10"
+          style={{
+            left: `${(bar.startCol / week.length) * 100}%`,
+            width: `${((bar.endCol - bar.startCol + 1) / week.length) * 100}%`,
+            top: stripHeight + bar.lane * BAR_SLOT_HEIGHT,
+            height: PILL_HEIGHT,
+          }}
+        >
+          <CalendarPill
+            item={bar.item}
+            isEditing={editingItemId === bar.item.id}
+            onRename={(title) => onRenameItem(bar.item, title)}
+            onClick={() => onItemClick(bar.item)}
+          />
         </div>
       ))}
     </div>
   );
+}
+
+// ── Unscheduled panel ───────────────────────────────────────
+
+function UnscheduledPanel({
+  records,
+  onItemClick,
+  onCollapse,
+}: {
+  records: BoardRecord[];
+  onItemClick: (record: BoardRecord) => void;
+  onCollapse: () => void;
+}) {
+  return (
+    <aside
+      className="flex w-[280px] shrink-0 flex-col border-l bg-white"
+      style={{ borderColor: MONDAY.border }}
+    >
+      <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Inbox className="size-4 shrink-0" style={{ color: MONDAY.muted }} />
+          <span
+            className="truncate text-[13px] font-semibold"
+            style={{ color: MONDAY.text }}
+          >
+            Unscheduled
+          </span>
+          <span
+            className="rounded-full bg-[#F1F2F5] px-1.5 text-[11px] font-medium"
+            style={{ color: MONDAY.muted }}
+          >
+            {records.length}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={onCollapse}
+          aria-label="Collapse unscheduled panel"
+          className="flex size-6 items-center justify-center rounded-[4px] hover:bg-[#F1F2F5]"
+          style={{ color: MONDAY.muted }}
+        >
+          <ChevronRight className="size-4" />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
+        {records.length === 0 ? (
+          <p className="px-1 py-2 text-[12px]" style={{ color: MONDAY.muted }}>
+            Every item is scheduled.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1">
+            {records.map((record) => (
+              <UnscheduledRow
+                key={record.id}
+                record={record}
+                onClick={() => onItemClick(record)}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function UnscheduledRow({
+  record,
+  onClick,
+}: {
+  record: BoardRecord;
+  onClick: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+    id: `item:${record.id}`,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      {...attributes}
+      {...listeners}
+      role="button"
+      tabIndex={0}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          e.stopPropagation();
+          onClick();
+        }
+      }}
+      className={cn(
+        "flex h-6 w-full min-w-0 cursor-grab items-center rounded-[4px] border-l-4 border-[#C3C6D4] bg-[#F7F8FA] px-2 text-[12px] text-[#323338] transition-shadow hover:shadow-[0_2px_6px_rgba(0,0,0,0.14)]",
+        isDragging && "opacity-40",
+      )}
+      style={{ touchAction: "none" }}
+    >
+      <span className="truncate">{record.title}</span>
+    </div>
+  );
+}
+
+// ── Agenda list (narrow screens) ────────────────────────────
+
+function AgendaList({
+  days,
+  items,
+  focusedDay,
+  onDayClick,
+  onItemClick,
+}: {
+  days: Date[];
+  items: CalendarItem[];
+  focusedDay: Date | null;
+  onDayClick: (day: Date) => void;
+  onItemClick: (item: CalendarItem) => void;
+}) {
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto">
+      {days.map((day) => {
+        const dayItems = items.filter(
+          (item) =>
+            item.start.getTime() <= day.getTime() && item.end.getTime() >= day.getTime(),
+        );
+        return (
+          <div
+            key={day.toISOString()}
+            className={cn(
+              "flex gap-3 border-b px-3 py-2",
+              focusedDay && isSameDay(day, focusedDay) && "bg-[#E9F2FD]",
+            )}
+            style={{ borderColor: MONDAY.border }}
+          >
+            <button
+              type="button"
+              onClick={() => onDayClick(day)}
+              className="flex w-14 shrink-0 flex-col items-start"
+            >
+              <span className="text-[11px] uppercase" style={{ color: MONDAY.muted }}>
+                {format(day, "EEE")}
+              </span>
+              <span
+                className={cn(
+                  "flex size-6 items-center justify-center rounded-full text-[13px] font-medium",
+                  isToday(day) ? "bg-[#0073EA] text-white" : "text-[#323338]",
+                )}
+              >
+                {format(day, "d")}
+              </span>
+            </button>
+            <div className="flex min-w-0 flex-1 flex-col gap-1">
+              {dayItems.length === 0 ? (
+                <span className="text-[12px]" style={{ color: MONDAY.muted }}>
+                  No items
+                </span>
+              ) : (
+                dayItems.map((item) => (
+                  <CalendarPill
+                    key={item.id}
+                    item={item}
+                    onClick={() => onItemClick(item)}
+                  />
+                ))
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Viewport hook ───────────────────────────────────────────
+
+function useViewportWidth(): number {
+  const [width, setWidth] = useState<number>(() =>
+    typeof window === "undefined" ? 1280 : window.innerWidth,
+  );
+
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return width;
 }
 
 // ── Main Calendar View ─────────────────────────────────────
@@ -746,280 +1014,839 @@ export function CalendarView({
   settings,
   onCellChange,
   onSettingsChange,
-  isActive,
+  onRecordCreate,
+  onRecordTitleChange,
 }: ViewRendererProps) {
   const calendarSettings = settings as CalendarViewSettings;
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const [viewMode, setViewMode] = useState<"month" | "week" | "day">(
-    calendarSettings.defaultView === "agenda" ? "month" : calendarSettings.defaultView,
-  );
+  const viewportWidth = useViewportWidth();
+
+  const [currentDate, setCurrentDate] = useState(() => new Date());
+  const [mode, setMode] = useState<CalendarMode>(() => {
+    if (calendarSettings.mode) return calendarSettings.mode;
+    if (calendarSettings.defaultView === "week") return "week";
+    if (calendarSettings.defaultView === "day") return "day";
+    return "month";
+  });
   const [showSettings, setShowSettings] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
-  const [activeFilters, setActiveFilters] = useState<Array<{ id: string; columnId: string; operator: string; value: ColumnValue }>>([]);
+  const [unscheduledOpen, setUnscheduledOpen] = useState(true);
+  const [focusedDay, setFocusedDay] = useState<Date | null>(null);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [openItemRecordId, setOpenItemRecordId] = useState<string | null>(null);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
+  const [activeFilters, setActiveFilters] = useState<
+    Array<{ id: string; columnId: string; operator: string; value: ColumnValue }>
+  >([]);
 
-  // Auto-detect the date column: use selected column or find first date column
-  const detectedDateColumn = useMemo(() => {
-    // If user has explicitly selected date columns, use the first one
-    if (calendarSettings.selectedDateColumns.length > 0) {
-      return calendarSettings.selectedDateColumns[0];
-    }
-    // If legacy dateColumnId is set, use it
-    if (calendarSettings.dateColumnId) {
-      return calendarSettings.dateColumnId;
-    }
-    // Auto-detect: find first column of type "date" or "timeline"
-    const dateCol = columns.find((c) => c.type === "date" || c.type === "timeline");
-    return dateCol?.id || "";
-  }, [columns, calendarSettings.selectedDateColumns, calendarSettings.dateColumnId]);
+  const justDraggedRef = useRef(0);
 
-  // Build events from records using the detected date column
-  const allEvents = useMemo(
-    () => buildEvents(records, detectedDateColumn, cellValues, calendarSettings, columns, groups, board.name),
-    [records, detectedDateColumn, cellValues, calendarSettings, columns, groups, board.name],
+  const weekStart = calendarSettings.weekStart ?? calendarSettings.firstDayOfWeek ?? 0;
+  const dateColumnId =
+    calendarSettings.dateColumnId ||
+    calendarSettings.selectedDateColumns[0] ||
+    columns.find((c) => c.type === "date" || c.type === "timeline")?.id ||
+    "";
+  const endDateColumnId =
+    calendarSettings.endDateColumnId ||
+    (calendarSettings.selectedDateColumns.length > 1
+      ? calendarSettings.selectedDateColumns[1]
+      : "");
+
+  const dateColumns = useMemo(
+    () => columns.filter((c) => c.type === "date" || c.type === "timeline"),
+    [columns],
   );
 
-  // Apply active filters to events
-  const events = useMemo(() => {
-    if (activeFilters.length === 0) return allEvents;
-    return allEvents.filter((event) => {
-      return activeFilters.every((filter) => {
-        // Handle Client Name pseudo-column
+  const colorSourceId = useMemo(
+    () => resolveColorSourceId(calendarSettings, columns),
+    [calendarSettings, columns],
+  );
+  const colorOptions = useMemo(() => colorSourceOptions(columns), [columns]);
+
+  const built = useMemo(
+    () =>
+      buildCalendarItems({
+        records,
+        cellValues,
+        dateColumnId,
+        endDateColumnId,
+        colorSourceId,
+        settings: calendarSettings,
+        columns,
+        groups,
+        boardName: board.name,
+      }),
+    [
+      records,
+      cellValues,
+      dateColumnId,
+      endDateColumnId,
+      colorSourceId,
+      calendarSettings,
+      columns,
+      groups,
+      board.name,
+    ],
+  );
+
+  // Apply the toolbar filters to the built items.
+  const items = useMemo(() => {
+    if (activeFilters.length === 0) return built.items;
+    return built.items.filter((item) =>
+      activeFilters.every((filter) => {
         if (filter.columnId === "__client_name") {
-          const record = records.find((r) => r.id === event.recordId);
+          const record = records.find((r) => r.id === item.recordId);
           if (!record) return false;
           const values = Array.isArray(filter.value) ? filter.value : [filter.value];
-          if (values.length === 0 || (values.length === 1 && values[0] === "")) return true;
-          return values.some((v) => String(v).toLowerCase() === record.title.toLowerCase());
+          if (values.length === 0 || (values.length === 1 && values[0] === ""))
+            return true;
+          return values.some(
+            (v) => String(v).toLowerCase() === record.title.toLowerCase(),
+          );
         }
-        const col = columns.find((c) => c.id === filter.columnId);
-        if (!col) return true;
-        const cellValue = cellValues.get(`${event.recordId}:${filter.columnId}`);
-        return evaluateFilter(cellValue, filter.operator, filter.value, col.type);
-      });
-    });
-  }, [allEvents, activeFilters, columns, cellValues, records]);
+        const column = columns.find((c) => c.id === filter.columnId);
+        if (!column) return true;
+        const cellValue = cellValues.get(`${item.recordId}:${filter.columnId}`);
+        return evaluateFilter(cellValue, filter.operator, filter.value, column.type);
+      }),
+    );
+  }, [built.items, activeFilters, records, columns, cellValues]);
 
-  const handleApplyFilters = useCallback((filters: Array<{ id: string; columnId: string; operator: string; value: ColumnValue }>) => {
-    setActiveFilters(filters);
-    setShowFilters(false);
-  }, []);
+  const unscheduledRecords = useMemo(() => {
+    if (activeFilters.length === 0) return built.unscheduled;
+    return built.unscheduled.filter((record) =>
+      activeFilters.every((filter) => {
+        if (filter.columnId === "__client_name") {
+          const values = Array.isArray(filter.value) ? filter.value : [filter.value];
+          if (values.length === 0 || (values.length === 1 && values[0] === ""))
+            return true;
+          return values.some(
+            (v) => String(v).toLowerCase() === record.title.toLowerCase(),
+          );
+        }
+        const column = columns.find((c) => c.id === filter.columnId);
+        if (!column) return true;
+        const cellValue = cellValues.get(`${record.id}:${filter.columnId}`);
+        return evaluateFilter(cellValue, filter.operator, filter.value, column.type);
+      }),
+    );
+  }, [built.unscheduled, activeFilters, columns, cellValues]);
+
+  // ── Visible days ─────────────────────────────────────────
+
+  const weeks = useMemo(() => {
+    const gridStart = startOfWeek(startOfMonth(currentDate), { weekStartsOn: weekStart });
+    const gridEnd = endOfWeek(endOfMonth(currentDate), { weekStartsOn: weekStart });
+    const result: Date[][] = [];
+    let cursor = gridStart;
+    while (cursor.getTime() <= gridEnd.getTime()) {
+      const week: Date[] = [];
+      for (let i = 0; i < 7; i++) {
+        week.push(cursor);
+        cursor = addDays(cursor, 1);
+      }
+      result.push(week);
+    }
+    return result;
+  }, [currentDate, weekStart]);
+
+  const weekDays = useMemo(() => {
+    const start = startOfWeek(currentDate, { weekStartsOn: weekStart });
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  }, [currentDate, weekStart]);
+
+  /**
+   * Narrow screens cannot show seven columns, so the calendar falls
+   * back to an agenda list of the current week.
+   */
+  const isNarrow = viewportWidth < 768;
+  const effectiveMode: CalendarMode = isNarrow ? "week" : mode;
+
+  // ── Navigation ──────────────────────────────────────────
 
   const navigatePrev = useCallback(() => {
-    if (viewMode === "month") setCurrentDate((d) => subMonths(d, 1));
-    else if (viewMode === "week") setCurrentDate((d) => subWeeks(d, 1));
-    else if (viewMode === "day") setCurrentDate((d) => addDays(d, -1));
-  }, [viewMode]);
+    setCurrentDate((d) => {
+      if (effectiveMode === "month") return subMonths(d, 1);
+      if (effectiveMode === "week") return subWeeks(d, 1);
+      return addDays(d, -1);
+    });
+  }, [effectiveMode]);
 
   const navigateNext = useCallback(() => {
-    if (viewMode === "month") setCurrentDate((d) => addMonths(d, 1));
-    else if (viewMode === "week") setCurrentDate((d) => addWeeks(d, 1));
-    else if (viewMode === "day") setCurrentDate((d) => addDays(d, 1));
-  }, [viewMode]);
+    setCurrentDate((d) => {
+      if (effectiveMode === "month") return addMonths(d, 1);
+      if (effectiveMode === "week") return addWeeks(d, 1);
+      return addDays(d, 1);
+    });
+  }, [effectiveMode]);
 
   const navigateToday = useCallback(() => {
-    setCurrentDate(new Date());
+    const today = new Date();
+    setCurrentDate(today);
+    setFocusedDay(today);
   }, []);
 
-  const handleDayClick = useCallback(
-    (date: Date) => {
-      setCurrentDate(date);
-      setViewMode("day");
-    },
-    [],
-  );
-
-  const handleEventClick = useCallback(
-    (event: CalendarEvent) => {
-      console.log("Open record:", event.recordId);
-    },
-    [],
-  );
-
-  const handleViewModeChange = useCallback(
-    (mode: "month" | "week" | "day") => {
-      setViewMode(mode);
-      onSettingsChange?.({ defaultView: mode });
+  const handleModeChange = useCallback(
+    (next: CalendarMode) => {
+      setMode(next);
+      onSettingsChange?.({ mode: next, defaultView: next });
     },
     [onSettingsChange],
   );
 
-  // Always render the calendar grid — never show a blank "no column" placeholder
-  // Events will layer on top once a date column is known
+  const handleDateColumnChange = useCallback(
+    (columnId: string) => {
+      onSettingsChange?.({
+        dateColumnId: columnId,
+        selectedDateColumns: columnId ? [columnId] : [],
+      });
+    },
+    [onSettingsChange],
+  );
+
+  const handleColorSourceChange = useCallback(
+    (sourceId: string) => {
+      onSettingsChange?.({
+        colorByColumnId: sourceId,
+        colorBy: colorSourceIdToLegacy(sourceId, columns),
+      });
+    },
+    [onSettingsChange, columns],
+  );
+
+  // ── Item interactions ────────────────────────────────────
+
+  const handleItemClick = useCallback((item: CalendarItem) => {
+    // A click that lands right after a drag must not open the panel.
+    if (Date.now() - justDraggedRef.current < 250) return;
+    setOpenItemRecordId(item.recordId);
+  }, []);
+
+  const handleUnscheduledClick = useCallback((record: BoardRecord) => {
+    if (Date.now() - justDraggedRef.current < 250) return;
+    setOpenItemRecordId(record.id);
+  }, []);
+
+  const handleCreateItem = useCallback(
+    async (day: Date) => {
+      if (!dateColumnId) return;
+      const dayKey = toDayKey(day);
+      const created = await onRecordCreate?.({
+        title: "",
+        cellValues: { [dateColumnId]: dayKey },
+      });
+      if (created) {
+        setEditingItemId(`item:${created.id}`);
+        setOpenItemRecordId(null);
+      }
+    },
+    [dateColumnId, onRecordCreate],
+  );
+
+  const handleRenameItem = useCallback(
+    (item: CalendarItem, title: string) => {
+      setEditingItemId((current) => (current === item.id ? null : current));
+      const trimmed = title.trim();
+      const current = item.recordTitle || item.title;
+      if (!trimmed || trimmed === current) return;
+      onRecordTitleChange?.(item.recordId, trimmed);
+    },
+    [onRecordTitleChange],
+  );
+
+  // ── Keyboard navigation ──────────────────────────────────
+
+  const handleGridKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const step =
+        event.key === "ArrowLeft"
+          ? -1
+          : event.key === "ArrowRight"
+            ? 1
+            : event.key === "ArrowUp"
+              ? -7
+              : event.key === "ArrowDown"
+                ? 7
+                : 0;
+
+      if (step !== 0) {
+        event.preventDefault();
+        const base = focusedDay ?? currentDate;
+        const next = addDays(base, step);
+        setFocusedDay(next);
+        if (effectiveMode === "month" && !isSameMonth(next, currentDate)) {
+          setCurrentDate(next);
+        } else if (effectiveMode === "week") {
+          setCurrentDate(next);
+        } else if (effectiveMode === "day") {
+          setCurrentDate(next);
+        }
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const day = focusedDay ?? currentDate;
+        const first = items.find(
+          (item) =>
+            item.start.getTime() <= day.getTime() && item.end.getTime() >= day.getTime(),
+        );
+        if (first) setOpenItemRecordId(first.recordId);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        setFocusedDay(null);
+        setEditingItemId(null);
+      }
+    },
+    [focusedDay, currentDate, effectiveMode, items],
+  );
+
+  // ── Drag and drop ────────────────────────────────────────
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
+  const collisionDetection: CollisionDetection = useCallback((args) => {
+    const pointer = pointerWithin(args);
+    if (pointer.length > 0) return pointer;
+    return rectIntersection(args);
+  }, []);
+
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveDragId(String(event.active.id));
+  }, []);
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event;
+      setActiveDragId(null);
+      justDraggedRef.current = Date.now();
+
+      if (!over) return;
+      const overId = String(over.id);
+      if (!overId.startsWith("day:")) return;
+      const dayKey = overId.slice("day:".length);
+      const recordId = String(active.id).replace(/^item:/, "");
+      if (!dateColumnId) return;
+      onCellChange?.({ recordId, columnId: dateColumnId, value: dayKey });
+    },
+    [dateColumnId, onCellChange],
+  );
+
+  const activeDragItem = useMemo(() => {
+    if (!activeDragId) return null;
+    const scheduled = items.find((item) => item.id === activeDragId);
+    if (scheduled) return scheduled;
+
+    // An unscheduled row was picked up from the side panel.
+    const recordId = activeDragId.replace(/^item:/, "");
+    const record = records.find((entry) => entry.id === recordId);
+    if (!record) return null;
+    return {
+      id: activeDragId,
+      recordId: record.id,
+      title: record.title,
+      recordTitle: record.title,
+      start: new Date(),
+      end: new Date(),
+      color: MONDAY.neutral,
+      light: true,
+    } satisfies CalendarItem;
+  }, [activeDragId, items, records]);
+
+  // ── Derived view data ────────────────────────────────────
 
   const periodLabel =
-    viewMode === "month"
+    effectiveMode === "month"
       ? format(currentDate, "MMMM yyyy")
-      : viewMode === "week"
-        ? `${format(startOfWeek(currentDate, { weekStartsOn: calendarSettings.firstDayOfWeek }), "MMM d")} – ${format(endOfWeek(currentDate, { weekStartsOn: calendarSettings.firstDayOfWeek }), "MMM d, yyyy")}`
+      : effectiveMode === "week"
+        ? `${format(weekDays[0] ?? currentDate, "MMM d")} – ${format(weekDays[6] ?? currentDate, "MMM d, yyyy")}`
         : format(currentDate, "EEEE, MMMM d, yyyy");
 
+  const weekdayLabels = useMemo(() => {
+    const reference = startOfWeek(new Date(), { weekStartsOn: weekStart });
+    return Array.from({ length: 7 }, (_, i) => format(addDays(reference, i), "EEE"));
+  }, [weekStart]);
+
+  const openRecord = useMemo(
+    () => records.find((record) => record.id === openItemRecordId) ?? null,
+    [records, openItemRecordId],
+  );
+
+  if (!dateColumnId) {
+    return (
+      <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 bg-white px-6 text-center">
+        <p className="text-[15px] font-medium" style={{ color: MONDAY.text }}>
+          Add a date column to use the calendar view
+        </p>
+        <p className="text-[13px]" style={{ color: MONDAY.muted }}>
+          Pick a column of type Date or Timeline and this view will lay your items out on
+          a calendar.
+        </p>
+      </div>
+    );
+  }
+
+  const toolbarButtonClass =
+    "flex h-8 items-center gap-1.5 rounded-[4px] px-2 text-[13px] font-medium transition-colors";
+
   return (
-    <div className={cn(
-      "flex overflow-hidden rounded-xl border border-border bg-card shadow-sm",
-    )}>
-      {/* Main calendar area */}
-      <div className="flex flex-1 flex-col">
-        {/* ── Toolbar ───────────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
-          {/* Person Filter */}
-          <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs text-muted-foreground">
-            <User className="size-3.5" />
-            <span className="hidden sm:inline">Person</span>
-          </Button>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={handleDragStart}
+      onDragEnd={handleDragEnd}
+      onDragCancel={() => setActiveDragId(null)}
+    >
+      <div
+        className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          setOpenItemRecordId(null);
+          setEditingItemId(null);
+        }}
+      >
+        {/* ── Toolbar ──────────────────────────────────── */}
+        <div
+          className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5"
+          style={{ borderColor: MONDAY.border }}
+        >
+          <span
+            className="mr-1 truncate text-[15px] font-semibold"
+            style={{ color: MONDAY.text }}
+          >
+            {view.name}
+          </span>
+
+          <button
+            type="button"
+            onClick={navigateToday}
+            className={cn(
+              toolbarButtonClass,
+              "border transition-colors hover:bg-[#F7F8FA]",
+            )}
+            style={{ borderColor: MONDAY.inputBorder, color: MONDAY.text }}
+          >
+            Today
+          </button>
+
+          <div className="flex items-center">
+            <button
+              type="button"
+              onClick={navigatePrev}
+              aria-label="Previous period"
+              className="flex size-7 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]"
+              style={{ color: MONDAY.text }}
+            >
+              <ChevronLeft className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={navigateNext}
+              aria-label="Next period"
+              className="flex size-7 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]"
+              style={{ color: MONDAY.text }}
+            >
+              <ChevronRight className="size-4" />
+            </button>
+          </div>
+
+          <span className="text-[15px] font-semibold" style={{ color: MONDAY.text }}>
+            {periodLabel}
+          </span>
+
+          <div className="flex-1" />
+
+          {/* Day | Week | Month */}
+          {!isNarrow && (
+            <div className="flex items-center rounded-[4px] bg-[#F1F2F5] p-0.5">
+              {(["day", "week", "month"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  onClick={() => handleModeChange(option)}
+                  className={cn(
+                    "h-7 rounded-[4px] px-3 text-[13px] font-medium capitalize transition-colors",
+                    mode === option
+                      ? "bg-white text-[#323338] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
+                      : "text-[#676879] hover:text-[#323338]",
+                  )}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* Filter */}
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn("h-8 gap-1.5 text-xs", showFilters ? "bg-muted text-foreground" : "text-muted-foreground")}
-            onClick={() => setShowFilters(!showFilters)}
+          <button
+            type="button"
+            onClick={() => setShowFilters((open) => !open)}
+            className={cn(toolbarButtonClass, "hover:bg-[#F1F2F5]")}
+            style={{ color: activeFilters.length > 0 ? MONDAY.accent : MONDAY.muted }}
           >
             <Filter className="size-3.5" />
             <span className="hidden sm:inline">Filter</span>
             {activeFilters.length > 0 && (
-              <span className="ml-1 flex size-4 items-center justify-center rounded-full bg-primary text-[9px] text-primary-foreground">
+              <span
+                className="flex size-4 items-center justify-center rounded-full text-[10px] font-semibold text-white"
+                style={{ backgroundColor: MONDAY.accent }}
+              >
                 {activeFilters.length}
               </span>
             )}
-          </Button>
+          </button>
 
-          <div className="flex-1" />
-
-          {/* Today */}
-          <Button variant="ghost" size="sm" className="h-8 text-xs" onClick={navigateToday}>
-            Today
-          </Button>
-
-          {/* Navigation arrows */}
-          <div className="flex items-center gap-0.5">
-            <Button variant="ghost" size="icon" className="size-7" onClick={navigatePrev}>
-              <ChevronLeft className="size-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="size-7" onClick={navigateNext}>
-              <ChevronRight className="size-4" />
-            </Button>
-          </div>
-
-          {/* Month/Year pickers */}
-          <MonthYearPicker
-            currentDate={currentDate}
-            onSelect={(date) => setCurrentDate(date)}
-          />
-
-          {/* View toggle */}
+          {/* Color by */}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs">
-                <CalendarDays className="size-3.5" />
-                {viewMode.charAt(0).toUpperCase() + viewMode.slice(1)}
-                <ChevronDown className="size-3.5 opacity-70" />
-              </Button>
+              <button
+                type="button"
+                className={cn(toolbarButtonClass, "hover:bg-[#F1F2F5]")}
+                style={{ color: MONDAY.muted }}
+              >
+                <span className="hidden sm:inline">Color by</span>
+                <span style={{ color: MONDAY.text }}>
+                  {colorOptions.find((option) => option.id === colorSourceId)?.label ??
+                    "None"}
+                </span>
+                <ChevronDown className="size-3.5" />
+              </button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-32">
-              <DropdownMenuItem onSelect={() => handleViewModeChange("month")}>Month</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => handleViewModeChange("week")}>Week</DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => handleViewModeChange("day")}>Day</DropdownMenuItem>
+            <DropdownMenuContent align="end" className="w-48">
+              {colorOptions.map((option) => (
+                <DropdownMenuItem
+                  key={option.id || "none"}
+                  onSelect={() => handleColorSourceChange(option.id)}
+                  className="text-[13px]"
+                >
+                  {option.label}
+                </DropdownMenuItem>
+              ))}
             </DropdownMenuContent>
           </DropdownMenu>
 
-          {/* Settings gear */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className={cn("size-7", showSettings && "bg-muted text-foreground")}
-            aria-label="Settings"
-            onClick={() => setShowSettings(!showSettings)}
-          >
-            <Settings className="size-3.5" />
-          </Button>
-        </div>
+          {/* Date column */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className={cn(toolbarButtonClass, "hover:bg-[#F1F2F5]")}
+                style={{ color: MONDAY.muted }}
+              >
+                <span className="hidden sm:inline">Date column</span>
+                <span style={{ color: MONDAY.text }}>
+                  {dateColumns.find((c) => c.id === dateColumnId)?.label ?? "Select"}
+                </span>
+                <ChevronDown className="size-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              {dateColumns.length === 0 ? (
+                <DropdownMenuItem disabled className="text-[13px]">
+                  No date columns
+                </DropdownMenuItem>
+              ) : (
+                dateColumns.map((column) => (
+                  <DropdownMenuItem
+                    key={column.id}
+                    onSelect={() => handleDateColumnChange(column.id)}
+                    className="text-[13px]"
+                  >
+                    {column.label}
+                  </DropdownMenuItem>
+                ))
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
 
-        {/* ── Calendar Content ──────────────────────────── */}
-        <div className="flex-1 overflow-auto" style={{ minHeight: 400 }}>
-          {viewMode === "month" && (
-            <MonthView
-              currentDate={currentDate}
-              events={events}
-              onDayClick={handleDayClick}
-              onEventClick={handleEventClick}
-              hideItemNames={calendarSettings.hideItemNames}
-              firstDayOfWeek={calendarSettings.firstDayOfWeek}
-              hideWeekends={calendarSettings.hideWeekends}
-            />
-          )}
-          {viewMode === "week" && (
-            <WeekView
-              currentDate={currentDate}
-              events={events}
-              onEventClick={handleEventClick}
-              showHours={calendarSettings.showHours}
-              hideItemNames={calendarSettings.hideItemNames}
-              firstDayOfWeek={calendarSettings.firstDayOfWeek}
-              hideWeekends={calendarSettings.hideWeekends}
-            />
-          )}
-          {viewMode === "day" && (
-            <DayView
-              currentDate={currentDate}
-              events={events}
-              onEventClick={handleEventClick}
-              showHours={calendarSettings.showHours}
-              hideItemNames={calendarSettings.hideItemNames}
-            />
-          )}
-        </div>
-
-        {/* ── Color Legend ───────────────────────────────── */}
-        <ColorLegend events={events} colorBy={calendarSettings.colorBy} groups={groups} columns={columns} />
-
-        {/* ── Footer ─────────────────────────────────────── */}
-        <div className="flex items-center justify-between border-t border-border px-4 py-2 text-xs text-muted-foreground">
-          <span>
-            {events.length} event{events.length !== 1 ? "s" : ""}
-            {!detectedDateColumn && columns.length > 0 && (
-              <span className="ml-2 text-amber-600">• No date column found</span>
+          <button
+            type="button"
+            onClick={() => setShowSettings((open) => !open)}
+            aria-label="Calendar settings"
+            className={cn(
+              "flex size-8 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]",
+              showSettings && "bg-[#F1F2F5]",
             )}
-          </span>
-          {calendarSettings.showRecordCount && (
-            <span>
-              {records.length} record{records.length !== 1 ? "s" : ""}
-            </span>
+            style={{ color: MONDAY.muted }}
+          >
+            <Settings className="size-4" />
+          </button>
+        </div>
+
+        {/* ── Body ─────────────────────────────────────── */}
+        <div className="flex min-h-0 flex-1">
+          <div
+            className="flex min-w-0 flex-1 flex-col"
+            onKeyDown={handleGridKeyDown}
+            tabIndex={0}
+            role="application"
+            aria-label="Calendar"
+          >
+            {isNarrow ? (
+              <AgendaList
+                days={weekDays}
+                items={items}
+                focusedDay={focusedDay}
+                onDayClick={(day) => setFocusedDay(day)}
+                onItemClick={handleItemClick}
+              />
+            ) : (
+              <>
+                {effectiveMode === "month" && (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div
+                      className="grid shrink-0 border-b"
+                      style={{
+                        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                        borderColor: MONDAY.border,
+                      }}
+                    >
+                      {weekdayLabels.map((label, index) => (
+                        <div
+                          key={label}
+                          className="px-2 py-1.5 text-[11px] font-medium tracking-wide uppercase"
+                          style={{
+                            color: MONDAY.muted,
+                            borderRight:
+                              index < 6 ? `1px solid ${MONDAY.border}` : undefined,
+                          }}
+                        >
+                          {label}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div
+                      className="grid min-h-0 flex-1"
+                      style={{
+                        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                        gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))`,
+                      }}
+                    >
+                      {weeks.map((week) => (
+                        <WeekRow
+                          key={week[0]?.toISOString()}
+                          week={week}
+                          items={items}
+                          currentMonth={currentDate}
+                          focusedDay={focusedDay}
+                          editingItemId={editingItemId}
+                          showDate
+                          onDayClick={(day) => {
+                            setFocusedDay(day);
+                          }}
+                          onItemClick={handleItemClick}
+                          onCreateItem={handleCreateItem}
+                          onRenameItem={handleRenameItem}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {effectiveMode === "week" && (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div
+                      className="grid shrink-0 border-b"
+                      style={{
+                        gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
+                        borderColor: MONDAY.border,
+                      }}
+                    >
+                      {weekDays.map((day, index) => (
+                        <div
+                          key={day.toISOString()}
+                          className={cn(
+                            "flex items-center justify-center gap-1.5 py-1.5",
+                            focusedDay && isSameDay(day, focusedDay) && "bg-[#E9F2FD]",
+                          )}
+                          style={{
+                            borderRight:
+                              index < 6 ? `1px solid ${MONDAY.border}` : undefined,
+                          }}
+                        >
+                          <span
+                            className="text-[11px] font-medium uppercase"
+                            style={{ color: MONDAY.muted }}
+                          >
+                            {format(day, "EEE")}
+                          </span>
+                          <span
+                            className={cn(
+                              "flex size-6 items-center justify-center rounded-full text-[13px] font-medium",
+                              isToday(day) ? "bg-[#0073EA] text-white" : "text-[#323338]",
+                            )}
+                          >
+                            {format(day, "d")}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div
+                      className="grid min-h-0 flex-1"
+                      style={{ gridTemplateRows: "minmax(0, 1fr)" }}
+                    >
+                      <WeekRow
+                        week={weekDays}
+                        items={items}
+                        currentMonth={currentDate}
+                        focusedDay={focusedDay}
+                        editingItemId={editingItemId}
+                        showDate={false}
+                        onDayClick={(day) => setFocusedDay(day)}
+                        onItemClick={handleItemClick}
+                        onCreateItem={handleCreateItem}
+                        onRenameItem={handleRenameItem}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {effectiveMode === "day" && (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <div
+                      className="flex shrink-0 items-center gap-2 border-b px-3 py-2"
+                      style={{ borderColor: MONDAY.border }}
+                    >
+                      <span
+                        className="text-[15px] font-semibold"
+                        style={{ color: MONDAY.text }}
+                      >
+                        {format(currentDate, "EEEE, MMMM d")}
+                      </span>
+                      <span className="text-[13px]" style={{ color: MONDAY.muted }}>
+                        {
+                          items.filter(
+                            (item) =>
+                              item.start.getTime() <= currentDate.getTime() &&
+                              item.end.getTime() >= currentDate.getTime(),
+                          ).length
+                        }{" "}
+                        item(s)
+                      </span>
+                    </div>
+                    <AgendaList
+                      days={[currentDate]}
+                      items={items}
+                      focusedDay={focusedDay}
+                      onDayClick={(day) => setFocusedDay(day)}
+                      onItemClick={handleItemClick}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Unscheduled panel */}
+          {unscheduledOpen && (
+            <UnscheduledPanel
+              records={unscheduledRecords}
+              onItemClick={handleUnscheduledClick}
+              onCollapse={() => setUnscheduledOpen(false)}
+            />
+          )}
+          {!unscheduledOpen && (
+            <button
+              type="button"
+              onClick={() => setUnscheduledOpen(true)}
+              className="flex w-8 shrink-0 items-start justify-center border-l py-3"
+              style={{ borderColor: MONDAY.border, color: MONDAY.muted }}
+              aria-label="Show unscheduled items"
+            >
+              <Inbox className="size-4" />
+            </button>
+          )}
+
+          {/* Settings panel */}
+          {showSettings && (
+            <CalendarSettingsPanel
+              settings={calendarSettings}
+              columns={columns}
+              groups={groups}
+              onSettingsChange={onSettingsChange || (() => {})}
+              onClose={() => setShowSettings(false)}
+            />
+          )}
+
+          {/* Item detail panel */}
+          {openRecord && (
+            <CalendarItemPanel
+              record={openRecord}
+              columns={columns}
+              cellValues={cellValues}
+              onCellChange={onCellChange}
+              onTitleChange={onRecordTitleChange}
+              onClose={() => setOpenItemRecordId(null)}
+            />
           )}
         </div>
+
+        {/* Advanced filter panel */}
+        {showFilters && (
+          <AdvancedFilterPanel
+            columns={columns}
+            records={records}
+            cellValues={cellValues}
+            onClose={() => setShowFilters(false)}
+            onApply={(filters) => {
+              setActiveFilters(filters);
+              setShowFilters(false);
+            }}
+          />
+        )}
       </div>
 
-      {/* ── Settings Panel (slide-out) ──────────────────── */}
-      {showSettings && (
-        <CalendarSettingsPanel
-          settings={calendarSettings}
-          columns={columns}
-          groups={groups}
-          onSettingsChange={onSettingsChange || (() => {})}
-          onClose={() => setShowSettings(false)}
-        />
-      )}
-
-      {/* ── Advanced Filter Panel (slide-out) ─────────────── */}
-      {showFilters && (
-        <AdvancedFilterPanel
-          columns={columns}
-          records={records}
-          cellValues={cellValues}
-          onClose={() => setShowFilters(false)}
-          onApply={handleApplyFilters}
-        />
-      )}
-    </div>
+      <DragOverlay dropAnimation={null}>
+        {activeDragItem ? (
+          <div
+            className="flex h-6 items-center rounded-[4px] pr-1 pl-1.5 text-[12px] leading-none shadow-[0_4px_12px_rgba(0,0,0,0.24)]"
+            style={{
+              backgroundColor: activeDragItem.light
+                ? tintColor(activeDragItem.color, 0.86)
+                : activeDragItem.color,
+              color: activeDragItem.light ? MONDAY.text : "#FFFFFF",
+              borderLeft: activeDragItem.light
+                ? `4px solid ${activeDragItem.color}`
+                : "4px solid transparent",
+            }}
+          >
+            <span className="truncate">{activeDragItem.title}</span>
+          </div>
+        ) : null}
+      </DragOverlay>
+    </DndContext>
   );
 }
 
-// ── Filter Evaluation Logic ─────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────
+
+/** Map a canonical colour source back onto the legacy `colorBy` union. */
+function colorSourceIdToLegacy(
+  sourceId: string,
+  columns: ColumnDefinition[],
+): CalendarViewSettings["colorBy"] {
+  if (!sourceId) return "none";
+  if (sourceId === GROUP_COLOR_SOURCE) return "group";
+  const column = columns.find((c) => c.id === sourceId);
+  if (!column) return "none";
+  if (column.type === "person") return "person";
+  if (column.type === "status") return "status";
+  return "none";
+}
+
+// ── Filter evaluation logic ─────────────────────────────────
 
 function evaluateFilter(
   cellValue: ColumnValue | undefined,
   operator: string,
   filterValue: ColumnValue,
-  columnType: string
+  columnType: string,
 ): boolean {
   if (operator === "is_empty") return cellValue == null || cellValue === "";
   if (operator === "not_empty") return cellValue != null && cellValue !== "";
@@ -1029,7 +1856,6 @@ function evaluateFilter(
   const cellStr = String(cellValue).toLowerCase();
   const filterStr = String(filterValue).toLowerCase();
 
-  // Date-specific operators
   if (columnType === "date" || columnType === "timeline") {
     return evaluateDateFilter(cellValue, operator, filterValue);
   }
@@ -1073,61 +1899,66 @@ function evaluateFilter(
 function evaluateDateFilter(
   cellValue: ColumnValue,
   operator: string,
-  filterValue: ColumnValue
+  filterValue: ColumnValue,
 ): boolean {
-  try {
-    const date = new Date(String(cellValue));
-    const today = new Date();
+  const date = parseCalendarDate(cellValue);
+  if (!date) return false;
 
-    // Handle "between" date range - filterValue is [startDate, endDate]
-    if (operator === "between") {
-      const dates = Array.isArray(filterValue) ? filterValue : [filterValue, ""];
-      const startStr = String(dates[0] || "");
-      const endStr = String(dates[1] || "");
-      if (!startStr && !endStr) return true;
-      const startTime = startStr ? new Date(startStr).getTime() : Number.MIN_SAFE_INTEGER;
-      const endTime = endStr ? new Date(endStr).getTime() : Number.MAX_SAFE_INTEGER;
-      const dateTime = date.getTime();
-      return dateTime >= startTime && dateTime <= endTime;
-    }
+  const today = startOfLocalDay(new Date());
 
-    switch (operator) {
-      case "is":
-        return isSameDay(date, new Date(String(filterValue)));
-      case "is_not":
-        return !isSameDay(date, new Date(String(filterValue)));
-      case "before":
-        return isBefore(date, new Date(String(filterValue)));
-      case "after":
-        return isAfter(date, new Date(String(filterValue)));
-      case "overdue":
-        return isPast(date) && !isToday(date);
-      case "today":
-        return isToday(date);
-      case "this_week": {
-        const weekStart = startOfWeek(today);
-        const weekEnd = endOfWeek(today);
-        return !isBefore(date, weekStart) && !isAfter(date, weekEnd);
-      }
-      case "this_month": {
-        const monthStart = startOfMonth(today);
-        const monthEnd = endOfMonth(today);
-        return !isBefore(date, monthStart) && !isAfter(date, monthEnd);
-      }
-      case "next_month": {
-        const nextMonthStart = startOfMonth(addMonths(today, 1));
-        const nextMonthEnd = endOfMonth(addMonths(today, 1));
-        return !isBefore(date, nextMonthStart) && !isAfter(date, nextMonthEnd);
-      }
-      case "last_month": {
-        const lastMonthStart = startOfMonth(subMonths(today, 1));
-        const lastMonthEnd = endOfMonth(subMonths(today, 1));
-        return !isBefore(date, lastMonthStart) && !isAfter(date, lastMonthEnd);
-      }
-      default:
-        return true;
+  if (operator === "between") {
+    const dates = Array.isArray(filterValue) ? filterValue : [filterValue, ""];
+    const start = parseCalendarDate(dates[0]);
+    const end = parseCalendarDate(dates[1]);
+    if (!start && !end) return true;
+    const time = date.getTime();
+    if (start && time < start.getTime()) return false;
+    if (end && time > end.getTime()) return false;
+    return true;
+  }
+
+  switch (operator) {
+    case "is": {
+      const target = parseCalendarDate(filterValue);
+      return target ? isSameDay(date, target) : false;
     }
-  } catch {
-    return false;
+    case "is_not": {
+      const target = parseCalendarDate(filterValue);
+      return target ? !isSameDay(date, target) : false;
+    }
+    case "before": {
+      const target = parseCalendarDate(filterValue);
+      return target ? date.getTime() < target.getTime() : false;
+    }
+    case "after": {
+      const target = parseCalendarDate(filterValue);
+      return target ? date.getTime() > target.getTime() : false;
+    }
+    case "overdue":
+      return date.getTime() < today.getTime();
+    case "today":
+      return isSameDay(date, today);
+    case "this_week": {
+      const start = startOfWeek(today, { weekStartsOn: 0 });
+      const end = endOfWeek(today, { weekStartsOn: 0 });
+      return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+    }
+    case "this_month": {
+      const start = startOfMonth(today);
+      const end = endOfMonth(today);
+      return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+    }
+    case "next_month": {
+      const start = startOfMonth(addMonths(today, 1));
+      const end = endOfMonth(addMonths(today, 1));
+      return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+    }
+    case "last_month": {
+      const start = startOfMonth(subMonths(today, 1));
+      const end = endOfMonth(subMonths(today, 1));
+      return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
+    }
+    default:
+      return true;
   }
 }

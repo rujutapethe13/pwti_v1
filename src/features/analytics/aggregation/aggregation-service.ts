@@ -72,28 +72,66 @@ function matchesAny(haystack: string, keywords: string[]): boolean {
  * When multiple columns map to the same taxonomy field, the first one
  * (by sort order) wins. This prevents collisions.
  */
-function buildColumnTaxonomy(columns: ColumnDefinition[]): ColumnTaxonomy {
+function buildColumnTaxonomy(columns: ColumnDefinition[], cellValues: Map<string, ColumnValue>): ColumnTaxonomy {
   const taxonomy: ColumnTaxonomy = {};
-  const usedFields = new Set<TaxonomyField>();
+  for (const c of columns) taxonomy[c.id] = "custom";
 
-  // Sort by order to ensure deterministic assignment
-  const sorted = [...columns].sort((a, b) => a.order - b.order);
+  const populatedCount = (columnId: string) => {
+    let n = 0;
+    for (const [key, value] of cellValues.entries()) {
+      if (!key.endsWith(`:${columnId}`)) continue;
+      if (value === null || value === undefined) continue;
+      if (typeof value === "string" && (value.trim() === "" || value.trim().toLowerCase() === "null")) continue;
+      n++;
+    }
+    return n;
+  };
 
-  for (const column of sorted) {
-    const field = classifyColumn(column);
-    if (field === "custom") {
-      taxonomy[column.id] = "custom";
-      continue;
-    }
-    // First column to claim a field wins
-    if (!usedFields.has(field)) {
-      taxonomy[column.id] = field;
-      usedFields.add(field);
-    } else {
-      taxonomy[column.id] = "custom";
-    }
+  const isDateLike = (c: ColumnDefinition) => c.type === "date" || c.type === "timeline" ||
+    matchesAny(c.label.toLowerCase(), ["date", "start", "started", "created", "scheduled", "due", "deadline", "target", "end"]);
+
+  const dateCandidates = columns.filter(isDateLike);
+  // Received date: highest populated count, then label hint
+  let dateCol: ColumnDefinition | null = null;
+  let best = -1;
+  for (const c of dateCandidates) {
+    const label = c.label.toLowerCase();
+    const hint = matchesAny(label, ["received", "date in", "created", "start", "date"]) ? 1 : 0;
+    const score = populatedCount(c.id) * 10 + hint;
+    if (score > best) { best = score; dateCol = c; }
+  }
+  // Due date: among due-like columns
+  const dueCandidates = columns.filter((c) => matchesAny(c.label.toLowerCase(), ["due", "deadline", "target date", "end date"]));
+  let dueCol: ColumnDefinition | null = null;
+  best = -1;
+  for (const c of dueCandidates) {
+    const score = populatedCount(c.id);
+    if (score > best) { best = score; dueCol = c; }
   }
 
+  if (dateCol) taxonomy[dateCol.id] = "date";
+  if (dueCol && dueCol.id !== dateCol?.id) taxonomy[dueCol.id] = "dueDate";
+
+  // status/person/client/job/assigned for remaining columns (first by sort order)
+  const usedFields = new Set<TaxonomyField>(["date", "dueDate"].filter((f) => taxonomy && true) as TaxonomyField[]);
+  if (dateCol) usedFields.add("date");
+  if (dueCol) usedFields.add("dueDate");
+  const sorted = [...columns].sort((a, b) => a.order - b.order);
+  for (const column of sorted) {
+    if (taxonomy[column.id] === "date" || taxonomy[column.id] === "dueDate") continue;
+    const label = column.label.toLowerCase().trim();
+    const type = column.type;
+    let field: TaxonomyField = "custom";
+    if (type === "status") field = "status";
+    else if (type === "person") field = "assignedTo";
+    else if (matchesAny(label, ["client", "customer", "brand", "account"])) field = "clientName";
+    else if (matchesAny(label, ["job type", "job-type", "jobtype", "type", "category", "service"])) field = "jobType";
+    else if (matchesAny(label, ["assign", "owner", "responsible", "artist", "editor", "worker"])) field = "assignedTo";
+    if (field !== "custom" && !usedFields.has(field)) {
+      taxonomy[column.id] = field;
+      usedFields.add(field);
+    }
+  }
   return taxonomy;
 }
 
@@ -105,7 +143,9 @@ function resolveOptionLabel(
   value: unknown,
 ): string | null {
   const column = columns.find((c) => c.id === columnId);
-  const options = column?.settings?.options;
+  // A status column keeps its labels in `settings.labels`; every other option
+  // column keeps them in `settings.options`.
+  const options = column?.settings?.labels ?? column?.settings?.options;
   if (!Array.isArray(options) || value === null || value === undefined) return null;
   const valueStr = String(value);
   for (const opt of options) {
@@ -281,6 +321,7 @@ function mapRecordToUnifiedRow(
  * @returns UnifiedDataset with all rows normalized
  */
 export async function buildUnifiedDataset(workspaceId: string): Promise<UnifiedDataset> {
+  console.log("[TEMP-LOG] buildUnifiedDataset — workspaceId:", workspaceId);
   const client = await createServiceClient();
 
   // 1. Fetch all boards for the workspace
@@ -290,6 +331,9 @@ export async function buildUnifiedDataset(workspaceId: string): Promise<UnifiedD
     .eq("workspace_id", workspaceId)
     .eq("status", "active")
     .order("name", { ascending: true });
+
+  console.log("[TEMP-LOG] buildUnifiedDataset boards:", boardRows?.length ?? 0, "error:", boardError?.message ?? "none");
+  if (boardRows) for (const b of boardRows) console.log("[TEMP-LOG]   board:", b.id, JSON.stringify(b.name), "org:", b.organization_id);
 
   if (boardError || !boardRows) {
     return { rows: [], boards: [], generatedAt: new Date().toISOString() };
@@ -324,12 +368,15 @@ export async function buildUnifiedDataset(workspaceId: string): Promise<UnifiedD
     const board = boards[i];
     const boardData = boardDataResults[i];
 
-    if (!boardData) continue;
+    if (!boardData) {
+      console.log("[TEMP-LOG] buildUnifiedDataset board", board.id, JSON.stringify(board.name), "— loadBoardData returned null");
+      continue;
+    }
 
     const { columns, records, cellValues } = boardData;
 
     // 3. Build taxonomy for this board
-    const taxonomy = buildColumnTaxonomy(columns);
+    const taxonomy = buildColumnTaxonomy(columns, cellValues);
     boardColumnMaps.push({
       boardId: board.id,
       boardName: board.name,
@@ -341,7 +388,10 @@ export async function buildUnifiedDataset(workspaceId: string): Promise<UnifiedD
       const row = mapRecordToUnifiedRow(record, board, taxonomy, cellValues, columns);
       unifiedRows.push(row);
     }
+    console.log("[TEMP-LOG] buildUnifiedDataset board", board.id, JSON.stringify(board.name), "— columns:", columns.length, "records:", records.length, "cellValues:", cellValues.size, "mappedRows:", records.length);
   }
+
+  console.log("[TEMP-LOG] buildUnifiedDataset total unified rows:", unifiedRows.length);
 
   return {
     rows: unifiedRows,
@@ -362,12 +412,12 @@ async function loadBoardData(
 ): Promise<BoardData | null> {
   // Fetch columns, records, and cell values in parallel
   const [columnsResult, recordsResult, cellValuesResult] = await Promise.all([
-    client
-      .from("columns")
-      .select("*")
-      .eq("board_id", boardId)
-      .is("group_id", null)
-      .order("sort_order", { ascending: true }),
+     client
+       .from("columns")
+       .select("*")
+       .eq("board_id", boardId)
+       .is("deleted_at", null)
+       .order("sort_order", { ascending: true }),
     client
       .from("records")
       .select("*")
@@ -379,6 +429,13 @@ async function loadBoardData(
       .select("*")
       .eq("board_id", boardId),
   ]);
+
+  console.log("[TEMP-LOG] loadBoardData board:", boardId, "— columns:", columnsResult.data?.length ?? 0, "records:", recordsResult.data?.length ?? 0, "cellValues:", cellValuesResult.data?.length ?? 0, "errors:", columnsResult.error?.message ?? recordsResult.error?.message ?? cellValuesResult.error?.message ?? "none");
+  if (columnsResult.data) {
+    for (const c of columnsResult.data) {
+      console.log("[TEMP-LOG]   col:", c.id, "label:", JSON.stringify(c.label), "type:", c.type, "sort_order:", c.sort_order);
+    }
+  }
 
   if (columnsResult.error || recordsResult.error || cellValuesResult.error) {
     return null;

@@ -10,7 +10,52 @@
  * without a DOM or a Supabase connection.
  */
 
-import type { ColumnDefinition } from "../types";
+import type { ColumnDefinition, ColumnValue, ConnectedBoardLinkItem } from "../types";
+
+/** Canonical form used for persisted record ids and in-memory lookups. */
+export function normalizeRecordId(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const id = String(value).trim();
+  if (!id) return null;
+  return id.replace(/^(?:record|rec)[:_]/i, "");
+}
+
+/** Normalize every persisted Connect Boards value shape into link objects. */
+export function parseConnectedBoardLinks(
+  value: ColumnValue,
+  fallbackBoardId?: string,
+): ConnectedBoardLinkItem[] {
+  const raw =
+    value && typeof value === "object" && !Array.isArray(value) && "linked_item_ids" in value
+      ? (value as { linked_item_ids?: unknown }).linked_item_ids
+      : value;
+  if (!Array.isArray(raw)) {
+    if (typeof raw === "string" && fallbackBoardId) {
+      const itemId = normalizeRecordId(raw);
+      return itemId ? [{ board_id: fallbackBoardId, item_id: itemId }] : [];
+    }
+    if (raw && typeof raw === "object" && "item_id" in raw) {
+      const item = raw as { item_id?: unknown; board_id?: unknown; workspace_id?: unknown; item_name?: unknown };
+      const itemId = normalizeRecordId(item.item_id);
+      if (itemId && typeof item.board_id === "string") {
+        return [{ item_id: itemId, board_id: item.board_id.trim(), workspace_id: typeof item.workspace_id === "string" ? item.workspace_id : undefined, item_name: typeof item.item_name === "string" ? item.item_name : undefined }];
+      }
+    }
+    return [];
+  }
+  return raw.flatMap((entry): ConnectedBoardLinkItem[] => {
+    if (typeof entry === "string") {
+      const itemId = normalizeRecordId(entry);
+      return fallbackBoardId && itemId ? [{ board_id: fallbackBoardId, item_id: itemId }] : [];
+    }
+    if (!entry || typeof entry !== "object") return [];
+    const item = entry as { item_id?: unknown; id?: unknown; board_id?: unknown; workspace_id?: unknown; item_name?: unknown };
+    const itemId = item.item_id ?? item.id;
+    const normalizedId = normalizeRecordId(itemId);
+    if (!normalizedId || typeof item.board_id !== "string") return [];
+    return [{ item_id: normalizedId, board_id: item.board_id.trim(), workspace_id: typeof item.workspace_id === "string" ? item.workspace_id : undefined, item_name: typeof item.item_name === "string" ? item.item_name : undefined }];
+  });
+}
 
 // ── Minimal column shape for cross-board comparison ──────────
 // We only need id / label / type to build a dropdown; we avoid requiring a
@@ -164,8 +209,12 @@ export function getMirroredColumnConfigs(config: Record<string, unknown>): Array
   column_id: string;
   aggregation: string | null;
 }> {
-  const legacyId = (config.mirrored_column_id as string | undefined);
-  const multi = (config.mirrored_columns ?? []) as Array<{ board_id: string; column_id: string; aggregation: string | null }>;
+  const legacyId = config.mirrored_column_id as string | undefined;
+  const multi = (config.items ?? config.mirrored_columns ?? []) as Array<{
+    board_id: string;
+    column_id: string;
+    aggregation: string | null;
+  }>;
 
   if (multi.length > 0) {
     return multi;

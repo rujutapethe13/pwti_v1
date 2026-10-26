@@ -125,12 +125,13 @@ export async function fetchOverviewStatCards(
 ): Promise<StatCardsResult> {
   // Newly written records land in the snapshot only after a refresh; without it
   // the cards would under-report.
+  console.log("[TEMP-LOG] fetchOverviewStatCards — org:", organizationId, "range:", JSON.stringify(range), "workspaceIds:", workspaceIds);
   await checkAndRefreshSnapshotIfNeeded(supabase);
 
-  const window = narrowAllTimeRange(
-    range,
-    await fetchDataBounds(supabase, organizationId, workspaceIds),
-  );
+  const bounds = await fetchDataBounds(supabase, organizationId, workspaceIds);
+  console.log("[TEMP-LOG] stat-cards data bounds:", JSON.stringify(bounds));
+  const window = narrowAllTimeRange(range, bounds);
+  console.log("[TEMP-LOG] stat-cards narrowed window:", JSON.stringify(window));
 
   const prior = priorPeriod(window);
 
@@ -144,14 +145,18 @@ export async function fetchOverviewStatCards(
   });
 
   if (error) {
+    console.error("[TEMP-LOG] overview_period_stats RPC error:", error.message);
     throw new Error(
       `Failed to aggregate period stats: ${error.message || String(error)}`,
     );
   }
 
+  console.log("[TEMP-LOG] overview_period_stats raw result:", JSON.stringify(data));
   const root = (data ?? {}) as Record<string, unknown>;
   const comparison = parsePeriodComparison(data);
   const coverage = parseCoverage(root.coverage);
+  console.log("[TEMP-LOG] stat-cards parsed coverage:", JSON.stringify(coverage));
+  console.log("[TEMP-LOG] stat-cards current.jobsReceived:", comparison.current.jobsReceived, "prior.jobsReceived:", comparison.prior.jobsReceived);
 
   return buildStatCards(comparison, {
     id: window.id,

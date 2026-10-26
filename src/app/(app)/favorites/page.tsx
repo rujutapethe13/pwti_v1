@@ -1,8 +1,9 @@
 import Link from "next/link";
-import { Star, LayoutTemplate, Folder } from "lucide-react";
+import { LayoutTemplate, Folder } from "lucide-react";
 
 import { createClient } from "@/lib/supabase/server";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
+
 import { EmptyState } from "@/components/shared/empty-state";
 import { cn } from "@/lib/utils";
 
@@ -33,23 +34,31 @@ export default async function FavoritesPage() {
       <div className="flex-1 overflow-y-auto bg-background">
         <div className="mx-auto max-w-4xl px-6 py-8">
           <EmptyState
-            icon={Star}
             title="Sign in to see favorites"
             description="You need to be signed in to view and manage your favorite boards and workspaces."
-            action={{ label: "Sign in", onClick: () => {} }}
           />
         </div>
       </div>
     );
   }
 
-  const res = await fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/favorites`, {
-    next: { tags: ["favorites"] },
-  });
+  const cookieHeader = (await headers()).get("cookie") ?? "";
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
   let favorites: FavoriteItem[] = [];
-  if (res.ok) {
-    favorites = (await res.json()) as FavoriteItem[];
+  try {
+    const res = await fetch(`${appUrl}/api/favorites`, {
+      headers: { cookie: cookieHeader },
+      next: { tags: ["favorites"] },
+    });
+    if (res.ok) {
+      const json = await res.json();
+      if (Array.isArray(json)) {
+        favorites = json.filter((f) => f && typeof f === "object");
+      }
+    }
+  } catch (err) {
+    console.error("[favorites] page fetch error:", err);
   }
 
   const boards = favorites.filter((f) => f.item_type === "board");
@@ -67,10 +76,8 @@ export default async function FavoritesPage() {
 
         {favorites.length === 0 ? (
           <EmptyState
-            icon={Star}
             title="No favorites yet"
             description="Star boards and workspaces to quickly find them here."
-            action={{ label: "Browse boards", onClick: () => {} }}
           />
         ) : (
           <div className="space-y-8">

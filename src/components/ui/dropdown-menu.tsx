@@ -3,7 +3,6 @@
 import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { Check, ChevronRight, Circle } from "lucide-react";
 import * as React from "react";
-import { useTheme } from "next-themes";
 
 import { cn } from "@/lib/utils";
 
@@ -44,67 +43,41 @@ DropdownMenuSubTrigger.displayName =
 const DropdownMenuSubContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.SubContent>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.SubContent>
->(({ className, collisionPadding = 8, avoidCollisions = true, ...props }, ref) => {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-
-  return (
-    <DropdownMenuPrimitive.Portal>
-      <DropdownMenuPrimitive.SubContent
-        ref={ref}
-        collisionPadding={collisionPadding}
-        avoidCollisions={avoidCollisions}
-        className={cn(
-          "z-[9999] min-w-[8rem] overflow-hidden rounded-[8px] p-[4px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-          className,
-        )}
-        style={{
-          backgroundColor: isDark ? "#1f1f23" : "#ffffff",
-          border: `1px solid ${isDark ? "#3a3a40" : "#e5e5e5"}`,
-          boxShadow: isDark
-            ? "0 8px 24px rgba(0,0,0,0.4)"
-            : "0 8px 24px rgba(0,0,0,0.2)",
-          color: isDark ? "#ffffff" : "#1a1a2e",
-        }}
-        {...props}
-      />
-    </DropdownMenuPrimitive.Portal>
-  );
-});
+>(({ className, collisionPadding = 8, avoidCollisions = true, ...props }, ref) => (
+  <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.SubContent
+      ref={ref}
+      collisionPadding={collisionPadding}
+      avoidCollisions={avoidCollisions}
+      className={cn(
+        "z-[9999] min-w-[8rem] overflow-hidden rounded-[8px] border border-popover-border bg-popover-bg p-[4px] text-foreground shadow-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+        className,
+      )}
+      {...props}
+    />
+  </DropdownMenuPrimitive.Portal>
+));
 DropdownMenuSubContent.displayName =
   DropdownMenuPrimitive.SubContent.displayName;
 
 const DropdownMenuContent = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Content>
->(({ className, sideOffset = 4, collisionPadding = 8, avoidCollisions = true, ...props }, ref) => {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-
-  return (
-    <DropdownMenuPrimitive.Portal>
-      <DropdownMenuPrimitive.Content
-        ref={ref}
-        sideOffset={sideOffset}
-        collisionPadding={collisionPadding}
-        avoidCollisions={avoidCollisions}
-        className={cn(
-          "z-[9999] min-w-[8rem] overflow-hidden rounded-[8px] p-[4px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-          className,
-        )}
-        style={{
-          backgroundColor: isDark ? "#1f1f23" : "#ffffff",
-          border: `1px solid ${isDark ? "#3a3a40" : "#e5e5e5"}`,
-          boxShadow: isDark
-            ? "0 8px 24px rgba(0,0,0,0.4)"
-            : "0 8px 24px rgba(0,0,0,0.2)",
-          color: isDark ? "#ffffff" : "#1a1a2e",
-        }}
-        {...props}
-      />
-    </DropdownMenuPrimitive.Portal>
-  );
-});
+>(({ className, sideOffset = 4, collisionPadding = 8, avoidCollisions = true, ...props }, ref) => (
+  <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Content
+      ref={ref}
+      sideOffset={sideOffset}
+      collisionPadding={collisionPadding}
+      avoidCollisions={avoidCollisions}
+      className={cn(
+        "z-[10001] min-w-[8rem] overflow-hidden rounded-[8px] border border-popover-border bg-popover-bg p-[4px] text-foreground shadow-popover data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
+        className,
+      )}
+      {...props}
+    />
+  </DropdownMenuPrimitive.Portal>
+));
 DropdownMenuContent.displayName = DropdownMenuPrimitive.Content.displayName;
 
 const DropdownMenuItem = React.forwardRef<
@@ -116,7 +89,7 @@ const DropdownMenuItem = React.forwardRef<
   <DropdownMenuPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-[12px] py-[8px] text-sm outline-none transition-colors focus:bg-[#f3f4f6] focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0",
+      "relative flex cursor-default select-none items-center gap-2 rounded-sm px-[12px] py-[8px] text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&>svg]:size-4 [&>svg]:shrink-0",
       inset && "pl-8",
       className,
     )}
@@ -132,7 +105,7 @@ const DropdownMenuCheckboxItem = React.forwardRef<
   <DropdownMenuPrimitive.CheckboxItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-[12px] py-[8px] text-sm outline-none transition-colors focus:bg-[#f3f4f6] focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm px-[12px] py-[8px] text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
     checked={checked}
@@ -156,7 +129,7 @@ const DropdownMenuRadioItem = React.forwardRef<
   <DropdownMenuPrimitive.RadioItem
     ref={ref}
     className={cn(
-      "relative flex cursor-default select-none items-center rounded-sm px-[12px] py-[8px] text-sm outline-none transition-colors focus:bg-[#f3f4f6] focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex cursor-default select-none items-center rounded-sm px-[12px] py-[8px] text-sm outline-none transition-colors focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
       className,
     )}
     {...props}
@@ -193,21 +166,13 @@ DropdownMenuLabel.displayName = DropdownMenuPrimitive.Label.displayName;
 const DropdownMenuSeparator = React.forwardRef<
   React.ElementRef<typeof DropdownMenuPrimitive.Separator>,
   React.ComponentPropsWithoutRef<typeof DropdownMenuPrimitive.Separator>
->(({ className, ...props }, ref) => {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
-
-  return (
-    <DropdownMenuPrimitive.Separator
-      ref={ref}
-      className={cn("-mx-1 my-1 h-px", className)}
-      style={{
-        backgroundColor: isDark ? "#3a3a40" : "#e5e5e5",
-      }}
-      {...props}
-    />
-  );
-});
+>(({ className, ...props }, ref) => (
+  <DropdownMenuPrimitive.Separator
+    ref={ref}
+    className={cn("-mx-1 my-1 h-px bg-border", className)}
+    {...props}
+  />
+));
 DropdownMenuSeparator.displayName =
   DropdownMenuPrimitive.Separator.displayName;
 

@@ -296,10 +296,18 @@ describe("buildNewColumnsFromMappings", () => {
     const opts = newCols[0].settings.options as Array<{ label: string }>;
     expect(Array.isArray(opts)).toBe(true);
     expect(opts.map((o) => o.label)).toEqual([
-      "Not Started",
-      "Working on it",
       "Done",
+      "Working on it",
       "Stuck",
+      "Not Started",
+    ]);
+    // A status column's labels are canonical — they must be seeded too.
+    const labels = newCols[0].settings.labels as Array<{ label: string }>;
+    expect(labels.map((o) => o.label)).toEqual([
+      "Done",
+      "Working on it",
+      "Stuck",
+      "Not Started",
     ]);
   });
 

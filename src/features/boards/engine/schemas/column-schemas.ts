@@ -88,12 +88,21 @@ export const mirrorDisplayConfigSchema = z.object({
   aggregation: z.string().nullable().default(null),
   display_mode: z.enum(["stacked", "separate"]).default("stacked").optional(),
   filter_value: z.string().nullable().default(null).optional(),
+  combineAs: z.enum(["comma", "stack", "count"]).default("stack").optional(),
+  hideEmpty: z.boolean().default(false).optional(),
+  emptyPlaceholder: z.string().default("—").optional(),
+  maxVisible: z.number().int().min(1).max(100).default(3).optional(),
+  wrap: z.boolean().default(true).optional(),
+  showItemName: z.boolean().default(false).optional(),
 });
 
 export const mirroredColumnSchema = z.object({
   board_id: z.string().min(1, "board_id is required"),
   column_id: z.string().min(1, "column_id is required"),
   aggregation: z.string().nullable().default(null),
+  showTitle: z.boolean().default(true).optional(),
+  format: z.record(z.string(), z.unknown()).default({}).optional(),
+  hideEmpty: z.boolean().default(false).optional(),
 });
 
 export const mirrorSettingsSchema = z.object({
@@ -101,9 +110,14 @@ export const mirrorSettingsSchema = z.object({
   mirrored_column_id: z.string().optional().nullable(),
   mirrored_columns: z.array(mirroredColumnSchema).default([]),
   display_config: mirrorDisplayConfigSchema.default({ aggregation: null }),
+  sourceRelationColumnId: z.string().optional(),
+  items: z.array(mirroredColumnSchema).optional(),
+  showItemName: z.boolean().default(false).optional(),
+  combineAs: z.enum(["comma", "stack", "count"]).default("stack").optional(),
+  maxVisible: z.number().int().min(1).max(100).default(3).optional(),
 }).superRefine((data, ctx) => {
   const hasSingle = (data.mirrored_column_id ?? "").trim().length > 0;
-  const hasMulti = data.mirrored_columns.length > 0;
+  const hasMulti = data.mirrored_columns.length > 0 || (data.items?.length ?? 0) > 0;
   if (!hasSingle && !hasMulti) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -234,16 +248,32 @@ export type ChangeColumnTypeInput = z.infer<typeof changeColumnTypeSchema>;
 
 // ── Update Column Options ──────────────────────────────────
 
+export const dropdownOptionSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  color: z.string().optional(),
+  variant: z.enum(["light", "default"]).optional(),
+});
+
 export const updateColumnOptionsSchema = z.object({
   columnId: entityId,
-  options: z.array(z.object({
-    id: z.string(),
-    label: z.string(),
-    color: z.string().optional(),
-  })).min(1, "At least one option is required"),
+  options: z.array(dropdownOptionSchema).min(1, "At least one option is required"),
 });
 
 export type UpdateColumnOptionsInput = z.infer<typeof updateColumnOptionsSchema>;
+
+// ── Update Column Labels ───────────────────────────────────
+//
+// The Edit Labels "Apply" path. For a status column the list is written to
+// `column.settings.labels`; the same shape is used for every other option
+// column type (written to `column.settings.options`).
+
+export const updateColumnLabelsSchema = z.object({
+  columnId: entityId,
+  labels: z.array(dropdownOptionSchema).min(1, "At least one label is required"),
+});
+
+export type UpdateColumnLabelsInput = z.infer<typeof updateColumnLabelsSchema>;
 
 // ── Delete Board Columns (Bulk) ──────────────────────────────
 
@@ -253,4 +283,3 @@ export const deleteBoardColumnsSchema = z.object({
 });
 
 export type DeleteBoardColumnsInput = z.infer<typeof deleteBoardColumnsSchema>;
-

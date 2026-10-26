@@ -12,9 +12,11 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { ColumnRepository } from "../repository/column-repository";
 import { CellRepository } from "../repository/cell-repository";
 import { getColumnTypeDefinition } from "../column-registry";
+import { normalizeOptions } from "../lib/option-lookup";
 import { migrateColumnType, previewColumnTypeMigration } from "../migration";
 import { eventBus } from "../events/event-bus";
 import { metadataCache } from "../cache/metadata-cache";
+import { isTextCompatibleColumn } from "../lib/primary-column";
 import type { DomainEventPayload } from "../events/event-types";
 import type { ApiResponse } from "@/types";
 import type { ColumnDefinition, MigrationPreview, MigrationResult, ColumnValue, DropdownOption } from "../types";
@@ -70,6 +72,25 @@ export const ColumnService = {
     const nextOrder = existingResult.data ? existingResult.data.length : 0;
     const typeDef = getColumnTypeDefinition(input.type);
 
+    // A status column's labels live in `settings.labels`; the legacy
+    // `settings.options` array is kept as an exact mirror so older readers
+    // (import/export, client-360 search, analytics) stay correct. When the
+    // caller supplies either array, it wins over the registry defaults —
+    // otherwise the two arrays would drift apart and the read path (which
+    // prefers `labels`) would silently ignore the caller's options.
+    const defaultOptions = typeDef.defaultOptions?.map((opt) => ({ ...opt })) ?? [];
+    const settings: Record<string, unknown> = { ...input.settings };
+    const providedOptions = normalizeOptions(settings.options);
+    const effectiveOptions = providedOptions.length > 0 ? providedOptions : defaultOptions;
+    if (effectiveOptions.length > 0) settings.options = effectiveOptions;
+
+    if (input.type === "status") {
+      const providedLabels = normalizeOptions(settings.labels);
+      const effectiveLabels = providedLabels.length > 0 ? providedLabels : effectiveOptions;
+      settings.labels = effectiveLabels;
+      settings.options = effectiveLabels;
+    }
+
     const column: ColumnDefinition = {
       id: crypto.randomUUID(),
       boardId: input.boardId,
@@ -81,10 +102,7 @@ export const ColumnService = {
       hidden: false,
       frozen: false,
       defaultValue: (input.defaultValue ?? typeDef.defaultValue) as ColumnValue,
-      settings: {
-        ...input.settings,
-        ...(typeDef.defaultOptions && !input.settings.options ? { options: typeDef.defaultOptions.map((opt) => ({ ...opt })) } : {}),
-      },
+      settings,
       permissions: {
         view: ["owner", "editor", "commenter", "viewer"],
         edit: ["owner", "editor"],
@@ -177,9 +195,24 @@ export const ColumnService = {
     }
 
     const existing = await columnRepo.findById(input.columnId);
-    if (!existing.data) return { data: null, error: "Column not found", status: 404 };
+    if (!existing.data) {
+      // Deletion is intentionally idempotent. The cleanup RPC only needs the
+      // id and is safe when the column row has already disappeared.
+      const client = await createServiceClient();
+      const { error } = await client.rpc("cleanup_column_dependents", {
+        p_column_id: input.columnId,
+      });
+      if (error) {
+        console.error("[column-service] cleanup for missing column failed:", error);
+        return { data: null, error: error.message, status: 500 };
+      }
+      return { data: null, error: null, status: 200 };
+    }
 
     const column = existing.data;
+    if (column.isPrimary) {
+      return { data: null, error: "Choose another primary column first", status: 409 };
+    }
 
     await eventBus.publish(createEvent("column.delete:before", actorUserId, column, column as unknown as Record<string, unknown>, null));
 
@@ -194,7 +227,30 @@ export const ColumnService = {
       return { data: null, error: depError.message, status: 500 };
     }
 
-    const dependents = (dependentsData as { dependencies?: unknown[] } | null)?.dependencies ?? [];
+    let dependents = (dependentsData as { dependencies?: unknown[] } | null)?.dependencies ?? [];
+    // Mirrors are disposable projections. Removing their Connect Boards
+    // source must remove the projections first rather than leaving dangling
+    // settings that crash the board renderer.
+    if (column.type === "connected_board") {
+      const boardColumns = await columnRepo.findByBoard(column.boardId);
+      for (const dependent of boardColumns.data ?? []) {
+        if (dependent.type !== "mirror") continue;
+        const settings = dependent.settings as Record<string, unknown>;
+        if (settings.source_connect_column_id !== column.id) continue;
+        const result = await this.delete(
+          { columnId: dependent.id, cascade: true, permanent: input.permanent },
+          actorUserId,
+        );
+        if (result.error) return result;
+      }
+      const refreshed = await client.rpc("get_column_dependents", {
+        p_column_id: input.columnId,
+      });
+      if (refreshed.error) {
+        return { data: null, error: refreshed.error.message, status: 500 };
+      }
+      dependents = (refreshed.data as { dependencies?: unknown[] } | null)?.dependencies ?? [];
+    }
     if (dependents.length > 0) {
       return {
         data: null,
@@ -310,6 +366,12 @@ export const ColumnService = {
     if (!existing.data) return { data: null, error: "Column not found", status: 404 };
 
     const column = existing.data;
+    if (column.isPrimary) {
+      const replacementType = input.newType as ColumnDefinition["type"];
+      if (!isTextCompatibleColumn({ ...column, type: replacementType })) {
+        return { data: null, error: "Choose another primary column first", status: 409 };
+      }
+    }
     const cellsResult = await cellRepo.findByColumn(column.boardId, column.id);
     const cellValues = (cellsResult.data ?? []).map((c) => ({
       recordId: c.recordId,
@@ -354,6 +416,27 @@ export const ColumnService = {
     return { data: migration, error: null, status: 200 };
   },
 
+  /**
+   * Write a column's label list to the right place.
+   *
+   * A status column's labels live in `settings.labels`; `settings.options` is
+   * written as an exact mirror so the legacy readers keep working. Every
+   * other option column type keeps its list in `settings.options`.
+   */
+  async writeLabelList(
+    column: ColumnDefinition,
+    labels: DropdownOption[],
+  ): Promise<ApiResponse<ColumnDefinition>> {
+    const settings = { ...(column.settings ?? {}) };
+    if (column.type === "status") {
+      settings.labels = labels;
+      settings.options = labels;
+    } else {
+      settings.options = labels;
+    }
+    return columnRepo.update(column.id, { settings });
+  },
+
   async updateOptions(input: { columnId: string; options: DropdownOption[] }, actorUserId: string): Promise<ApiResponse<ColumnDefinition>> {
     const existing = await columnRepo.findById(input.columnId);
     if (!existing.data) return { data: null, error: "Column not found", status: 404 };
@@ -361,10 +444,29 @@ export const ColumnService = {
     const before = { ...existing.data };
     await eventBus.publish(createEvent("column.update_options:before", actorUserId, existing.data, before as unknown as Record<string, unknown>, { options: input.options }));
 
-    const currentSettings = existing.data.settings ?? {};
-    const updatedSettings = { ...currentSettings, options: input.options };
+    const result = await ColumnService.writeLabelList(existing.data, input.options);
+    if (result.data) {
+      await eventBus.publish(createEvent("column.update_options:after", actorUserId, result.data, before as unknown as Record<string, unknown>, result.data as unknown as Record<string, unknown>));
+      metadataCache.invalidate("column", existing.data.boardId);
+    }
+    return result;
+  },
 
-    const result = await columnRepo.update(input.columnId, { settings: updatedSettings });
+  /**
+   * Write a column's label list (the Edit Labels "Apply" path).
+   *
+   * For a status column the list is written to `settings.labels` — the
+   * canonical location every surface reads from — and mirrored into
+   * `settings.options`.
+   */
+  async updateLabels(input: { columnId: string; labels: DropdownOption[] }, actorUserId: string): Promise<ApiResponse<ColumnDefinition>> {
+    const existing = await columnRepo.findById(input.columnId);
+    if (!existing.data) return { data: null, error: "Column not found", status: 404 };
+
+    const before = { ...existing.data };
+    await eventBus.publish(createEvent("column.update_options:before", actorUserId, existing.data, before as unknown as Record<string, unknown>, { labels: input.labels }));
+
+    const result = await ColumnService.writeLabelList(existing.data, input.labels);
     if (result.data) {
       await eventBus.publish(createEvent("column.update_options:after", actorUserId, result.data, before as unknown as Record<string, unknown>, result.data as unknown as Record<string, unknown>));
       metadataCache.invalidate("column", existing.data.boardId);
@@ -407,4 +509,3 @@ export const ColumnService = {
     return result;
   },
 };
-

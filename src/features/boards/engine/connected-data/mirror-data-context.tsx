@@ -25,7 +25,7 @@ import {
   type ReactNode,
 } from "react";
 
-import type { ColumnValue } from "../types";
+import type { BoardRecord, ColumnDefinition, ColumnValue } from "../types";
 import { MirrorStore } from "./mirror-store";
 
 interface MirrorDataContextValue {
@@ -39,6 +39,8 @@ export interface MirrorDataProviderProps {
   boardId: string;
   /** Live cell values for the current board. Synced into the store on change. */
   cellValues: Map<string, ColumnValue>;
+  columns?: ColumnDefinition[];
+  records?: BoardRecord[];
   children: ReactNode;
   /**
    * An optional pre-seeded store. When provided, the provider uses this store
@@ -48,7 +50,7 @@ export interface MirrorDataProviderProps {
   store?: MirrorStore;
 }
 
-export function MirrorDataProvider({ boardId, cellValues, children, store: externalStore }: MirrorDataProviderProps) {
+export function MirrorDataProvider({ boardId, cellValues, columns, records, children, store: externalStore }: MirrorDataProviderProps) {
   // One store instance for the whole page session.
   const internalRef = useRef<MirrorStore | null>(null);
   if (internalRef.current === null) {
@@ -66,18 +68,21 @@ export function MirrorDataProvider({ boardId, cellValues, children, store: exter
 
   // Keep the current board's live cell values in sync with the store.
   useEffect(() => {
-    store.syncBoard(boardId, cellValues);
-  }, [store, boardId, cellValues]);
+    store.syncBoard(boardId, cellValues, columns, records);
+  }, [store, boardId, cellValues, columns, records]);
 
   const value = useMemo(() => ({ store }), [store]);
 
   return <MirrorDataContext.Provider value={value}>{children}</MirrorDataContext.Provider>;
 }
 
-export function useMirrorStore(): MirrorStore {
+export function useMirrorStore(): MirrorStore | null {
   const ctx = useContext(MirrorDataContext);
   if (!ctx) {
-    throw new Error("useMirrorStore must be used within a <MirrorDataProvider>");
+    if (process.env.NODE_ENV !== "production") {
+      console.warn("useMirrorStore must be used within a <MirrorDataProvider>");
+    }
+    return null;
   }
   return ctx.store;
 }
@@ -96,9 +101,11 @@ export function useMirrorCellValue(
   const [, setVersion] = useState(0);
 
   useEffect(() => {
+    if (!store) return;
     return store.subscribe(() => setVersion((v) => v + 1));
   }, [store]);
 
+  if (!store) return null;
   return store.getCellValue(boardId, recordId, columnId);
 }
 
@@ -117,6 +124,7 @@ export function useMirrorStoreSubscription(): number {
   const [version, setVersion] = useState(0);
 
   useEffect(() => {
+    if (!store) return;
     return store.subscribe(() => setVersion((v) => v + 1));
   }, [store]);
 
@@ -126,5 +134,6 @@ export function useMirrorStoreSubscription(): number {
 /** Read a column definition from any board (does not subscribe to changes). */
 export function useMirrorColumn(boardId: string, columnId: string) {
   const store = useMirrorStore();
+  if (!store) return undefined;
   return store.getColumn(boardId, columnId);
 }

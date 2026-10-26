@@ -1,6 +1,6 @@
 "use server";
 
-import { createGroupSchema, renameGroupSchema, reorderGroupsSchema, moveGroupSchema, duplicateGroupSchema, collapseGroupSchema, deleteGroupSchema, updateGroupColorSchema, updateGroupStatusOptionsSchema, updateGroupTitleColumnLabelSchema } from "../schemas/group-schemas";
+import { createGroupSchema, renameGroupSchema, reorderGroupsSchema, moveGroupSchema, duplicateGroupSchema, collapseGroupSchema, deleteGroupSchema, updateGroupColorSchema, updateGroupStatusOptionsSchema, updateGroupTitleColumnLabelSchema, groupColumnModeSchema } from "../schemas/group-schemas";
 import { GroupService } from "../services/group-service";
 import type { ApiResponse } from "@/types";
 import type { Group } from "../types";
@@ -24,7 +24,9 @@ export async function createGroup(formData: FormData): Promise<ApiResponse<Group
     color: formData.get("color") || undefined,
     statusOptions: formData.get("statusOptions") ? JSON.parse(formData.get("statusOptions") as string) : undefined,
     titleColumnLabel: formData.get("titleColumnLabel") || undefined,
-    columnMode: formData.get("columnMode") || undefined,
+    columnMode: formData.get("columnMode") === "shared"
+      ? "inherit"
+      : formData.get("columnMode") || undefined,
     copyFromGroupId: formData.get("copyFromGroupId") || undefined,
     columns,
   });
@@ -113,3 +115,12 @@ export async function updateGroupTitleColumnLabel(groupId: string, titleColumnLa
   return GroupService.updateTitleColumnLabel(parsed.data, "system");
 }
 
+export async function updateGroupColumnMode(
+  groupId: string,
+  mode: "inherit" | "custom",
+  copyBoardColumns = true,
+): Promise<ApiResponse<Group>> {
+  const parsed = groupColumnModeSchema.safeParse({ groupId, mode, copyBoardColumns });
+  if (!parsed.success) return { data: null, error: "Invalid input", status: 400 };
+  return GroupService.setColumnMode(parsed.data, "system");
+}

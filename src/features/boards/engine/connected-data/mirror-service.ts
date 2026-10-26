@@ -38,7 +38,13 @@ export const MirrorService = {
     mirrorColumn: ColumnDefinition,
   ): Promise<ApiResponse<ColumnValue>> {
     const config = mirrorColumn.settings as unknown as Record<string, unknown>;
-    if (!config.source_connect_column_id || typeof config.source_connect_column_id !== "string") {
+    const sourceRelationId =
+      typeof config.source_connect_column_id === "string"
+        ? config.source_connect_column_id
+        : typeof config.sourceRelationColumnId === "string"
+          ? config.sourceRelationColumnId
+          : null;
+    if (!sourceRelationId) {
       return {
         data: null,
         error: "Mirror column is not fully configured: missing source_connect_column_id",
@@ -58,7 +64,7 @@ export const MirrorService = {
     const relResult = await RelationshipEngine.getBySource(
       sourceBoardId,
       sourceRecordId,
-      config.source_connect_column_id,
+      sourceRelationId,
     );
 
     if (!relResult.data || relResult.data.length === 0) {
@@ -148,7 +154,9 @@ export const MirrorService = {
   ): Promise<ApiResponse<Map<string, ColumnValue>>> {
     const results = new Map<string, ColumnValue>();
     const rawConfig = mirrorColumn.settings as Record<string, unknown>;
-    const sourceColId = rawConfig.source_connect_column_id as string | undefined;
+    const sourceColId =
+      (rawConfig.sourceRelationColumnId as string | undefined) ??
+      (rawConfig.source_connect_column_id as string | undefined);
     const fallbackValue = (rawConfig.fallbackValue as ColumnValue | undefined) ?? null;
 
     if (!sourceColId) {
@@ -202,7 +210,9 @@ export const MirrorService = {
         continue;
       }
 
-      const mirroredColumns = (rawConfig as Record<string, unknown>).mirrored_columns;
+      const mirroredColumns =
+        (rawConfig as Record<string, unknown>).items ??
+        (rawConfig as Record<string, unknown>).mirrored_columns;
       const hasMulti = Array.isArray(mirroredColumns) ? (mirroredColumns as Array<{ board_id: string; column_id: string; aggregation: string | null }>).length > 0 : false;
       if (mirrorConfigs.length === 1 && !hasMulti) {
         const mc = mirrorConfigs[0];

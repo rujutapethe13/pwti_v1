@@ -3,15 +3,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown } from "lucide-react";
+import { toast } from "sonner";
 import type { CellRendererComponentProps } from "./cell-renderer-registry";
 import { resolveDisplayValue } from "./cell-renderer-registry";
 import { cn } from "@/lib/utils";
 import type { DropdownOption } from "@/features/boards/engine/types";
-import { updateColumnOptions } from "@/features/boards/engine/actions";
+import { updateColumnLabels } from "@/features/boards/engine/actions";
 import { SelectModePanel, EditLabelsPanel } from "@/features/boards/engine/components/cell-options-popup";
 import {
+  findOptionForValue,
   getColumnOptions,
-  resolveOptionDisplay,
+  sanitizeLabels,
 } from "@/features/boards/engine/lib/option-lookup";
 
 export function DropdownCell({
@@ -20,20 +22,22 @@ export function DropdownCell({
   onChange,
   onKeyDown: _onKeyDown,
   column,
+  onUpdateColumnLabels,
 }: CellRendererComponentProps) {
+  /**
+   * The LIVE option list of the column — the only source the cell and the
+   * picker read from.
+   */
   const options = getColumnOptions(column);
 
-  // The cell stores the option id; the column's options list is the source of
-  // truth for the label. An id with no matching option resolves to
-  // "Unknown option" so a raw "opt-…" id is never shown to the user.
-  const resolved = resolveOptionDisplay(options, resolveDisplayValue(value));
-  const effectiveValue = resolved.label;
-  const effectiveId = resolved.option?.id ?? "";
-  const matchedOption = resolved.option;
+  const rawValue = resolveDisplayValue(value);
+  const isEmpty = rawValue === "" || rawValue === null || rawValue === undefined;
+  // The cell stores the option id; the id is resolved against the live list.
+  const matchedOption = isEmpty ? null : (findOptionForValue(options, rawValue) ?? null);
+  const isUnmatched = !isEmpty && !matchedOption;
 
   const [isOpen, setIsOpen] = useState(false);
   const [mode, setMode] = useState<"select" | "edit">("select");
-  const [localOptions, setLocalOptions] = useState<DropdownOption[]>(options);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [colorPickerId, setColorPickerId] = useState<string | null>(null);
@@ -42,6 +46,38 @@ export function DropdownCell({
   const dropdownRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
+  const warnedRef = useRef<Set<string>>(new Set());
+
+  /**
+   * The edit draft (`null` = not editing). Kept in a ref as well so an Apply
+   * that follows a blur-committed rename sees that rename.
+   */
+  const draftRef = useRef<DropdownOption[] | null>(null);
+  const [draft, setDraftState] = useState<DropdownOption[] | null>(null);
+
+  const updateDraft = useCallback((next: DropdownOption[] | null) => {
+    draftRef.current = next;
+    setDraftState(next);
+  }, []);
+
+  const currentDraft = useCallback(
+    () => draftRef.current ?? options.map((opt) => ({ ...opt })),
+    [options],
+  );
+
+  const panelOptions = draft ?? options;
+
+  // A value that is not one of the column's options renders empty instead of
+  // leaking an id or an "Unknown option" string.
+  useEffect(() => {
+    if (!isUnmatched) return;
+    const key = `${column.id}:${rawValue}`;
+    if (warnedRef.current.has(key)) return;
+    warnedRef.current.add(key);
+    console.warn(
+      `[DropdownCell] Value "${rawValue}" is not an option of column ${column.id}. The cell renders empty.`,
+    );
+  }, [isUnmatched, column.id, rawValue]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -53,11 +89,12 @@ export function DropdownCell({
         setEditingId(null);
         setColorPickerId(null);
         setMenuId(null);
+        updateDraft(null);
       }
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+  }, [updateDraft]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -68,6 +105,7 @@ export function DropdownCell({
           setEditingId(null);
           setColorPickerId(null);
           setMenuId(null);
+          updateDraft(null);
         } else {
           setIsOpen(false);
           setMode("select");
@@ -80,7 +118,7 @@ export function DropdownCell({
     }
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, mode]);
+  }, [isOpen, mode, updateDraft]);
 
   useEffect(() => {
     if (editingId && editInputRef.current) {
@@ -89,24 +127,42 @@ export function DropdownCell({
     }
   }, [editingId]);
 
+  /**
+   * Write the option list to the live column in the store AND the database.
+   * Resolves to `true` only when that succeeded.
+   */
   const persistOptions = useCallback(
-    async (nextOptions: DropdownOption[]) => {
-      const result = await updateColumnOptions(column.id, nextOptions);
-      if (result.data) {
-        window.dispatchEvent(
-          new CustomEvent("column-options-updated", { detail: { columnId: column.id, options: nextOptions } }),
-        );
+    async (nextOptions: DropdownOption[]): Promise<boolean> => {
+      const sanitized = sanitizeLabels(nextOptions);
+      if (sanitized.length === 0) {
+        toast.error("A column needs at least one option.");
+        return false;
       }
-      return result;
+
+      if (onUpdateColumnLabels) {
+        return await onUpdateColumnLabels(column.id, sanitized);
+      }
+
+      const result = await updateColumnLabels(column.id, sanitized);
+      if (result.error || !result.data) {
+        toast.error(result.error ?? "Failed to save options.");
+        return false;
+      }
+      window.dispatchEvent(
+        new CustomEvent("column-options-updated", {
+          detail: { columnId: column.id, options: sanitized },
+        }),
+      );
+      return true;
     },
-    [column.id],
+    [column.id, onUpdateColumnLabels],
   );
 
   const handleOpen = useCallback(() => {
     setIsOpen(true);
-    setLocalOptions(options);
     setMode("select");
-  }, [options]);
+    updateDraft(null);
+  }, [updateDraft]);
 
   const handleSelect = useCallback(
     (nextId: string) => {
@@ -116,8 +172,9 @@ export function DropdownCell({
       setEditingId(null);
       setColorPickerId(null);
       setMenuId(null);
+      updateDraft(null);
     },
-    [onChange],
+    [onChange, updateDraft],
   );
 
   const handleStartEdit = useCallback((option: DropdownOption) => {
@@ -126,24 +183,17 @@ export function DropdownCell({
     setMenuId(null);
   }, []);
 
-  const handleEditConfirm = useCallback(async () => {
+  /** Renaming an option only changes the draft — Apply writes it. */
+  const handleEditConfirm = useCallback(() => {
     if (!editingId) return;
     const trimmed = editValue.trim();
     if (!trimmed) return;
-    setSaving(true);
-    try {
-      const nextOptions = localOptions.map((opt) =>
-        opt.id === editingId ? { ...opt, label: trimmed } : opt,
-      );
-      const result = await persistOptions(nextOptions);
-      if (result.data) {
-        setLocalOptions(nextOptions);
-      }
-    } finally {
-      setSaving(false);
-      setEditingId(null);
-    }
-  }, [editingId, editValue, localOptions, persistOptions]);
+    updateDraft(
+      currentDraft().map((opt) => (opt.id === editingId ? { ...opt, label: trimmed } : opt)),
+    );
+    setEditingId(null);
+    setEditValue("");
+  }, [editingId, editValue, currentDraft, updateDraft]);
 
   const handleEditKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -165,15 +215,15 @@ export function DropdownCell({
       label: "",
       color: "#3b82f6",
     };
-    setLocalOptions((prev) => [...prev, newOption]);
+    updateDraft([...currentDraft(), newOption]);
     setEditingId(newId);
     setEditValue("");
     setMenuId(null);
-  }, []);
+  }, [currentDraft, updateDraft]);
 
   const handleDelete = useCallback(
-    async (id: string) => {
-      const optionToDelete = localOptions.find((opt) => opt.id === id);
+    (id: string) => {
+      const optionToDelete = currentDraft().find((opt) => opt.id === id);
       if (!optionToDelete) return;
 
       const confirmed = window.confirm(
@@ -181,52 +231,38 @@ export function DropdownCell({
       );
       if (!confirmed) return;
 
-      setSaving(true);
-      try {
-        if (matchedOption?.id === id) {
-          onChange?.("");
-        }
-        const nextOptions = localOptions.filter((opt) => opt.id !== id);
-        const result = await persistOptions(nextOptions);
-        if (result.data) {
-          setLocalOptions(nextOptions);
-        }
-      } finally {
-        setSaving(false);
-        setEditingId(null);
-        setMenuId(null);
-      }
+      updateDraft(currentDraft().filter((opt) => opt.id !== id));
+      setEditingId(null);
+      setEditValue("");
+      setMenuId(null);
     },
-    [localOptions, matchedOption, onChange, persistOptions],
+    [currentDraft, updateDraft],
   );
 
   const handleColorSelect = useCallback(
     (optionId: string, color: string) => {
-      setLocalOptions((prev) => {
-        const next = prev.map((opt) =>
-          opt.id === optionId ? { ...opt, color } : opt,
-        );
-        return next;
-      });
+      updateDraft(
+        currentDraft().map((opt) => (opt.id === optionId ? { ...opt, color } : opt)),
+      );
       setColorPickerId(null);
     },
-    [],
+    [currentDraft, updateDraft],
   );
 
+  /**
+   * Apply the draft. The panel is only closed when the write succeeded; on
+   * failure the draft is kept so the user can retry.
+   */
   const handleApply = useCallback(async () => {
     setSaving(true);
     try {
-      const cleaned = localOptions
-        .filter((opt) => opt.label.trim() !== "")
-        .map(({ id, label, color }) => ({
-          id,
-          label: label.trim(),
-          ...(color ? { color } : {}),
-        }));
-      const result = await persistOptions(cleaned);
-      if (result.data) {
-        setLocalOptions(cleaned);
+      const ok = await persistOptions(draftRef.current ?? options);
+      if (!ok) return;
+      // A cell that pointed at a deleted option is reset to empty.
+      if (matchedOption && !(draftRef.current ?? []).some((opt) => opt.id === matchedOption.id)) {
+        onChange?.("");
       }
+      updateDraft(null);
       setMode("select");
       setEditingId(null);
       setColorPickerId(null);
@@ -234,15 +270,16 @@ export function DropdownCell({
     } finally {
       setSaving(false);
     }
-  }, [localOptions, persistOptions]);
+  }, [options, matchedOption, onChange, persistOptions, updateDraft]);
 
+  /** Cancel / X — the draft is discarded, the live options stay. */
   const handleCancel = useCallback(() => {
-    setLocalOptions(options);
+    updateDraft(null);
     setMode("select");
     setEditingId(null);
     setColorPickerId(null);
     setMenuId(null);
-  }, [options]);
+  }, [updateDraft]);
 
   const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number; openUpward: boolean }>({
     top: 0,
@@ -260,7 +297,7 @@ export function DropdownCell({
       const r = triggerRef.current?.getBoundingClientRect();
       if (!r) return;
       setTriggerRect({ top: r.top, bottom: r.bottom, left: r.left, right: r.right });
-      const dropdownHeight = mode === "edit" ? 300 : localOptions.length * 40 + 20;
+      const dropdownHeight = mode === "edit" ? 300 : panelOptions.length * 40 + 20;
       const dropdownWidth = 200;
       const spaceBelow = window.innerHeight - r.bottom;
       const spaceAbove = r.top;
@@ -288,12 +325,12 @@ export function DropdownCell({
       window.removeEventListener("scroll", update, true);
       window.removeEventListener("resize", update);
     };
-  }, [isOpen, mode, localOptions.length]);
+  }, [isOpen, mode, panelOptions.length]);
 
   if (readOnly) {
     return (
       <span className="truncate text-sm text-foreground">
-        {effectiveValue || <span className="text-muted-foreground italic">—</span>}
+        {matchedOption?.label || (isEmpty ? <span className="text-muted-foreground italic">—</span> : null)}
       </span>
     );
   }
@@ -308,15 +345,8 @@ export function DropdownCell({
           "flex h-8 w-full items-center justify-between rounded-md border border-input bg-transparent px-2 text-left text-sm shadow-none transition-colors hover:border-primary focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring",
         )}
       >
-        <span
-          className={cn(
-            "truncate",
-            !effectiveValue && "text-muted-foreground",
-            resolved.isUnknown && "italic text-amber-600",
-          )}
-          title={resolved.isUnknown ? `Missing option: ${String(value)}` : undefined}
-        >
-          {effectiveValue || "Select..."}
+        <span className={cn("truncate", !matchedOption && "text-muted-foreground")}>
+          {matchedOption?.label || (isEmpty ? "Select..." : "")}
         </span>
         <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
       </button>
@@ -339,7 +369,7 @@ export function DropdownCell({
             >
               {mode === "edit" ? (
                 <EditLabelsPanel
-                  localOptions={localOptions}
+                  localOptions={panelOptions}
                   editingId={editingId}
                   editValue={editValue}
                   colorPickerId={colorPickerId}
@@ -361,10 +391,14 @@ export function DropdownCell({
                 />
               ) : (
                 <SelectModePanel
-                  options={localOptions}
-                  effectiveId={effectiveId}
+                  options={panelOptions}
+                  effectiveId={matchedOption?.id ?? ""}
                   onSelect={handleSelect}
-                  onEnterEdit={() => setMode("edit")}
+                  onEnterEdit={() => {
+                    // Start editing from a copy of the live options.
+                    updateDraft(options.map((opt) => ({ ...opt })));
+                    setMode("edit");
+                  }}
                   onAddLabel={handleAddLabel}
                   isStatus={false}
                   variant="subtle"

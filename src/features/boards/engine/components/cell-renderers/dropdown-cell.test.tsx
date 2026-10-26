@@ -4,6 +4,7 @@ import type { ColumnDefinition } from "@/features/boards/engine/types";
 
 vi.mock("@/features/boards/engine/actions", () => ({
   updateColumnOptions: vi.fn().mockResolvedValue({ data: {}, error: null }),
+  updateColumnLabels: vi.fn().mockResolvedValue({ data: {}, error: null }),
 }));
 
 import { DropdownCell } from "@/features/boards/engine/components/cell-renderers/dropdown-cell";
@@ -74,23 +75,35 @@ describe("DropdownCell — label lookup for stored option ids", () => {
     }
   });
 
-  it("shows 'Unknown option' instead of the raw id when the id is orphaned", () => {
+  it("renders an empty cell instead of 'Unknown option' when the id is orphaned", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     renderCell(makeColumn(PRODUCTION_OPTIONS), "opt-9999999999-77");
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Unknown option");
+    expect(text).not.toContain("Unknown option");
     expect(text).not.toContain("opt-9999999999-77");
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("opt-9999999999-77"),
+    );
+    warn.mockRestore();
   });
 
-  it("shows 'Unknown option' when the column has no options at all", () => {
+  it("renders an empty cell instead of 'Unknown option' when the column has no options at all", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     renderCell(makeColumn([]), "opt-1790843037295-0");
     const text = document.body.textContent ?? "";
-    expect(text).toContain("Unknown option");
+    expect(text).not.toContain("Unknown option");
     expect(text).not.toContain("opt-1790843037295-0");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 
-  it("still renders a plain label string that is not an option id", () => {
+  it("renders an empty cell for a plain label string that is not one of the options", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     renderCell(makeColumn(PRODUCTION_OPTIONS), "Retouching");
-    expect(screen.getByText("Retouching")).toBeTruthy();
+    expect(screen.queryByText("Retouching")).toBeNull();
+    expect(document.body.textContent ?? "").not.toContain("Unknown option");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("col-job-type"));
+    warn.mockRestore();
   });
 
   it("never renders an opt-... string for any orphan-looking value", () => {

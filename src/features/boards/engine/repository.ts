@@ -59,15 +59,19 @@ function toBoardDefinition(row: DatabaseRow): BoardDefinition {
 function toColumnDefinition(row: DatabaseRow): ColumnDefinition {
   return {
     id: asString(row.id),
+    scope: (asString(row.scope, row.group_id ? "group" : "board") === "group" ? "group" : "board"),
     groupId: asString(row.group_id ?? row.groupId) || null,
     boardId: asString(row.board_id ?? row.boardId),
     key: asString(row.key),
     label: asString(row.label, asString(row.key)),
     description: asString(row.description) || undefined,
     type: asString(row.type, "text") as ColumnDefinition["type"],
+    sourceColumnId: asString(row.source_column_id ?? row.sourceColumnId) || null,
     required: asBoolean(row.required),
     hidden: asBoolean(row.hidden),
     frozen: asBoolean(row.frozen),
+    isPrimary: asBoolean(row.is_primary ?? row.isPrimary),
+    pinned: asBoolean(row.pinned),
     defaultValue: (row.default_value ?? row.defaultValue ?? null) as ColumnValue,
     settings: asRecord(row.settings),
     permissions: asRecord(row.permissions, {
@@ -77,7 +81,7 @@ function toColumnDefinition(row: DatabaseRow): ColumnDefinition {
     }) as unknown as ColumnDefinition["permissions"],
     validation: Array.isArray(row.validation) ? (row.validation as ColumnDefinition["validation"]) : [],
     version: asNumber(row.version, 1),
-    order: asNumber(row.order),
+    order: asNumber(row.sort_order ?? row.order),
     createdAt: asString(row.created_at ?? row.createdAt),
     updatedAt: asString(row.updated_at ?? row.updatedAt),
   };
@@ -154,9 +158,9 @@ function toGroup(row: DatabaseRow): Group {
     statusOptions: row.status_options
       ? (row.status_options as Group["statusOptions"])
       : undefined,
-    columnMode: (asString(row.column_mode ?? row.columnMode, "shared") === "custom"
+    columnMode: (asString(row.column_mode ?? row.columnMode, "inherit") === "custom"
       ? "custom"
-      : "shared") as Group["columnMode"],
+      : "inherit") as Group["columnMode"],
     titleColumnLabel: asString(row.title_column_label ?? row.titleColumnLabel) || undefined,
   };
 }
@@ -197,7 +201,7 @@ export async function loadBoardBySlug(
   const recordOffset = options?.recordOffset ?? 0;
 
   const [{ data: columnRows, error: columnError }, { data: recordRows, error: recordError, count: recordCount }, { data: cellRows, error: cellError }, { data: viewRows, error: viewError }, { data: groupRows, error: groupError }] = await Promise.all([
-    supabase.from("columns").select("*").eq("board_id", boardRow.id).is("group_id", null).order("sort_order", { ascending: true }),
+    supabase.from("columns").select("*").eq("board_id", boardRow.id).is("deleted_at", null).order("sort_order", { ascending: true }),
     supabase
       .from("records")
       .select("*", { count: "exact" })
@@ -304,6 +308,8 @@ export async function upsertBoardColumns(boardId: string, organizationId: string
     required: column.required,
     hidden: column.hidden,
     frozen: column.frozen,
+    is_primary: column.isPrimary ?? false,
+    pinned: column.pinned ?? false,
     default_value: column.defaultValue,
     settings: column.settings,
     permissions: column.permissions,
