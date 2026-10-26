@@ -8,7 +8,7 @@ import { BoardLayout } from "@/components/shared/board-layout";
 import { registerAllCellRenderers } from "@/features/boards/engine";
 import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
 import { toast } from "sonner";
-import { setPrimaryColumn, isTextCompatibleColumn } from "@/features/boards/engine/lib/primary-column";
+import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn } from "@/features/boards/engine/lib/primary-column";
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
 import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey } from "@/features/boards/engine/types";
 import { buildInitialCellValues } from "@/features/boards/engine/lib/record-defaults";
@@ -1062,8 +1062,12 @@ setImporting(true);
         // is persisted in the backend (columns.sort_order) and survives a
         // page refresh. Inserting columns one-by-one is what caused the
         // random placement before.
+        const primaryColumnId = getPrimaryColumn(columns)?.id;
         const orderedFinalColumns = finalColumns.map((col, index) => ({
           ...col,
+          ...(args.titleColumnLabel && args.renameTitleColumn && col.id === primaryColumnId
+            ? { label: args.titleColumnLabel }
+            : {}),
           order: index,
           updatedAt: new Date().toISOString(),
         }));
@@ -1600,6 +1604,7 @@ setImporting(true);
         columns={columns}
         groups={groups}
         titleColumnLabel={titleColumnLabel}
+        primaryColumnId={getPrimaryColumn(columns)?.id}
         onConfirm={handleImportConfirm}
       />
       </>

@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  Fragment,
   type ChangeEvent,
   type DragEvent,
 } from "react";
@@ -76,6 +77,7 @@ import {
   shouldPromptForTitleColumnRename,
   titleColumnLabelFromFileHeader,
 } from "@/features/boards/engine/lib/title-column";
+import { getPrimaryColumn } from "@/features/boards/engine/lib/primary-column";
 
 /* ─────────────────────────────────────────────────────────────
  * Types
@@ -89,6 +91,7 @@ export interface ImportWizardProps {
   groups: Group[];
   /** The board's current title column label — the fallback for the header. */
   titleColumnLabel?: string;
+  primaryColumnId?: string;
   onConfirm: (args: {
     newColumns: ColumnDefinition[];
     updatedColumns: ColumnDefinition[];
@@ -156,6 +159,7 @@ export function ImportWizard({
   columns,
   groups,
   titleColumnLabel,
+  primaryColumnId,
   onConfirm,
 }: ImportWizardProps) {
   const [step, setStep] = useState<Step>("upload");
@@ -169,7 +173,7 @@ export function ImportWizard({
   const [newColumns, setNewColumns] = useState<ColumnDefinition[]>([]);
   const [titleColumnFileHeader, setTitleColumnFileHeader] = useState<string | null>(null);
   const [targetGroupId, setTargetGroupId] = useState<string | null>(
-    groups[0]?.id ?? null,
+    groups.find((g) => g.name.trim().toLowerCase() !== "group title")?.id ?? groups[0]?.id ?? null,
   );
   const [newGroupName, setNewGroupName] = useState("");
   const [renameTitleColumn, setRenameTitleColumn] = useState(true);
@@ -273,7 +277,7 @@ export function ImportWizard({
       setMappings([]);
       setNewColumns([]);
       setTitleColumnFileHeader(null);
-      setTargetGroupId(groups[0]?.id ?? null);
+      setTargetGroupId(groups.find((g) => g.name.trim().toLowerCase() !== "group title")?.id ?? groups[0]?.id ?? null);
       setNewGroupName("");
       setRenameTitleColumn(true);
       setOptionMappings({});
@@ -526,6 +530,7 @@ export function ImportWizard({
         updatedColumns,
         titleColumnFileHeader,
         optionMappings,
+        primaryColumnId ?? getPrimaryColumn(columns)?.id,
       );
       // Required-field check: if any mapped column is marked required
       // and the row is empty, flag it.
@@ -634,6 +639,7 @@ export function ImportWizard({
     renameTitleColumn,
     keepUnmappedColumns,
     onConfirm,
+    primaryColumnId,
   ]);
 
   const downloadSkipped = useCallback(() => {
@@ -784,6 +790,35 @@ export function ImportWizard({
               }
               createsNewGroup={createsNewGroup}
               titleColumnLabel={effectiveTitleColumnLabel}
+              previewRows={parsed.rows.slice(0, 3).map((row, index) => ({
+                title: titleColumnFileHeader ? String(row[titleColumnFileHeader] ?? `Imported row ${index + 1}`) : `Imported row ${index + 1}`,
+                date: (() => {
+                  const dateMapping = mappableMappings.find((m) => {
+                    const action = m.action;
+                    if (action.kind !== "existing") return false;
+                    return columns.find((c) => c.id === action.columnId)?.type === "date";
+                  });
+                  if (!dateMapping) return "—";
+                  const built = buildRecordFromRow(
+                    row,
+                    index,
+                    mappableMappings,
+                    [...columns, ...newColumns],
+                    titleColumnFileHeader,
+                    optionMappings,
+                    primaryColumnId ?? getPrimaryColumn(columns)?.id,
+                  );
+                  const action = dateMapping.action;
+                  const dateColumn = action.kind === "existing"
+                    ? columns.find((c) => c.id === action.columnId)
+                    : action.kind === "create"
+                      ? newColumns.find((c) => c.label === action.label)
+                      : undefined;
+                  return dateColumn
+                    ? String(built.cellValues[dateColumn.id] ?? "—")
+                    : "—";
+                })(),
+              }))}
               needsTitleColumnRename={needsTitleColumnRename}
               pendingTitleColumnLabel={pendingTitleColumnLabel}
               renameTitleColumn={renameTitleColumn}
@@ -1464,6 +1499,7 @@ interface ConfirmStepProps {
   targetGroupName: string;
   createsNewGroup: boolean;
   titleColumnLabel: string;
+  previewRows?: Array<{ title: string; date: string }>;
   needsTitleColumnRename: boolean;
   pendingTitleColumnLabel: string | null;
   renameTitleColumn: boolean;
@@ -1481,6 +1517,7 @@ export function ConfirmStep({
   targetGroupName,
   createsNewGroup,
   titleColumnLabel,
+  previewRows,
   needsTitleColumnRename,
   pendingTitleColumnLabel,
   renameTitleColumn,
@@ -1525,6 +1562,20 @@ export function ConfirmStep({
           </span>
         </label>
       )}
+
+      <div className="rounded-md border border-border p-3 text-xs">
+        <div className="mb-2 font-medium text-foreground">Preview</div>
+        <div className="grid grid-cols-[1fr_1fr] gap-2 text-muted-foreground">
+          <div>Resolved title</div>
+          <div>Mapped date</div>
+          {(previewRows ?? []).map((row, index) => (
+            <Fragment key={index}>
+              <div className="truncate text-foreground">{row.title}</div>
+              <div className="text-foreground">{row.date}</div>
+            </Fragment>
+          ))}
+        </div>
+      </div>
 
       <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
         <div className="flex items-center gap-1.5 font-medium mb-2">

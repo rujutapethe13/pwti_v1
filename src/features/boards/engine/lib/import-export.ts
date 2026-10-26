@@ -652,6 +652,7 @@ export function buildNewColumnsFromMappings(
  */
 function parseImportDate(raw: string | number): string | null {
   if (typeof raw === "number") {
+    if (!Number.isFinite(raw) || raw < 1) return null;
     // Excel serial day number: days since 1899-12-30 (account for the
     // 1900 leap-year bug).
     const epoch = Date.UTC(1899, 11, 30);
@@ -676,7 +677,14 @@ function parseImportDate(raw: string | number): string | null {
     if (year < 100) year += year < 70 ? 2000 : 1900;
     if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
       const d = new Date(Date.UTC(year, month - 1, day));
-      if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+      if (
+        !Number.isNaN(d.getTime()) &&
+        d.getUTCFullYear() === year &&
+        d.getUTCMonth() === month - 1 &&
+        d.getUTCDate() === day
+      ) {
+        return d.toISOString().slice(0, 10);
+      }
     }
   }
   // mm-dd-yyyy (US format) as a last resort.
@@ -782,6 +790,7 @@ export function buildRecordFromRow(
   effectiveColumns: ColumnDefinition[],
   titleColumnFileHeader: string | null,
   optionMappings?: Record<string, Record<string, OptionMapping>>,
+  primaryColumnId?: string,
 ): BuiltRecord {
   const cellValues: Record<string, ColumnValue> = {};
   const warnings: string[] = [];
@@ -792,6 +801,9 @@ export function buildRecordFromRow(
     rawTitle !== null && rawTitle !== undefined && rawTitle !== ""
       ? String(rawTitle)
       : `Imported row ${rowIndex + 1}`;
+  if (primaryColumnId && rawTitle !== null && rawTitle !== undefined && rawTitle !== "") {
+    cellValues[primaryColumnId] = String(rawTitle);
+  }
 
   for (const m of regularMappings) {
     if (m.action.kind === "skip") continue;

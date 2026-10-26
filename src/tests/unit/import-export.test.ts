@@ -371,15 +371,15 @@ describe("buildNewColumnsFromMappings", () => {
 });
 
 describe("buildRecordFromRow", () => {
-  it("builds the record title independently from mapped cell columns", () => {
+  it("writes the selected title into the primary column cell", () => {
     const row = { Client: "Acme", Status: "Done", Date: "2026-09-01" };
     const mappings: ColumnMapping[] = [
       { id: "test-id", fileColumn: "Client", action: { kind: "existing", columnId: "col-client" } },
       { id: "test-id", fileColumn: "Status", action: { kind: "existing", columnId: "col-status" } },
     ];
-    const built = buildRecordFromRow(row, 0, mappings, COLUMNS, "Client", {});
+    const built = buildRecordFromRow(row, 0, mappings, COLUMNS, "Client", {}, "col-client");
     expect(built.recordTitle).toBe("Acme");
-    expect(built.cellValues).not.toHaveProperty("col-client");
+    expect(built.cellValues["col-client"]).toBe("Acme");
     expect(built.cellValues["col-status"]).toBe("opt-done");
   });
   it("uses a skipped header as the title without mapping it as a cell", () => {
@@ -1579,4 +1579,3 @@ describe("buildImportColumnPlan", () => {
     ]);
   });
 });
-
