@@ -24,6 +24,7 @@ import {
   CalendarDays,
   MoreHorizontal,
   LayoutDashboard,
+  UserCheck,
 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -33,6 +34,7 @@ const ACCENT = "#0073ea";
 const topItems = [
   { id: "overview", label: "Overview", icon: LayoutDashboard, href: "/overview" },
   { id: "workspace", label: "Workspace", icon: Grid3X3, href: "/workspace" },
+  { id: "client-360", label: "Client 360", icon: UserCheck, href: "/client-360" },
   { id: "agents", label: "Agents", icon: Bot, href: "/agents" },
   { id: "favorites", label: "Favorites", icon: Star, href: "/favorites" },
   { id: "my-work", label: "My work", icon: ListChecks, href: "/my-work" },
@@ -69,25 +71,23 @@ export function IconRail() {
         className={cn(
           "flex h-[56px] w-full flex-col items-center justify-center gap-0.5 rounded-lg transition-colors",
           isActive
-            ? "bg-[#e6f1fd]"
-            : "text-[#555] hover:bg-gray-100",
+            ? "bg-[#e6f1fd] dark:bg-blue-500/15"
+            : "text-[#555] dark:text-muted-foreground hover:bg-gray-100 dark:hover:bg-sidebar-accent dark:hover:text-foreground",
         )}
         aria-current={isActive ? "page" : undefined}
       >
         <Icon
           className={cn(
             "size-5 shrink-0",
-            isActive ? "" : "text-[#555]",
+            isActive ? "text-[#0073ea] dark:text-blue-400" : "text-[#555] dark:text-muted-foreground",
           )}
-          style={isActive ? { color: ACCENT } : undefined}
           aria-hidden="true"
         />
         <span
           className={cn(
             "text-[11px] leading-tight",
-            isActive ? "" : "text-[#555]",
+            isActive ? "text-[#0073ea] dark:text-blue-400 font-medium" : "text-[#555] dark:text-muted-foreground",
           )}
-          style={isActive ? { color: ACCENT } : undefined}
         >
           {item.label}
         </span>
@@ -97,7 +97,7 @@ export function IconRail() {
 
   return (
     <nav
-      className="flex w-[72px] shrink-0 flex-col items-center border-r border-[#e6e6e6] bg-white py-3"
+      className="flex w-[72px] shrink-0 flex-col items-center border-r border-border bg-white dark:bg-sidebar-background py-3"
       aria-label="Primary sections"
     >
       <div className="flex w-full flex-col items-center gap-0.5 px-2">
@@ -105,7 +105,7 @@ export function IconRail() {
       </div>
 
       <div className="flex w-full items-center justify-center px-2">
-        <div className="h-px w-full bg-[#e6e6e6]" />
+        <div className="h-px w-full bg-border" />
       </div>
 
       <div className="flex-1" />

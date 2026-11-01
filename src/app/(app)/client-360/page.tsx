@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { getClient360InitialDataAction } from "@/features/client-360/actions";
-import { Client360View } from "@/features/client-360/client-360-view";
+import { Client360Container } from "@/features/client-360/client-360-container";
 
 async function getInitialData() {
   const res = await getClient360InitialDataAction();
@@ -38,18 +38,9 @@ export default async function ClientsPage() {
   const initialData = await getInitialData();
 
   return (
-    <div className="mx-auto max-w-[1400px] space-y-6 px-4 py-6 sm:px-6 lg:px-8">
-      <div className="space-y-1">
-        <h1 className="font-display text-3xl font-normal leading-tight text-foreground sm:text-4xl">
-          Client 360
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Search, analyze, and track client work across all boards
-        </p>
-      </div>
-
+    <div className="w-full">
       <Suspense fallback={<Client360ViewSkeleton />}>
-        <Client360View initialData={initialData} />
+        <Client360Container initialData={initialData} />
       </Suspense>
     </div>
   );

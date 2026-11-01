@@ -17,6 +17,23 @@ import { isClientColumn, isJobDateColumn, normalizeStatus, getClientType, DEFAUL
 
 type DatabaseRow = Record<string, unknown>;
 
+export function normalizeSearchText(str: string): string {
+  if (!str) return "";
+  return String(str).toLowerCase().replace(/['’`"“”\s_\-\/\\()]/g, "");
+}
+
+export function isTextMatch(target: unknown, query: string): boolean {
+  if (target === null || target === undefined || !query) return false;
+  const tStr = String(target).toLowerCase();
+  const qStr = query.toLowerCase().trim();
+  if (tStr.includes(qStr)) return true;
+  const tNorm = normalizeSearchText(tStr);
+  const qNorm = normalizeSearchText(qStr);
+  if (qNorm.length > 0 && tNorm.includes(qNorm)) return true;
+  return false;
+}
+
+
 function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" && value.length > 0 ? value : fallback;
 }
@@ -41,9 +58,42 @@ function asRecord(value: unknown, fallback: Record<string, unknown> = {}): Recor
     : fallback;
 }
 
+// ── Memory Caches for Blazing-Fast Search & Navigation ───────────────
+let boardsCache: {
+  data: Array<{ id: string; name: string; slug: string; workspace_id: string; status: string }>;
+  timestamp: number;
+} | null = null;
+const BOARDS_CACHE_TTL_MS = 60_000;
+
+const workspacesCache = new Map<string, { name: string; timestamp: number }>();
+const WORKSPACES_CACHE_TTL_MS = 120_000;
+
+const columnsCache = new Map<string, { data: BoardColumns; timestamp: number }>();
+const COLUMNS_CACHE_TTL_MS = 60_000;
+
+const groupsCache = new Map<string, { groups: Array<{ id: string; name: string }>; timestamp: number }>();
+const GROUPS_CACHE_TTL_MS = 60_000;
+
+const searchResultCache = new Map<string, { result: Client360SearchResult; expiresAt: number }>();
+const SEARCH_CACHE_TTL_MS = 25_000;
+const MAX_SEARCH_CACHE_SIZE = 50;
+
+export function clearSearchCache(): void {
+  boardsCache = null;
+  workspacesCache.clear();
+  columnsCache.clear();
+  groupsCache.clear();
+  searchResultCache.clear();
+}
+
 async function fetchAllBoards(): Promise<
   Array<{ id: string; name: string; slug: string; workspace_id: string; status: string }>
 > {
+  const now = Date.now();
+  if (boardsCache && now - boardsCache.timestamp < BOARDS_CACHE_TTL_MS) {
+    return boardsCache.data;
+  }
+
   const supabase = await createServiceClient();
   const { data, error } = await supabase
     .from("boards")
@@ -53,66 +103,111 @@ async function fetchAllBoards(): Promise<
 
   if (error) {
     console.error("Failed to fetch boards for client-360:", error);
-    return [];
+    return boardsCache ? boardsCache.data : [];
   }
 
-  return (data ?? []).map((row) => ({
+  const result = (data ?? []).map((row) => ({
     id: asString(row.id),
     name: asString(row.name),
     slug: asString(row.slug, row.id),
     workspace_id: asString(row.workspace_id),
     status: asString(row.status, "active"),
   }));
+  boardsCache = { data: result, timestamp: now };
+  return result;
 }
 
 async function fetchWorkspaces(workspaceIds: string[]): Promise<Map<string, string>> {
   if (workspaceIds.length === 0) return new Map();
+  const now = Date.now();
+  const map = new Map<string, string>();
+  const missingIds: string[] = [];
+
+  for (const id of workspaceIds) {
+    const cached = workspacesCache.get(id);
+    if (cached && now - cached.timestamp < WORKSPACES_CACHE_TTL_MS) {
+      map.set(id, cached.name);
+    } else {
+      missingIds.push(id);
+    }
+  }
+
+  if (missingIds.length === 0) return map;
+
   const supabase = await createServiceClient();
   const { data, error } = await supabase
     .from("workspaces")
     .select("id, name")
-    .in("id", workspaceIds);
+    .in("id", missingIds);
 
   if (error) {
     console.error("Failed to fetch workspaces for client-360:", error);
-    return new Map();
+    return map;
   }
 
-  const map = new Map<string, string>();
   for (const row of data ?? []) {
-    map.set(asString(row.id), asString(row.name));
+    const id = asString(row.id);
+    const name = asString(row.name);
+    workspacesCache.set(id, { name, timestamp: now });
+    map.set(id, name);
   }
   return map;
 }
 
 async function fetchColumnsForBoards(boardIds: string[]): Promise<BoardColumns[]> {
   if (boardIds.length === 0) return [];
+  const now = Date.now();
+  const result: BoardColumns[] = [];
+  const missingBoardIds: string[] = [];
+
+  for (const bid of boardIds) {
+    const cached = columnsCache.get(bid);
+    if (cached && now - cached.timestamp < COLUMNS_CACHE_TTL_MS) {
+      result.push(cached.data);
+    } else {
+      missingBoardIds.push(bid);
+    }
+  }
+
+  if (missingBoardIds.length === 0) return result;
+
   const supabase = await createServiceClient();
   const { data, error } = await supabase
     .from("columns")
     .select("*")
-    .in("board_id", boardIds)
+    .in("board_id", missingBoardIds)
     .is("group_id", null)
     .order("sort_order", { ascending: true });
 
   if (error) {
     console.error("Failed to fetch columns for client-360:", error);
-    return [];
+    return result;
   }
 
   const byBoard = new Map<string, BoardColumns>();
+  for (const bid of missingBoardIds) {
+    byBoard.set(bid, {
+      boardId: bid,
+      boardName: "",
+      workspaceId: "",
+      workspaceName: "",
+      columns: [],
+    });
+  }
+
   for (const row of (data ?? []) as DatabaseRow[]) {
     const boardId = asString(row.board_id ?? row.boardId);
-    if (!byBoard.has(boardId)) {
-      byBoard.set(boardId, {
+    let entry = byBoard.get(boardId);
+    if (!entry) {
+      entry = {
         boardId,
         boardName: "",
         workspaceId: "",
         workspaceName: "",
         columns: [],
-      });
+      };
+      byBoard.set(boardId, entry);
     }
-    const entry = byBoard.get(boardId)!;
     entry.columns.push({
       id: asString(row.id),
       label: asString(row.label, asString(row.key)),
@@ -120,7 +215,13 @@ async function fetchColumnsForBoards(boardIds: string[]): Promise<BoardColumns[]
       settings: asRecord(row.settings),
     });
   }
-  return Array.from(byBoard.values());
+
+  for (const [bid, colEntry] of byBoard.entries()) {
+    columnsCache.set(bid, { data: colEntry, timestamp: now });
+    result.push(colEntry);
+  }
+
+  return result;
 }
 
 async function fetchRecordsForBoards(boardIds: string[]): Promise<BoardRecords[]> {
@@ -158,24 +259,54 @@ async function fetchRecordsForBoards(boardIds: string[]): Promise<BoardRecords[]
 
 async function fetchGroupsForBoards(boardIds: string[]): Promise<Map<string, { id: string; name: string }>> {
   if (boardIds.length === 0) return new Map();
+  const now = Date.now();
+  const groupsMap = new Map<string, { id: string; name: string }>();
+  const missingBoardIds: string[] = [];
+
+  for (const bid of boardIds) {
+    const cached = groupsCache.get(bid);
+    if (cached && now - cached.timestamp < GROUPS_CACHE_TTL_MS) {
+      for (const g of cached.groups) {
+        groupsMap.set(g.id, g);
+      }
+    } else {
+      missingBoardIds.push(bid);
+    }
+  }
+
+  if (missingBoardIds.length === 0) return groupsMap;
+
   const supabase = await createServiceClient();
   const { data, error } = await supabase
     .from("groups")
     .select("id, board_id, name")
-    .in("board_id", boardIds)
+    .in("board_id", missingBoardIds)
     .eq("status", "active");
 
   if (error) {
     console.error("Failed to fetch groups for client-360:", error);
-    return new Map();
+    return groupsMap;
   }
 
-  const groups = new Map<string, { id: string; name: string }>();
+  const byBoard = new Map<string, Array<{ id: string; name: string }>>();
+  for (const bid of missingBoardIds) {
+    byBoard.set(bid, []);
+  }
+
   for (const row of data ?? []) {
     const group = { id: asString(row.id), name: asString(row.name, "Ungrouped") };
-    groups.set(group.id, group);
+    groupsMap.set(group.id, group);
+    const bid = asString(row.board_id);
+    if (byBoard.has(bid)) {
+      byBoard.get(bid)!.push(group);
+    }
   }
-  return groups;
+
+  for (const [bid, grpList] of byBoard.entries()) {
+    groupsCache.set(bid, { groups: grpList, timestamp: now });
+  }
+
+  return groupsMap;
 }
 
 async function fetchCellValuesForBoards(boardIds: string[]): Promise<BoardCellValues[]> {
@@ -188,20 +319,22 @@ async function fetchCellValuesForBoards(boardIds: string[]): Promise<BoardCellVa
     chunks.push(boardIds.slice(i, i + 50));
   }
 
-  const allCells: BoardCellValues[] = [];
-  for (const chunk of chunks) {
-    const { data, error } = await supabase
-      .from("cell_values")
-      .select("*")
-      .in("board_id", chunk)
-      .order("updated_at", { ascending: false });
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      supabase
+        .from("cell_values")
+        .select("*")
+        .in("board_id", chunk)
+        .order("updated_at", { ascending: false })
+    )
+  );
 
+  const byBoard = new Map<string, BoardCellValues>();
+  for (const { data, error } of results) {
     if (error) {
       console.error("Failed to fetch cell values for client-360:", error);
       continue;
     }
-
-    const byBoard = new Map<string, BoardCellValues>();
     for (const row of (data ?? []) as DatabaseRow[]) {
       const boardId = asString(row.board_id ?? row.boardId);
       if (!byBoard.has(boardId)) {
@@ -214,9 +347,8 @@ async function fetchCellValuesForBoards(boardIds: string[]): Promise<BoardCellVa
         valueText: asString(row.value_text ?? row.valueText) || null,
       });
     }
-    allCells.push(...Array.from(byBoard.values()));
   }
-  return allCells;
+  return Array.from(byBoard.values());
 }
 
 type ClientColumnEntry = {
@@ -747,7 +879,7 @@ function matchRecords(
         for (const clientCol of clientCols) {
           const cell = cellIndex.get(`${record.id}:${clientCol.id}`);
           const strValue = resolveCellDisplayText(clientCol.settings, cell?.value ?? null, cell?.valueText ?? null);
-          if (strValue.toLowerCase().includes(queryLower)) {
+          if (isTextMatch(strValue, query)) {
             const resolved = getCellValuesForRecord(record.id);
             confirmedMatch = buildEnrichedMatch({
               board,
@@ -769,7 +901,7 @@ function matchRecords(
         }
 
         // Always check record title (this is the "Client Name" pseudo-column)
-        if (!confirmedMatch && record.title.toLowerCase().includes(queryLower)) {
+        if (!confirmedMatch && isTextMatch(record.title, query)) {
           const resolved = getCellValuesForRecord(record.id);
           confirmedMatch = buildEnrichedMatch({
             board,
@@ -786,6 +918,35 @@ function matchRecords(
             cellValue: record.title || null,
             resolved,
           });
+        }
+
+        // Check any matching cell on the record if client column didn't match
+        if (!confirmedMatch) {
+          const recordCells = (boardCells?.cells ?? []).filter((c) => c.recordId === record.id);
+          for (const cell of recordCells) {
+            const col = boardColumns.columns.find((c) => c.id === cell.columnId);
+            if (!col) continue;
+            const strValue = resolveCellDisplayText(col.settings, cell.value ?? null, cell.valueText ?? null);
+            if (isTextMatch(strValue, query)) {
+              const resolved = getCellValuesForRecord(record.id);
+              confirmedMatch = buildEnrichedMatch({
+                board,
+                record,
+                columns: boardColumns.columns,
+                cells: boardCells?.cells ?? [],
+                workspaceNames,
+                groups,
+                recordsByBoard,
+                boards,
+                matchedColumnId: col.id,
+                matchedColumnLabel: col.label,
+                matchType: "confirmed",
+                cellValue: strValue || null,
+                resolved,
+              });
+              break;
+            }
+          }
         }
       }
 
@@ -932,6 +1093,18 @@ function applyFilters(
   });
 }
 
+function getSearchCacheKey(
+  query: string,
+  options: {
+    page?: number;
+    pageSize?: number;
+    filters?: Client360Filters;
+    allColumns?: boolean;
+  },
+): string {
+  return `${query.toLowerCase().trim()}|p:${options.page ?? 1}|ps:${options.pageSize ?? DEFAULT_PAGE_SIZE}|cols:${options.allColumns ? 1 : 0}|f:${JSON.stringify(options.filters ?? {})}`;
+}
+
 export async function searchClient360(
   query: string,
   options: {
@@ -949,7 +1122,16 @@ export async function searchClient360(
   const allColumns = options.allColumns ?? false;
   const debugLog: string[] = [];
 
-  const boards = await fetchAllBoards();
+  const cacheKey = getSearchCacheKey(query, options);
+  const now = Date.now();
+  const cached = searchResultCache.get(cacheKey);
+  if (cached && now < cached.expiresAt) {
+    if (debug) console.log(`[Client360] Cache HIT for "${query}" (expires in ${Math.round((cached.expiresAt - now) / 1000)}s)`);
+    return cached.result;
+  }
+
+  const allBoards = await fetchAllBoards();
+  let boards = allBoards;
   if (debug) debugLog.push(`[DEBUG] Fetched ${boards.length} boards: ${boards.map(b => `${b.name}(${b.id})`).join(", ")}`);
 
   if (boards.length === 0) {
@@ -969,16 +1151,187 @@ export async function searchClient360(
     };
   }
 
-  const boardIds = boards.map((b) => b.id);
-  const workspaceIds = Array.from(new Set(boards.map((b) => b.workspace_id)));
-  const workspaceNames = await fetchWorkspaces(workspaceIds);
+  let columnsByBoard: BoardColumns[];
+  let recordsByBoard: BoardRecords[];
+  let cellsByBoard: BoardCellValues[];
+  let groups: Map<string, { id: string; name: string }>;
+  let workspaceNames: Map<string, string>;
 
-  const [columnsByBoard, recordsByBoard, cellsByBoard, groups] = await Promise.all([
-    fetchColumnsForBoards(boardIds),
-    fetchRecordsForBoards(boardIds),
-    fetchCellValuesForBoards(boardIds),
-    fetchGroupsForBoards(boardIds),
-  ]);
+  const trimmedQuery = query.trim();
+  if (trimmedQuery.length > 0 && !allColumns) {
+    const qClean = trimmedQuery.toLowerCase();
+    const variations = [
+      qClean,
+      qClean.replace(/s$/, "'s"),
+      qClean.replace(/'s$/, "s"),
+      qClean.replace(/['’]/g, ""),
+    ];
+    const uniqueVars = Array.from(new Set(variations));
+
+    const supabase = await createServiceClient();
+    const orConditions = uniqueVars.map((v) => `value_text.ilike.%${v}%`).join(",");
+    const titleOr = uniqueVars.map((v) => `title.ilike.%${v}%`).join(",");
+
+    // Run cell search & record title search IN PARALLEL!
+    const [matchedCellsRes, matchedRecsRes] = await Promise.all([
+      supabase
+        .from("cell_values")
+        .select("record_id, board_id, column_id, value, value_text")
+        .or(orConditions)
+        .limit(5000),
+      supabase
+        .from("records")
+        .select("id, board_id, title, status, group_id, created_at, updated_at")
+        .or(titleOr)
+        .neq("status", "archived")
+        .limit(2000),
+    ]);
+
+    const matchedCells = matchedCellsRes.data ?? [];
+    const matchedRecs = matchedRecsRes.data ?? [];
+
+    const matchedRecordIds = new Set<string>();
+    matchedCells.forEach((c) => matchedRecordIds.add(asString(c.record_id)));
+    matchedRecs.forEach((r) => matchedRecordIds.add(asString(r.id)));
+
+    const recIdArr = Array.from(matchedRecordIds);
+    if (recIdArr.length === 0) {
+      const emptyResult: Client360SearchResult = {
+        query,
+        matches: [],
+        unifiedColumns: [],
+        workspacesMatched: [],
+        boardsMatched: [],
+        totalItems: 0,
+        statusBuckets: {},
+        recurringCount: 0,
+        nonRecurringCount: 0,
+        possibleMatchesCount: 0,
+        pagination: { page, pageSize, totalPages: 0, totalItems: 0 },
+      };
+      if (searchResultCache.size >= MAX_SEARCH_CACHE_SIZE) {
+        const oldestKey = searchResultCache.keys().next().value;
+        if (oldestKey) searchResultCache.delete(oldestKey);
+      }
+      searchResultCache.set(cacheKey, { result: emptyResult, expiresAt: Date.now() + SEARCH_CACHE_TTL_MS });
+      return emptyResult;
+    }
+
+    // Determine candidate boards and workspaces upfront from already-matched rows
+    const candidateBoardIdSet = new Set<string>();
+    matchedCells.forEach((c) => {
+      const bid = asString(c.board_id);
+      if (bid) candidateBoardIdSet.add(bid);
+    });
+    matchedRecs.forEach((r) => {
+      const bid = asString(r.board_id);
+      if (bid) candidateBoardIdSet.add(bid);
+    });
+
+    const candidateBoards = allBoards.filter((b) => candidateBoardIdSet.has(b.id));
+    const candidateBoardIds = candidateBoards.map((b) => b.id);
+    const candidateWorkspaceIds = Array.from(new Set(candidateBoards.map((b) => b.workspace_id)));
+
+    const CHUNK_SIZE = 500;
+    const recordChunks: string[][] = [];
+    for (let i = 0; i < recIdArr.length; i += CHUNK_SIZE) {
+      recordChunks.push(recIdArr.slice(i, i + CHUNK_SIZE));
+    }
+
+    // Execute ALL record chunks, cell chunks, columns, groups, and workspaces in ONE single parallel batch!
+    const [recsBatches, cellsBatches, cols, grps, wsNames] = await Promise.all([
+      Promise.all(
+        recordChunks.map((chunk) =>
+          supabase
+            .from("records")
+            .select("*")
+            .in("id", chunk)
+            .neq("status", "archived")
+        )
+      ),
+      Promise.all(
+        recordChunks.map((chunk) =>
+          supabase
+            .from("cell_values")
+            .select("*")
+            .in("record_id", chunk)
+        )
+      ),
+      fetchColumnsForBoards(candidateBoardIds),
+      fetchGroupsForBoards(candidateBoardIds),
+      fetchWorkspaces(candidateWorkspaceIds),
+    ]);
+
+    const allRecords: DatabaseRow[] = [];
+    for (const b of recsBatches) {
+      if (b.data) allRecords.push(...b.data);
+    }
+
+    const allMatchedRecordCells: DatabaseRow[] = [];
+    for (const b of cellsBatches) {
+      if (b.data) allMatchedRecordCells.push(...b.data);
+    }
+
+    const matchedBoardIds = Array.from(new Set(allRecords.map((r) => asString(r.board_id ?? r.boardId))));
+    boards = allBoards.filter((b) => matchedBoardIds.includes(b.id));
+    const boardIds = boards.map((b) => b.id);
+
+    // If any boards were discovered in records that weren't in candidateBoardIds, fetch them as well
+    const missingBoardIds = boardIds.filter((bid) => !candidateBoardIdSet.has(bid));
+    if (missingBoardIds.length > 0) {
+      const [extraCols, extraGrps] = await Promise.all([
+        fetchColumnsForBoards(missingBoardIds),
+        fetchGroupsForBoards(missingBoardIds),
+      ]);
+      columnsByBoard = [...cols, ...extraCols];
+      groups = new Map([...grps.entries(), ...extraGrps.entries()]);
+    } else {
+      columnsByBoard = cols;
+      groups = grps;
+    }
+    workspaceNames = wsNames;
+
+    recordsByBoard = [];
+    cellsByBoard = [];
+    for (const bid of boardIds) {
+      const bRecs = allRecords
+        .filter((r) => asString(r.board_id ?? r.boardId) === bid)
+        .map((row) => ({
+          id: asString(row.id),
+          title: asString(row.title, asString(row.name, "Untitled")),
+          status: asString(row.status, "active"),
+          groupId: asString(row.group_id ?? row.groupId),
+          createdAt: asString(row.created_at ?? row.createdAt),
+          updatedAt: asString(row.updated_at ?? row.updatedAt),
+        }));
+      recordsByBoard.push({ boardId: bid, records: bRecs });
+
+      const bCells = allMatchedRecordCells
+        .filter((c) => asString(c.board_id ?? c.boardId) === bid)
+        .map((row) => ({
+          recordId: asString(row.record_id ?? row.recordId),
+          columnId: asString(row.column_id ?? row.columnId),
+          value: row.value ?? row.value_json ?? null,
+          valueText: asString(row.value_text ?? row.valueText) || null,
+        }));
+      cellsByBoard.push({ boardId: bid, cells: bCells });
+    }
+  } else {
+    const boardIds = boards.map((b) => b.id);
+    const workspaceIds = Array.from(new Set(boards.map((b) => b.workspace_id)));
+    workspaceNames = await fetchWorkspaces(workspaceIds);
+
+    const [cols, recs, cells, grps] = await Promise.all([
+      fetchColumnsForBoards(boardIds),
+      fetchRecordsForBoards(boardIds),
+      fetchCellValuesForBoards(boardIds),
+      fetchGroupsForBoards(boardIds),
+    ]);
+    columnsByBoard = cols;
+    recordsByBoard = recs;
+    cellsByBoard = cells;
+    groups = grps;
+  }
 
   if (debug) {
     debugLog.push(`[DEBUG] Fetched ${columnsByBoard.length} board-column groups`);
@@ -1049,7 +1402,7 @@ export async function searchClient360(
     console.warn("[Client360 Debug]", debugLog.join("\n"));
   }
 
-  return {
+  const finalResult: Client360SearchResult = {
     query,
     matches: paginatedMatches,
     unifiedColumns,
@@ -1067,6 +1420,17 @@ export async function searchClient360(
       totalItems,
     },
   };
+
+  if (searchResultCache.size >= MAX_SEARCH_CACHE_SIZE) {
+    const oldestKey = searchResultCache.keys().next().value;
+    if (oldestKey) searchResultCache.delete(oldestKey);
+  }
+  searchResultCache.set(cacheKey, {
+    result: finalResult,
+    expiresAt: Date.now() + SEARCH_CACHE_TTL_MS,
+  });
+
+  return finalResult;
 }
 
 export async function getClient360InitialData(): Promise<{
@@ -1077,8 +1441,10 @@ export async function getClient360InitialData(): Promise<{
   const boards = await fetchAllBoards();
   const boardIds = boards.map((b) => b.id);
   const workspaceIds = Array.from(new Set(boards.map((b) => b.workspace_id)));
-  const workspaceNames = await fetchWorkspaces(workspaceIds);
-  const columnsByBoard = await fetchColumnsForBoards(boardIds);
+  const [workspaceNames, columnsByBoard] = await Promise.all([
+    fetchWorkspaces(workspaceIds),
+    fetchColumnsForBoards(boardIds),
+  ]);
 
   const workspaces = Array.from(workspaceNames.entries()).map(([id, name]) => ({ id, name }));
   const boardsList = boards.map((b) => ({ id: b.id, name: b.name, slug: b.slug, workspaceId: b.workspace_id }));

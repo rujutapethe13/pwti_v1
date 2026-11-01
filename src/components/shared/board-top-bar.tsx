@@ -46,6 +46,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { FavoriteStar } from "@/components/shared/favorite-star";
 import { Client360SearchInput } from "@/features/client-360/client-360-search-input";
 import { exportBoardToExcel, openImportWizard } from "@/features/boards/engine/lib/import-export-events";
+import { AutomationCenterModal } from "@/features/automations/automation-center-modal";
 
 interface BoardTopBarProps {
   board: BoardDefinition;
@@ -57,6 +58,7 @@ export function BoardTopBar({ board, onMenuClick, onRename }: BoardTopBarProps) 
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(board.name);
   const [localName, setLocalName] = useState(board.name);
+  const [automationsOpen, setAutomationsOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const { renameBoard } = useWorkspace();
 
@@ -162,9 +164,16 @@ export function BoardTopBar({ board, onMenuClick, onRename }: BoardTopBarProps) 
           <span className="hidden sm:inline">Integrate</span>
         </Button>
 
-        <Button variant="ghost" size="sm" className="h-8 gap-1.5 text-xs">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-8 gap-1.5 text-xs"
+          onClick={() => setAutomationsOpen(true)}
+        >
           <span className="hidden sm:inline">Automate</span>
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-medium">0</span>
+          <span className="rounded-full bg-primary/10 text-primary font-bold px-1.5 py-0.5 text-[10px]">
+            3
+          </span>
         </Button>
 
         <TooltipProvider delayDuration={300}>
@@ -242,6 +251,13 @@ export function BoardTopBar({ board, onMenuClick, onRename }: BoardTopBarProps) 
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <AutomationCenterModal
+        open={automationsOpen}
+        onOpenChange={setAutomationsOpen}
+        boardId={board.id}
+        boardName={board.name}
+      />
     </header>
   );
 }

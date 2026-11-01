@@ -70,6 +70,7 @@ export function ViewEngine({
       columns,
       records,
       cellValues,
+      cellMetadata: boardData.cellMetadata,
       groups: groups.map((g) => ({
         id: g.id,
         name: g.name,
@@ -99,7 +100,7 @@ export function ViewEngine({
       bulkArchiveLoading,
       bulkDeleteLoading,
     }),
-    [board, view, columns, records, cellValues, groups, settings, onCellChange, onRecordCreate, onRecordTitleChange, onNewItem, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
+    [board, view, columns, records, cellValues, boardData.cellMetadata, groups, settings, onCellChange, onRecordCreate, onRecordTitleChange, onNewItem, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
   );
 
   if (!viewPlugin || viewPlugin.placeholder) {

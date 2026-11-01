@@ -42,6 +42,7 @@ import type {
   ViewFilter,
   ViewSort,
   ViewGrouping,
+  CellChangeMetadata,
 } from "../types";
 
 const boardRepo = new BoardRepository();
@@ -87,6 +88,7 @@ export interface BoardQueryResult {
   groups: Group[];
   records: BoardRecord[];
   cellValues: Map<string, ColumnValue>;
+  cellMetadata?: Map<string, CellChangeMetadata>;
   totalRecords: number;
   filteredRecordCount: number;
   page: number;
@@ -343,4 +345,3 @@ export const QueryService = {
     return 0;
   },
 };
-

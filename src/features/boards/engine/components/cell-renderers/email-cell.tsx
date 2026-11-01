@@ -21,7 +21,7 @@ export function EmailCell({
     return (
       <a
         href={`mailto:${displayValue}`}
-        className="truncate text-sm text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+        className="truncate text-sm text-[var(--surface-accent)] underline-offset-2 hover:underline"
         onClick={(e) => e.stopPropagation()}
       >
         {displayValue}

@@ -9,12 +9,9 @@ import { clientEnv } from "@/config/env";
 /**
  * Auth server actions.
  *
- * ── Signup is open ─────────────────────────────────────────────────────────
- * This used to refuse any email other than the super admin's, which meant the
- * only way to onboard a client was to hand-edit the database. Signup is now
- * open: the `on_auth_user_created` trigger in migration 01 creates the
- * profiles row with role 'client', and the new user lands on the access-required
- * empty state until an admin grants them a workspace.
+ * ── Signup is invite-only ───────────────────────────────────────────────────
+ * A user may create an account only with a workspace invite code. Admins use
+ * the invite flow rather than creating empty workspaces for new users.
  *
  * An optional invite code (or an invite matched on email) pre-enrols the new
  * user into a specific workspace on first login. The invite table has a CHECK
@@ -133,6 +130,9 @@ export async function signUpWithEmail(formData: FormData) {
 
   if (!email || !password) {
     return { error: "Email and password are required" };
+  }
+  if (!inviteCode) {
+    return { error: "An invitation is required to create an account" };
   }
 
   const supabase = await createClient(await cookies());

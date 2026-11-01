@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -155,7 +155,7 @@ export default function WorkspacePage() {
   };
 
   const handleShare = () => {
-    setShowShare(true);
+    setShowMembers(true);
     setHeaderDropdown(false);
   };
 
@@ -212,9 +212,9 @@ export default function WorkspacePage() {
         {/* Header */}
         <div className="flex items-start justify-between">
           <div className="flex items-start gap-4">
-            <span className="relative flex size-16 shrink-0 items-center justify-center rounded-lg text-2xl font-bold text-white shadow-sm" style={{ backgroundColor: activeWorkspace?.color ?? "#f97316" }}>
-              {activeWorkspace ? getInitials(activeWorkspace.name) : "M"}
-              <span className="absolute -bottom-1 -right-1 flex size-5 items-center justify-center rounded-full bg-white shadow-sm">
+            <span className="relative flex size-16 shrink-0 items-center justify-center rounded-lg text-2xl font-bold shadow-sm" style={{ backgroundColor: activeWorkspace?.color ?? "#f97316", color: "white" }}>
+              {activeWorkspace ? getInitials(activeWorkspace.name) : "?"}
+              <span className="absolute -bottom-1 -right-1 flex size-5 items-center justify-center rounded-full shadow-sm" style={{ backgroundColor: "var(--surface-overlay)" }}>
                 <span className="size-2 rounded-full bg-green-500" aria-hidden="true" />
               </span>
             </span>
@@ -259,7 +259,7 @@ export default function WorkspacePage() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="flex size-8 items-center justify-center rounded-full bg-muted" aria-hidden="true">
+              <span className="flex size-8 items-center justify-center rounded-full" style={{ backgroundColor: "var(--surface-raised)" }} aria-hidden="true">
               {user?.avatarUrl ? (
                 <Avatar className="size-8">
                   <AvatarImage src={user.avatarUrl} alt="" />
@@ -287,10 +287,10 @@ export default function WorkspacePage() {
                 <MoreHorizontal className="size-4" aria-hidden="true" />
               </button>
               {headerDropdown && (
-                <div className="absolute right-0 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+                <div className="absolute right-0 mt-1 w-56 rounded-lg py-1 shadow-[0_4px_20px_rgba(0,0,0,0.15)]" style={{ border: "1px solid hsl(var(--border))", backgroundColor: "var(--surface-overlay)", color: "var(--text)" }}>
                   <button
                     onClick={handleSettings}
-                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-[var(--row-hover)]"
                   >
                     <Settings2 className="size-4 text-muted-foreground" aria-hidden="true" />
                     Settings
@@ -480,7 +480,7 @@ export default function WorkspacePage() {
                   </div>
                   <button
                     onClick={() => setShowMembers(true)}
-                    className="flex w-full flex-col items-center justify-center rounded-lg border border-gray-200 py-10 text-center hover:bg-accent/40"
+                    className="flex w-full flex-col items-center justify-center rounded-lg border border-border py-10 text-center hover:bg-accent/40"
                   >
                     <Users2 className="size-8 text-muted-foreground/50" aria-hidden="true" />
                     <span className="mt-2 text-sm font-medium">
@@ -505,24 +505,26 @@ export default function WorkspacePage() {
         {/* Workspace Settings Modal */}
         {showSettings && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
-              <h3 className="text-sm font-semibold">Workspace settings</h3>
+            <div className="w-full max-w-sm rounded-lg p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]" style={{ border: "1px solid hsl(var(--border))", backgroundColor: "var(--surface-overlay)", color: "var(--text)" }}>
+              <h3 className="text-sm font-semibold" style={{ color: "var(--text)" }}>Workspace settings</h3>
               {/* TODO: wire to backend — load/save real workspace settings */}
               <div className="mt-3 space-y-3">
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Name</label>
+                  <label className="text-xs font-medium" style={{ color: "hsl(var(--muted-foreground))" }}>Name</label>
                   <input
                     defaultValue={activeWorkspace?.name}
                     readOnly
-                    className="mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    className="mt-1 w-full rounded-md px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    style={{ border: "1px solid hsl(var(--border))", backgroundColor: "var(--surface)", color: "var(--text)" }}
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-medium text-muted-foreground">Description</label>
+                  <label className="text-xs font-medium" style={{ color: "hsl(var(--muted-foreground))" }}>Description</label>
                   <input
                     defaultValue={activeWorkspace?.description}
                     readOnly
-                    className="mt-1 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    className="mt-1 w-full rounded-md px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                    style={{ border: "1px solid hsl(var(--border))", backgroundColor: "var(--surface)", color: "var(--text)" }}
                   />
                 </div>
               </div>
@@ -538,12 +540,13 @@ export default function WorkspacePage() {
         {/* Share / Invite Modal */}
         {showShare && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
-              <h3 className="text-sm font-semibold">Share &ldquo;{activeWorkspace?.name}&rdquo;</h3>
+            <div className="w-full max-w-sm rounded-lg p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]" style={{ border: "1px solid hsl(var(--border))", backgroundColor: "var(--surface-overlay)", color: "var(--text)" }}>
+              <h3 className="text-sm font-semibold" style={{ color: "var(--text)" }}>Share &ldquo;{activeWorkspace?.name}&rdquo;</h3>
               {/* TODO: wire to backend — invite collaborators / generate share link */}
               <input
                 placeholder="Email address"
-                className="mt-2 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                className="mt-2 w-full rounded-md px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+                style={{ border: "1px solid hsl(var(--border))", backgroundColor: "var(--surface)", color: "var(--text)" }}
               />
               <div className="mt-4 flex justify-end gap-2">
                 <button onClick={() => setShowShare(false)} className="rounded-md px-3 py-1.5 text-xs hover:bg-accent">

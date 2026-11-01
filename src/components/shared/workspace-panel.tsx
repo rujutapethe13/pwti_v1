@@ -491,9 +491,11 @@ export function WorkspacePanel() {
                 className="flex size-6 shrink-0 items-center justify-center rounded-md text-xs font-bold text-white"
                 style={{ backgroundColor: activeWorkspace?.color ?? "#f97316" }}
               >
-                {activeWorkspace ? getInitials(activeWorkspace.name) : "M"}
+                {activeWorkspace ? getInitials(activeWorkspace.name) : "?"}
               </span>
-              <span className="flex-1 truncate text-left">{activeWorkspace?.name ?? "Main"}</span>
+              <span className="flex-1 truncate text-left">
+                {activeWorkspace?.name ?? "No workspace"}
+              </span>
               <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             </button>
           </div>
@@ -504,21 +506,21 @@ export function WorkspacePanel() {
         {showDropdown && (
           <div
             ref={dropdownRef}
-            className="absolute left-0 z-[200] mt-1 w-64 rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]"
+            className="absolute left-0 z-[200] mt-1 w-64 rounded-lg border border-border bg-white dark:bg-popover text-foreground shadow-[0_4px_20px_rgba(0,0,0,0.15)]"
           >
             <div className="p-2">
               <div className="relative">
                 <Search className="absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-gray-400" aria-hidden="true" />
                 <input
                   placeholder="Search for a workspace"
-                  className="h-8 w-full rounded-md border border-gray-200 bg-white pl-8 pr-2.5 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  className="h-8 w-full rounded-md border border-border bg-background pl-8 pr-2.5 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
                 />
               </div>
             </div>
             <div className="px-2 pb-2">
               <button
                 onClick={() => { setShowCreate(true); setShowDropdown(false); }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-blue-600 hover:bg-blue-50"
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/15"
               >
                 <span className="flex size-5 items-center justify-center rounded-md bg-green-500 text-xs font-bold text-white">
                   N
@@ -526,8 +528,8 @@ export function WorkspacePanel() {
                 New Workspace
               </button>
             </div>
-            <div className="mx-2 my-1 h-px bg-gray-100" />
-            <div className="px-2 py-1.5 text-xs font-medium text-gray-500">My workspaces</div>
+            <div className="mx-2 my-1 h-px bg-border" />
+            <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">My workspaces</div>
             <div className="p-1">
               {filteredWorkspaces.map((ws) => {
                 const isActive = ws.id === activeWorkspaceId;
@@ -536,7 +538,7 @@ export function WorkspacePanel() {
                     key={ws.id}
                     className={cn(
                       "flex items-center gap-1 rounded-md px-2 py-1.5 text-sm",
-                      isActive ? "bg-blue-50" : "hover:bg-gray-50",
+                      isActive ? "bg-blue-50 dark:bg-blue-500/15" : "hover:bg-accent",
                     )}
                   >
                     <span
@@ -568,13 +570,13 @@ export function WorkspacePanel() {
                 );
               })}
             </div>
-            <div className="mx-2 my-1 h-px bg-gray-100" />
+            <div className="mx-2 my-1 h-px bg-border" />
             <div className="p-1">
-              <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm text-black hover:bg-gray-50">
+              <div className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm text-foreground hover:bg-accent">
                 <button
                   type="button"
                   onClick={() => { setShowCreate(true); setShowDropdown(false); }}
-                  className="flex items-center gap-2 cursor-pointer text-black"
+                  className="flex items-center gap-2 cursor-pointer text-foreground"
                 >
                   <Plus className="size-4" aria-hidden="true" />
                   Add workspace
@@ -582,7 +584,7 @@ export function WorkspacePanel() {
                 <button
                   type="button"
                   onClick={() => { setShowBrowse(true); setShowDropdown(false); }}
-                  className="flex items-center gap-2 cursor-pointer text-black"
+                  className="flex items-center gap-2 cursor-pointer text-foreground"
                 >
                   <LayoutGrid className="size-4" aria-hidden="true" />
                   Browse all
@@ -610,7 +612,7 @@ export function WorkspacePanel() {
                         }}
                         className={cn(
                           "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-left",
-                          isActive ? "bg-blue-50" : "hover:bg-accent",
+                          isActive ? "bg-blue-50 dark:bg-blue-500/15" : "hover:bg-accent",
                         )}
                       >
                         <span
@@ -641,7 +643,7 @@ export function WorkspacePanel() {
         {/* Create Modal */}
         {showCreate && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+            <div className="w-full max-w-sm rounded-lg border border-border bg-white dark:bg-popover text-foreground p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
               <h3 className="text-sm font-semibold">Create new workspace</h3>
               <input
                 autoFocus
@@ -942,7 +944,7 @@ export function WorkspacePanel() {
       {/* Workspace settings (Manage workspace) — stub */}
       {showManage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-white dark:bg-popover text-foreground p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
             <h3 className="text-sm font-semibold">Workspace settings</h3>
             {/* TODO: wire to backend — load/save real workspace settings */}
             <div className="mt-3 space-y-3">
@@ -975,7 +977,7 @@ export function WorkspacePanel() {
       {/* Workspace Rename Modal */}
       {showRenameWs && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-white dark:bg-popover text-foreground p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
             <h3 className="text-sm font-semibold">Rename workspace</h3>
             <input
               autoFocus
@@ -1004,7 +1006,7 @@ export function WorkspacePanel() {
       {/* Change icon picker */}
       {showIconPicker && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-white dark:bg-popover text-foreground p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
             <h3 className="text-sm font-semibold">Change workspace icon</h3>
             <div className="mt-3 grid grid-cols-6 gap-2">
               {["🗂️", "📁", "⭐", "🚀", "💡", "🎨", "📊", "🔧", "🌟", "🧩", "🏢", "📌"].map((emoji) => (
@@ -1013,7 +1015,7 @@ export function WorkspacePanel() {
                   onClick={() => setIconValue(emoji)}
                   className={cn(
                     "flex size-9 items-center justify-center rounded-md border text-lg",
-                    iconValue === emoji ? "border-primary bg-blue-50" : "hover:bg-accent",
+                    iconValue === emoji ? "border-primary bg-blue-50 dark:bg-blue-500/15" : "hover:bg-accent",
                   )}
                   aria-label={`Select ${emoji} icon`}
                 >
@@ -1036,7 +1038,7 @@ export function WorkspacePanel() {
       {/* Archive / trash modal — stub */}
       {showArchive && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-          <div className="w-full max-w-sm rounded-lg border border-gray-200 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+          <div className="w-full max-w-sm rounded-lg border border-border bg-white dark:bg-popover text-foreground p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
             <h3 className="text-sm font-semibold">Archive / trash</h3>
             {/* TODO: wire to backend — fetch archived/trashed items */}
             <p className="mt-3 text-sm text-muted-foreground">No archived items yet.</p>

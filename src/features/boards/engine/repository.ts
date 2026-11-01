@@ -6,7 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { OWNER_EMAIL } from "@/lib/board-access";
 
 import type { DemoBoardPageData } from "./demo-data";
-import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, BoardView, Group, BoardRole } from "./types";
+import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, BoardView, Group, BoardRole, CellChangeMetadata } from "./types";
 
 type DatabaseRow = Record<string, unknown>;
 
@@ -100,6 +100,8 @@ function toBoardRecord(row: DatabaseRow): BoardRecord {
     archivedAt: asString(row.archived_at ?? row.archivedAt) || null,
     createdAt: asString(row.created_at ?? row.createdAt),
     updatedAt: asString(row.updated_at ?? row.updatedAt),
+    lastEditedAt: asString(row.last_edited_at ?? row.lastEditedAt) || null,
+    lastEditedBy: asString(row.last_edited_by ?? row.lastEditedBy) || null,
   };
 }
 
@@ -112,6 +114,18 @@ function toCellEntry(row: DatabaseRow): [string, ColumnValue] | null {
   }
 
   return [`${recordId}:${columnId}`, (row.value ?? row.value_json ?? row.valueText ?? row.value_text ?? null) as ColumnValue];
+}
+
+function toCellMetadata(row: DatabaseRow): [string, CellChangeMetadata] | null {
+  const recordId = asString(row.record_id ?? row.recordId);
+  const columnId = asString(row.column_id ?? row.columnId);
+  if (!recordId || !columnId) return null;
+  return [`${recordId}:${columnId}`, {
+    changedAt: asString(row.updated_at ?? row.created_at) || null,
+    changedBy: asString(row.updated_by ?? row.created_by) || null,
+    source: (asString(row.change_source ?? row.source) || null) as CellChangeMetadata["source"],
+    approximate: !row.updated_at && !row.created_at,
+  }];
 }
 
 function toBoardView(row: DatabaseRow): BoardView {
@@ -197,21 +211,59 @@ export async function loadBoardBySlug(
 
   console.warn(`[loadBoardBySlug] Found board: ${boardRow.id} (${boardRow.name})`);
 
-  const recordLimit = options?.recordLimit ?? 100;
+  const recordLimit = options?.recordLimit ?? 1000;
   const recordOffset = options?.recordOffset ?? 0;
 
-  const [{ data: columnRows, error: columnError }, { data: recordRows, error: recordError, count: recordCount }, { data: cellRows, error: cellError }, { data: viewRows, error: viewError }, { data: groupRows, error: groupError }] = await Promise.all([
+  const [{ data: columnRows, error: columnError }, recordResult, cellResult, { data: viewRows, error: viewError }, { data: groupRows, error: groupError }] = await Promise.all([
     supabase.from("columns").select("*").eq("board_id", boardRow.id).is("deleted_at", null).order("sort_order", { ascending: true }),
-    supabase
-      .from("records")
-      .select("*", { count: "exact" })
-      .eq("board_id", boardRow.id)
-      .order("created_at", { ascending: true })
-      .range(recordOffset, recordOffset + recordLimit - 1),
-    supabase.from("cell_values").select("*").eq("board_id", boardRow.id),
+    (async () => {
+      const all: any[] = [];
+      let from = recordOffset;
+      const pageSize = recordLimit;
+      let total = 0;
+      // Paginate to bypass PostgREST max-rows (1000)
+      while (true) {
+        const { data, error, count } = await supabase
+          .from("records")
+          .select("*", { count: "exact" })
+          .eq("board_id", boardRow.id)
+          .order("created_at", { ascending: true })
+          .range(from, from + pageSize - 1);
+        if (error) return { data: null, error, count: null };
+        if (count != null) total = count;
+        all.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+        if (all.length >= total && total > 0) break;
+      }
+      return { data: all, error: null, count: total };
+    })(),
+    (async () => {
+      const all: any[] = [];
+      let from = 0;
+      const pageSize = 1000;
+      while (true) {
+        const { data, error } = await supabase
+          .from("cell_values")
+          .select("*")
+          .eq("board_id", boardRow.id)
+          .range(from, from + pageSize - 1);
+        if (error) return { data: null, error };
+        all.push(...(data ?? []));
+        if (!data || data.length < pageSize) break;
+        from += pageSize;
+      }
+      return { data: all, error: null };
+    })(),
     supabase.from("views").select("*").eq("board_id", boardRow.id).order("sort_order", { ascending: true }),
     supabase.from("groups").select("*").eq("board_id", boardRow.id).order("sort_order", { ascending: true }),
   ]);
+
+  const recordRows = recordResult.data;
+  const recordError = recordResult.error;
+  const recordCount = recordResult.count;
+  const cellRows = cellResult.data;
+  const cellError = cellResult.error;
 
   if (columnError) {
     console.error(`[loadBoardBySlug] Columns query error for board ${boardRow.id}:`, columnError);
@@ -237,11 +289,14 @@ export async function loadBoardBySlug(
   console.warn(`[loadBoardBySlug] Board ${boardRow.id} data: ${(columnRows ?? []).length} columns, ${(recordRows ?? []).length} records (of ${recordCount ?? 0} total), ${(cellRows ?? []).length} cells, ${(viewRows ?? []).length} views, ${(groupRows ?? []).length} groups`);
 
   const cellValues: Array<[string, ColumnValue]> = [];
+  const cellMetadata: Array<[string, CellChangeMetadata]> = [];
   for (const row of cellRows ?? []) {
     const entry = toCellEntry(row as DatabaseRow);
     if (entry) {
       cellValues.push(entry);
     }
+    const metadata = toCellMetadata(row as DatabaseRow);
+    if (metadata) cellMetadata.push(metadata);
   }
 
   const views = (viewRows ?? []).map((row) => toBoardView(row as DatabaseRow));
@@ -253,6 +308,7 @@ export async function loadBoardBySlug(
     columns: (columnRows ?? []).map((row) => toColumnDefinition(row as DatabaseRow)),
     records: (recordRows ?? []).map((row) => toBoardRecord(row as DatabaseRow)),
     cellValues,
+    cellMetadata,
     views,
     groups: (groupRows ?? []).map((row) => toGroup(row as DatabaseRow)),
     recordCount: recordCount ?? (recordRows ?? []).length,

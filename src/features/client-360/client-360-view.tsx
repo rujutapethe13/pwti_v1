@@ -187,7 +187,7 @@ export function Client360View({ initialData, initialQuery }: Client360ViewProps)
   const handleSearchKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter") {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
-      setQuery(searchInput);
+      if (query === searchInput) { doSearchRef.current(searchInput, 1); } else { setQuery(searchInput); }
     }
   };
 
@@ -404,7 +404,7 @@ export function Client360View({ initialData, initialQuery }: Client360ViewProps)
             className="pl-9 pr-4"
           />
           {showSuggestions && (
-            <div className="absolute top-full left-0 right-0 z-[200] mt-1 rounded-lg bg-white shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+            <div className="absolute top-full left-0 right-0 z-[200] mt-1 rounded-lg border border-border bg-white dark:bg-popover shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
               {suggestions.map((s) => (
                 <button
                   key={s}
@@ -494,7 +494,7 @@ export function Client360View({ initialData, initialQuery }: Client360ViewProps)
                 Filters
               </Button>
             </summary>
-            <div className="absolute top-full left-0 z-[200] mt-1 w-80 rounded-lg bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
+            <div className="absolute top-full left-0 z-[200] mt-1 w-80 rounded-lg border border-border bg-white dark:bg-popover p-4 shadow-[0_4px_20px_rgba(0,0,0,0.15)]">
               <div className="space-y-4">
                 <div className="space-y-1">
                   <label className="text-xs font-medium text-muted-foreground">Workspace</label>
@@ -619,21 +619,21 @@ export function Client360View({ initialData, initialQuery }: Client360ViewProps)
             <div className="min-w-max">
               {/* Header */}
               <div
-                className="sticky top-0 z-30 grid border-b border-border bg-white"
+                className="sticky top-0 z-30 grid border-b border-border bg-white dark:bg-card"
                 style={{
                   gridTemplateColumns: `180px 180px ${visibleUnifiedColumns.map(() => "180px").join(" ")}`,
                 }}
               >
-                <div className="flex items-center border-r border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+                <div className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                   Workspace
                 </div>
-                <div className="flex items-center border-r border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+                <div className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                   Board
                 </div>
                  {visibleUnifiedColumns.map((col) => (
                    <div
                      key={col.id}
-                     className="flex items-center border-r border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground"
+                     className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground"
                    >
                      <span className="truncate">{col.label}</span>
                      <span className="ml-1 text-[8px] text-muted-foreground/60 uppercase">{col.type}</span>

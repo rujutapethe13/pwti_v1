@@ -24,7 +24,7 @@ export function CheckboxCell({
         checked={checked}
         onChange={handleChange}
         disabled={readOnly}
-        className="size-4 rounded border-border text-primary focus:ring-primary focus:ring-offset-0 disabled:opacity-50"
+        className="board-table-checkbox focus:ring-0 disabled:opacity-50"
       />
     </div>
   );

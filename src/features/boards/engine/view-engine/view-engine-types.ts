@@ -22,8 +22,10 @@ import type {
   ColumnTypeKey,
   ViewSettingsByType,
   AddGroupPayload,
+  CellChangeMetadata,
 } from "../types";
 import type { BoardQueryResult } from "../query/query-service";
+import type { Member } from "@/lib/members-types";
 
 // ── View Renderer Props ────────────────────────────────────
 
@@ -52,6 +54,8 @@ export interface ColumnOperations {
   onColumnUpdateDescription?: (columnId: string, description: string) => void;
   onColumnToggleRestrictEditing?: (columnId: string) => void;
   onColumnToggleRestrictView?: (columnId: string) => void;
+  onColumnManageAccess?: (column: ColumnDefinition) => void;
+  members?: Member[];
   onColumnToggleWrapText?: (columnId: string) => void;
   columnWidths?: Record<string, number>;
   onColumnResize?: (columnId: string, newWidth: number) => void;
@@ -86,6 +90,7 @@ export interface GroupOperations {
 }
 
 export interface ViewRendererProps {
+  cellMetadata?: Map<string, CellChangeMetadata>;
   /** The board being rendered */
   board: BoardDefinition;
 

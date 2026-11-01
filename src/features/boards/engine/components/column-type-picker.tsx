@@ -23,6 +23,7 @@ export const ENABLED_TYPES: ColumnTypeKey[] = [
   "person",
   "connected_board",
   "mirror",
+  "attachment",
 ];
 
 interface ColumnTypePickerProps {

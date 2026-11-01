@@ -240,45 +240,8 @@ export async function importWithColumnCleanup(
         }
       }
 
-      // 3. Soft-delete unmapped columns (if not keeping them).
-      // The delete is scoped to the target group's column set: a column that
-      // belongs to another scope (a different custom group) is never touched.
-      for (const columnId of columnsToDelete) {
-        // Clean up dependents first
-        await serviceClient.rpc("cleanup_column_dependents", { p_column_id: columnId });
+      // Deletion of unmapped columns happens after row import (see below).
 
-        // Soft-delete the column
-        let deleteQuery = serviceClient
-          .from("columns")
-          .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-          .eq("id", columnId)
-          .is("deleted_at", null);
-        deleteQuery = targetColumnGroupId
-          ? deleteQuery.eq("group_id", targetColumnGroupId)
-          : deleteQuery.is("group_id", null);
-        const { error } = await deleteQuery;
-
-        if (!error) {
-          deletedColumns.push(columnId);
-          
-          // Audit log entry for column deletion
-          await serviceClient
-            .from("activity_logs")
-            .insert({
-              organization_id: input.organizationId,
-              workspace_id: input.workspaceId,
-              board_id: input.boardId,
-              column_id: columnId,
-              actor_user_id: actorUserId,
-              action: "column.delete_import",
-              payload: {
-                reason: "unmapped_during_import",
-                column_id: columnId,
-              },
-              created_at: new Date().toISOString(),
-            });
-        }
-      }
 
       // 4. Bulk-create records and cell values
       const BATCH_SIZE = 500;
@@ -397,6 +360,41 @@ export async function importWithColumnCleanup(
         }
 
         createdCount += createdRecords.length;
+      }
+
+      // 5. Delete unmapped columns (only if toggle OFF), after row import.
+      // If toggle ON, keepUnmappedColumns true and columnsToDelete ignored.
+      const deleteSet = input.keepUnmappedColumns ? [] : columnsToDelete;
+      // Protect primary/title column server-side.
+      const { data: allCols } = await serviceClient.from("columns").select("id,is_primary,type").eq("board_id", input.boardId).is("deleted_at", null);
+      const protectedIds = new Set((allCols ?? []).filter((c: { is_primary?: boolean; type?: string }) => c.is_primary || c.type === "title").map((c: { id: string }) => c.id));
+      for (const columnId of deleteSet) {
+        if (protectedIds.has(columnId)) continue;
+        await serviceClient.rpc("cleanup_column_dependents", { p_column_id: columnId });
+        let deleteQuery = serviceClient
+          .from("columns")
+          .update({ deleted_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+          .eq("id", columnId)
+          .is("deleted_at", null);
+        deleteQuery = targetColumnGroupId
+          ? deleteQuery.eq("group_id", targetColumnGroupId)
+          : deleteQuery.is("group_id", null);
+        const { error } = await deleteQuery;
+        if (!error) {
+          deletedColumns.push(columnId);
+          await serviceClient.from("activity_logs").insert({
+            organization_id: input.organizationId,
+            workspace_id: input.workspaceId,
+            board_id: input.boardId,
+            column_id: columnId,
+            actor_user_id: actorUserId,
+            action: "column.delete_import",
+            payload: { reason: "unmapped_during_import", column_id: columnId },
+            created_at: new Date().toISOString(),
+          });
+        } else {
+          throw new Error(`Failed to delete column ${columnId}: ${error.message}`);
+        }
       }
 
       // Publish events for new columns

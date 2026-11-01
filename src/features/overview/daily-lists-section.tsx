@@ -6,6 +6,8 @@ import {
   AlertTriangle,
   CalendarClock,
   CalendarCheck2,
+  ChevronDown,
+  ChevronUp,
   ExternalLink,
   type LucideIcon,
 } from "lucide-react";
@@ -22,6 +24,7 @@ import {
   type DailyListPanelId,
   type DailyListPanelPayload,
 } from "@/features/overview/daily-lists";
+import { cn } from "@/lib/utils";
 
 const PANEL_ICONS: Record<DailyListPanelId, LucideIcon> = {
   today: CalendarCheck2,
@@ -106,6 +109,9 @@ function ListItem({ item }: { item: DailyListItem }) {
 
 interface DailyListPanelProps {
   panelId: DailyListPanelId;
+  isActive?: boolean;
+  onSelectPanel?: (panelId: DailyListPanelId) => void;
+  boardsWithoutDueDateList?: Array<{ board_id: string; board_name: string }>;
 }
 
 /**
@@ -113,7 +119,12 @@ interface DailyListPanelProps {
  * loading, empty and error state and a failure here leaves the other two lists
  * — and the rest of the page — untouched.
  */
-function DailyListPanel({ panelId }: DailyListPanelProps) {
+function DailyListPanel({
+  panelId,
+  isActive = false,
+  onSelectPanel,
+  boardsWithoutDueDateList,
+}: DailyListPanelProps) {
   const Icon = PANEL_ICONS[panelId];
   const emptyCopy = PANEL_EMPTY_COPY[panelId];
   const meta = getDailyListPanelMeta(panelId);
@@ -121,6 +132,7 @@ function DailyListPanel({ panelId }: DailyListPanelProps) {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<DailyListPanelPayload | null>(null);
+  const [showUnmappedBoards, setShowUnmappedBoards] = useState(false);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -149,8 +161,31 @@ function DailyListPanel({ panelId }: DailyListPanelProps) {
   const items = data?.items ?? [];
 
   return (
-    <Card className="border-border/60 flex flex-col p-6 shadow-none">
-      <div className="flex items-start justify-between gap-3">
+    <Card
+      className={cn(
+        "border-border/60 flex flex-col p-6 shadow-none transition-all",
+        isActive && "border-primary ring-primary/30 ring-2",
+      )}
+    >
+      <div
+        role={onSelectPanel ? "button" : undefined}
+        tabIndex={onSelectPanel ? 0 : undefined}
+        onClick={onSelectPanel ? () => onSelectPanel(panelId) : undefined}
+        onKeyDown={
+          onSelectPanel
+            ? (e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelectPanel(panelId);
+                }
+              }
+            : undefined
+        }
+        className={cn(
+          "flex items-start justify-between gap-3",
+          onSelectPanel && "cursor-pointer",
+        )}
+      >
         <div className="min-w-0">
           <h2 className="text-foreground flex items-center gap-2 text-base font-medium tracking-tight">
             <Icon
@@ -202,14 +237,47 @@ function DailyListPanel({ panelId }: DailyListPanelProps) {
         panelId !== "today" &&
         data.boardsWithoutDueDate !== null &&
         data.boardsWithoutDueDate > 0 && (
-          <p className="border-border/70 text-muted-foreground mt-5 flex items-start gap-2 border-t pt-4 text-[11px] leading-snug">
-            <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden="true" />
-            <span>
-              {data.boardsWithoutDueDate}{" "}
-              {data.boardsWithoutDueDate === 1 ? "board has" : "boards have"} no due-date
-              field in this workspace, so this list may be incomplete.
-            </span>
-          </p>
+          <div className="border-border/70 mt-5 border-t pt-4">
+            <button
+              type="button"
+              onClick={() => setShowUnmappedBoards((prev) => !prev)}
+              className="text-muted-foreground hover:text-foreground flex w-full items-start justify-between gap-2 text-left text-[11px] leading-snug transition-colors"
+            >
+              <span className="flex items-start gap-2">
+                <AlertTriangle className="mt-px size-3 shrink-0" aria-hidden="true" />
+                <span>
+                  {data.boardsWithoutDueDate}{" "}
+                  {data.boardsWithoutDueDate === 1 ? "board has" : "boards have"} no
+                  due-date field in this workspace, so this list may be incomplete.
+                </span>
+              </span>
+              {boardsWithoutDueDateList && boardsWithoutDueDateList.length > 0 && (
+                <span className="shrink-0">
+                  {showUnmappedBoards ? (
+                    <ChevronUp className="size-3.5" />
+                  ) : (
+                    <ChevronDown className="size-3.5" />
+                  )}
+                </span>
+              )}
+            </button>
+            {showUnmappedBoards &&
+              boardsWithoutDueDateList &&
+              boardsWithoutDueDateList.length > 0 && (
+                <div className="mt-2.5 flex flex-wrap gap-1.5">
+                  {boardsWithoutDueDateList.map((b) => (
+                    <Link
+                      key={b.board_id}
+                      href={`/${b.board_id}`}
+                      className="border-border bg-muted/40 hover:bg-accent inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px]"
+                    >
+                      {b.board_name}
+                      <ExternalLink className="size-2.5 opacity-60" />
+                    </Link>
+                  ))}
+                </div>
+              )}
+          </div>
         )}
 
       {!isLoading && !error && data?.truncated && (
@@ -221,17 +289,33 @@ function DailyListPanel({ panelId }: DailyListPanelProps) {
   );
 }
 
+interface DailyListsSectionProps {
+  activePanelId?: DailyListPanelId | null;
+  onSelectPanel?: (panelId: DailyListPanelId) => void;
+  boardsWithoutDueDateList?: Array<{ board_id: string; board_name: string }>;
+}
+
 /**
  * Today's jobs, Overdue and Upcoming.
  *
  * Always relative to the current moment and independent of the Overview range
  * selector: changing the range does not re-query or re-scope these lists.
  */
-export function DailyListsSection() {
+export function DailyListsSection({
+  activePanelId = null,
+  onSelectPanel,
+  boardsWithoutDueDateList,
+}: DailyListsSectionProps = {}) {
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
       {DAILY_LIST_PANELS.map((panelId) => (
-        <DailyListPanel key={panelId} panelId={panelId} />
+        <DailyListPanel
+          key={panelId}
+          panelId={panelId}
+          isActive={activePanelId === panelId}
+          onSelectPanel={onSelectPanel}
+          boardsWithoutDueDateList={boardsWithoutDueDateList}
+        />
       ))}
     </div>
   );

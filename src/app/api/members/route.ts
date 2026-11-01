@@ -4,7 +4,6 @@ import { cookies } from "next/headers";
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import {
-  callMemberMutation,
   canManageMembers,
   getBoardWorkspaceId,
   getSubjectName,
@@ -12,6 +11,7 @@ import {
 } from "@/lib/members-access";
 import {
   isValidEmail,
+  isGrantableAccess,
   type AccessRole,
   type GrantableAccess,
   type Member,
@@ -30,12 +30,10 @@ import {
  *   PATCH  /api/members  { action: ... }
  *   DELETE /api/members  { scope, workspace_id, board_id?, user_id }
  *
- * Reads happen through the service client so a workspace with no client RLS
- * policy on workspace_members still lists correctly; the permission check runs
- * first, from the session cookie, so the service client only ever sees rows the
- * caller was already entitled to. Writes go through the SECURITY DEFINER RPCs
- * as the signed-in user, so the database re-checks the caller's role on its own
- * — this route cannot grant itself authority it does not have.
+ * Reads and writes run after verifying caller permissions via `resolveCallerAccess`
+ * and `canManageMembers` from the session cookie. User account lookups use
+ * `public.profiles` and `svc.auth.admin.listUsers()` because `auth.users` is not
+ * exposed through PostgREST's `public` schema.
  */
 
 function fail(message: string, status: number) {
@@ -77,18 +75,98 @@ interface WorkspaceMemberRow {
   user_id: string;
   role: string;
   can_edit: boolean;
-  full_name: string | null;
-  email: string;
 }
 
 interface OverrideRow {
   user_id: string;
-  email: string;
   access: string;
 }
 
-/** Workspace members with their resolved display role, via the SQL resolver. */
-async function loadWorkspaceMembers(workspaceId: string): Promise<{ members: Member[]; emails: Map<string, string> }> {
+interface AuthUserSummary {
+  id: string;
+  email: string;
+  name: string;
+  avatar_url: string | null;
+}
+
+async function listAuthUserSummaries(
+  svc: Awaited<ReturnType<typeof createServiceClient>>,
+): Promise<AuthUserSummary[]> {
+  try {
+    const { data, error } = await svc.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    if (error || !data?.users) return [];
+    const results: AuthUserSummary[] = [];
+    for (const u of data.users) {
+      const email = u.email?.trim().toLowerCase();
+      if (!email) continue;
+      const meta = (u.user_metadata ?? {}) as Record<string, unknown>;
+      const avatar =
+        typeof meta.avatar_url === "string" && meta.avatar_url.trim()
+          ? meta.avatar_url.trim()
+          : null;
+      results.push({
+        id: u.id,
+        email,
+        name: displayName(meta, email),
+        avatar_url: avatar,
+      });
+    }
+    return results;
+  } catch {
+    return [];
+  }
+}
+
+async function resolveUserByEmail(
+  svc: Awaited<ReturnType<typeof createServiceClient>>,
+  email: string,
+): Promise<{ id: string; email: string } | null> {
+  const normalized = email.trim().toLowerCase();
+  if (!normalized) return null;
+
+  const { data: profileRows } = await svc
+    .from("profiles")
+    .select("id, email")
+    .ilike("email", normalized)
+    .limit(1);
+
+  if (profileRows && profileRows.length > 0 && profileRows[0].id) {
+    return {
+      id: profileRows[0].id as string,
+      email: ((profileRows[0].email as string | null) ?? normalized).toLowerCase(),
+    };
+  }
+
+  const authUsers = await listAuthUserSummaries(svc);
+  const matched = authUsers.find((u) => u.email === normalized);
+  if (matched) {
+    return { id: matched.id, email: matched.email };
+  }
+
+  return null;
+}
+
+async function resolveRoleIdForAccess(
+  svc: Awaited<ReturnType<typeof createServiceClient>>,
+  access: GrantableAccess,
+): Promise<string | null> {
+  const targetName = access === "edit" ? "Employee" : "Viewer";
+  const { data } = await svc
+    .from("roles")
+    .select("id, name")
+    .ilike("name", targetName)
+    .limit(1);
+
+  if (data && data.length > 0 && data[0].id) {
+    return data[0].id as string;
+  }
+  return null;
+}
+
+/** Workspace members with their resolved display role. */
+async function loadWorkspaceMembers(
+  workspaceId: string,
+): Promise<{ members: Member[]; emails: Map<string, string> }> {
   const svc = await createServiceClient();
 
   const { data: rows, error } = await svc
@@ -115,7 +193,7 @@ async function loadWorkspaceMembers(workspaceId: string): Promise<{ members: Mem
   const lastActiveAt = new Map<string, string | null>();
   const joinedAt = new Map<string, string | null>();
   const userIds = list.map((row) => row.user_id);
-  if (ownerId) userIds.push(ownerId);
+  if (ownerId && !userIds.includes(ownerId)) userIds.push(ownerId);
 
   if (userIds.length > 0) {
     const { data: profiles } = await svc
@@ -138,19 +216,13 @@ async function loadWorkspaceMembers(workspaceId: string): Promise<{ members: Mem
 
   const missing = userIds.filter((id) => !emails.has(id));
   if (missing.length > 0) {
-    const { data: authRows } = await svc
-      .from("auth.users")
-      .select("id, email, raw_user_meta_data, avatar_url")
-      .in("id", missing);
-
-    for (const row of authRows ?? []) {
-      const id = row.id as string;
-      const email = (row.email as string | null)?.toLowerCase();
-      if (!email) continue;
-      emails.set(id, email);
-      if (!names.get(id)) names.set(id, displayName(row.raw_user_meta_data, email));
-      const avatar = (row.avatar_url as string | null)?.trim();
-      if (avatar && !avatars.has(id)) avatars.set(id, avatar);
+    const missingSet = new Set(missing);
+    const authUsers = await listAuthUserSummaries(svc);
+    for (const row of authUsers) {
+      if (!missingSet.has(row.id)) continue;
+      emails.set(row.id, row.email);
+      if (!names.get(row.id)) names.set(row.id, row.name);
+      if (row.avatar_url && !avatars.has(row.id)) avatars.set(row.id, row.avatar_url);
     }
   }
 
@@ -162,7 +234,6 @@ async function loadWorkspaceMembers(workspaceId: string): Promise<{ members: Mem
 
   const members: Member[] = list.map((row) => {
     const id = row.user_id;
-    const email = emails.get(id) ?? "";
     return {
       user_id: id,
       ...describe(id, "User"),
@@ -199,7 +270,7 @@ async function loadWorkspaceMembers(workspaceId: string): Promise<{ members: Mem
   const order: Record<AccessRole, number> = { owner: 0, edit: 1, view: 2 };
   uniqueMembers.sort((a, b) => {
     const byRole = order[a.role] - order[b.role];
-    return byRole !== 0 ? a.email.localeCompare(b.email) : a.user_id.localeCompare(b.user_id);
+    return byRole !== 0 ? byRole : a.email.localeCompare(b.email);
   });
 
   return { members: uniqueMembers, emails };
@@ -229,10 +300,10 @@ export async function GET(request: NextRequest) {
     return fail("You do not have access to this workspace", 403);
   }
 
-  const canManage = currentAccess === "owner" || currentAccess === "edit";
+  const canManage = await canManageMembers(user.id, workspaceId, boardId);
 
   let members: Member[] = [];
-  let pending: PendingInvite[] = [];
+  const pending: PendingInvite[] = [];
   let candidates: MemberCandidate[] = [];
   let subjectName = "";
 
@@ -241,11 +312,10 @@ export async function GET(request: NextRequest) {
     const loaded = await loadWorkspaceMembers(workspaceId);
     members = loaded.members;
 
+    const svc = await createServiceClient();
+
     if (scope === "board") {
-      // A board-specific override wins over the inherited workspace role. An
-      // override for someone who is not a workspace member is their only route
-      // onto this board, so it is listed too rather than silently dropped.
-      const svc = await createServiceClient();
+      // A board-specific override wins over the inherited workspace role.
       const { data: overrides, error } = await svc
         .from("board_member_overrides")
         .select("user_id, access")
@@ -258,39 +328,57 @@ export async function GET(request: NextRequest) {
       for (const row of (overrides ?? []) as OverrideRow[]) {
         const access = (row.access as AccessRole) ?? "view";
         const existing = byUser.get(row.user_id);
-        if (existing) byUser.set(row.user_id, { ...existing, role: access, inherited: false });
+        if (existing && existing.role !== "owner") {
+          byUser.set(row.user_id, { ...existing, role: access, inherited: false });
+        }
       }
 
-      // Overrides for people who are not workspace members: the only route onto this
-      // board, so listed rather than silently dropped.
-      const orphans = (overrides ?? []).filter((row) => !byUser.has(row.user_id));
+      // Overrides for people who are not workspace members: listed rather than dropped.
+      const orphans = ((overrides ?? []) as OverrideRow[]).filter((row) => !byUser.has(row.user_id));
 
       if (orphans.length > 0) {
-        const { data: authRows } = await svc
-          .from("auth.users")
-          .select("id, email, raw_user_meta_data, avatar_url")
-          .in(
-            "id",
-            orphans.map((row) => row.user_id),
-          );
+        const orphanIds = orphans.map((row) => row.user_id);
+        const { data: orphanProfiles } = await svc
+          .from("profiles")
+          .select("id, full_name, email, avatar_url, last_login_at, last_active_at, created_at")
+          .in("id", orphanIds);
 
-        for (const row of authRows ?? []) {
-          const id = row.id as string;
-          const email = (row.email as string | null)?.toLowerCase();
+        const profileById = new Map<string, Record<string, unknown>>();
+        for (const p of orphanProfiles ?? []) {
+          profileById.set(p.id as string, p as Record<string, unknown>);
+        }
+
+        const missingOrphans = orphanIds.filter((id) => !profileById.has(id));
+        const authById = new Map<string, AuthUserSummary>();
+        if (missingOrphans.length > 0) {
+          const authUsers = await listAuthUserSummaries(svc);
+          for (const u of authUsers) authById.set(u.id, u);
+        }
+
+        for (const override of orphans) {
+          const id = override.user_id;
+          const prof = profileById.get(id);
+          const authUser = authById.get(id);
+          const email =
+            ((prof?.email as string | null) ?? authUser?.email ?? "").trim().toLowerCase();
           if (!email) continue;
-          const override = orphans.find((o) => o.user_id === id);
-          if (!override) continue;
+          const name =
+            ((prof?.full_name as string | null)?.trim() ||
+              authUser?.name ||
+              email.split("@")[0] ||
+              "User");
           byUser.set(id, {
             user_id: id,
-            name: displayName(row.raw_user_meta_data, email),
+            name,
             email,
-            avatar_url: (row.avatar_url as string | null) ?? null,
+            avatar_url:
+              ((prof?.avatar_url as string | null) ?? authUser?.avatar_url ?? null),
             role: (override.access as AccessRole) ?? "view",
             status: "active",
             inherited: false,
-            joined_at: null,
-            last_login_at: null,
-            last_active_at: null,
+            joined_at: (prof?.created_at as string | null) ?? null,
+            last_login_at: (prof?.last_login_at as string | null) ?? null,
+            last_active_at: (prof?.last_active_at as string | null) ?? null,
           });
         }
       }
@@ -303,67 +391,97 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Pending invites are privileged: only owner/admin may see them, and the RPC
-    // raises otherwise. A view user simply gets an empty list.
+    // Pending invites are privileged: only callers who can manage members may see them.
     if (canManage) {
-      const svc = await createServiceClient();
-      const { data, error } = await svc.rpc("list_pending_workspace_invites", {
-        p_workspace_id: workspaceId,
-      });
+      const { data: inviteRows, error: inviteError } = await svc
+        .from("workspace_invites")
+        .select("code, email, role, can_edit, created_at, expires_at, used_at")
+        .eq("workspace_id", workspaceId)
+        .is("used_at", null)
+        .order("created_at", { ascending: false });
 
-      if (error) {
-        console.warn("[api/members] pending invites unavailable:", error.message);
+      if (inviteError) {
+        console.warn("[api/members] pending invites unavailable:", inviteError.message);
       } else {
-        pending = ((data ?? []) as { code: string; email: string; access: string; created_at: string }[]).map(
-          (row) => ({
-            code: row.code,
-            email: row.email,
-            role: (row.access === "edit" ? "edit" : "view") as AccessRole,
-            created_at: row.created_at,
-          }),
-        );
+        const memberEmails = new Set(members.map((m) => m.email.toLowerCase()));
+        const seenInviteEmails = new Set<string>();
+        const now = Date.now();
+
+        for (const row of inviteRows ?? []) {
+          const email = ((row.email as string | null) ?? "").trim().toLowerCase();
+          if (!email || memberEmails.has(email) || seenInviteEmails.has(email)) continue;
+          if (row.expires_at) {
+            const expiresMs = new Date(row.expires_at as string).getTime();
+            if (!Number.isNaN(expiresMs) && expiresMs <= now) continue;
+          }
+          seenInviteEmails.add(email);
+          pending.push({
+            code: row.code as string,
+            email,
+            role: (row.role === "admin" || row.role === "staff" || row.can_edit
+              ? "edit"
+              : "view") as AccessRole,
+            created_at: row.created_at as string,
+          });
+        }
       }
     }
 
     if (canManage && query.length > 0) {
-      const svc = await createServiceClient();
-      const { data, error } = await svc
-        .from("auth.users")
-        .select("id, email, raw_user_meta_data")
-        .ilike("email", `%${query}%`)
-        .limit(8);
-
-      if (!error) {
-        const taken = new Set(members.map((member) => member.email.toLowerCase()));
+      const qLower = query.toLowerCase();
+      // In workspace scope, hide people already in the workspace or pending invite.
+      // In board scope, only hide the workspace owner so existing workspace members
+      // can also be searched and given board-specific overrides from the top bar.
+      const taken = new Set<string>();
+      if (scope === "workspace") {
+        for (const member of members) taken.add(member.email.toLowerCase());
         for (const invite of pending) taken.add(invite.email.toLowerCase());
-
-candidates = (data ?? [])
-          .map((row) => ({
-            id: row.id as string,
-            email: (row.email as string | null)?.toLowerCase() ?? null,
-            raw_user_meta_data: row.raw_user_meta_data as unknown,
-          }))
-          // A row with no email cannot be invited or matched, so it is dropped
-          // here rather than being carried as an empty string into the picker.
-          .filter(
-            (row): row is { id: string; email: string; raw_user_meta_data: unknown } =>
-              row.email !== null && !taken.has(row.email),
-          )
-          .map((row) => ({
-            user_id: row.id,
-            email: row.email,
-            name: displayName(row.raw_user_meta_data, row.email),
-          }));
+      } else {
+        for (const member of members) {
+          if (member.role === "owner") taken.add(member.email.toLowerCase());
+        }
       }
+
+      const candidateByEmail = new Map<string, MemberCandidate>();
+
+      const { data: profileMatches } = await svc
+        .from("profiles")
+        .select("id, email, full_name")
+        .or(`email.ilike.%${query}%,full_name.ilike.%${query}%`)
+        .limit(12);
+
+      for (const row of profileMatches ?? []) {
+        const email = ((row.email as string | null) ?? "").trim().toLowerCase();
+        if (!email || taken.has(email)) continue;
+        const fullName = (row.full_name as string | null)?.trim();
+        candidateByEmail.set(email, {
+          user_id: row.id as string,
+          email,
+          name: fullName || email.split("@")[0] || email,
+        });
+      }
+
+      if (candidateByEmail.size < 8) {
+        const authUsers = await listAuthUserSummaries(svc);
+        for (const u of authUsers) {
+          if (taken.has(u.email) || candidateByEmail.has(u.email)) continue;
+          if (u.email.includes(qLower) || u.name.toLowerCase().includes(qLower)) {
+            candidateByEmail.set(u.email, {
+              user_id: u.id,
+              email: u.email,
+              name: u.name,
+            });
+            if (candidateByEmail.size >= 8) break;
+          }
+        }
+      }
+
+      candidates = Array.from(candidateByEmail.values()).slice(0, 8);
     }
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Could not load members", 500);
   }
 
-  // Activity columns are only sent to an owner or admin. The UI gates on
-  // `can_manage`, but the values must not reach the browser for a view or edit
-  // caller at all, because last_active_at is session data and the database is the
-  // only trustworthy gatekeeper.
   if (!canManage) {
     members = members.map((member) => ({
       ...member,
@@ -403,7 +521,8 @@ export async function POST(request: NextRequest) {
 
   const scope: MemberScope = body.scope === "board" ? "board" : "workspace";
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-  const access: GrantableAccess = body.access === "view" ? "view" : "edit";
+  if (!isGrantableAccess(body.access)) return fail("access must be either view or edit", 400);
+  const access: GrantableAccess = body.access;
 
   if (!isValidEmail(email)) return fail("Enter a valid email address", 400);
 
@@ -422,49 +541,141 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    // Membership always lands on the workspace — that is the table
-    // can_edit_workspace reads, and a board grant on a non-member would not be
-    // honoured by any of the existing RLS. At board scope the chosen access is
-    // then pinned as an override for that board only.
-    let invited = false;
+    const svc = await createServiceClient();
 
-    try {
-      await callMemberMutation("add_workspace_member", {
-        p_workspace_id: workspaceId,
-        p_email: email,
-        p_access: access,
-      });
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "";
-      // The RPC raises P0002 when no account exists for the address; anything
-      // else (duplicate, permission) must surface as-is.
-      if (!message.includes("no account exists")) throw err;
-      await callMemberMutation("invite_workspace_member", {
-        p_workspace_id: workspaceId,
-        p_email: email,
-        p_access: access,
-      });
-      invited = true;
-    }
+    const { data: workspace } = await svc
+      .from("workspaces")
+      .select("owner_id, organization_id")
+      .eq("id", workspaceId)
+      .maybeSingle();
 
-    if (scope === "board" && boardId) {
-      const svc = await createServiceClient();
-      const { data } = await svc
-        .from("auth.users")
+    const ownerId = (workspace?.owner_id as string | null) ?? null;
+    const organizationId = (workspace?.organization_id as string | null) ?? null;
+
+    const existingUser = await resolveUserByEmail(svc, email);
+
+    if (existingUser) {
+      if (ownerId && existingUser.id === ownerId) {
+        return fail("That person is already the workspace owner", 400);
+      }
+
+      const { data: existingMember } = await svc
+        .from("workspace_members")
         .select("id")
-        .eq("email", email)
+        .eq("workspace_id", workspaceId)
+        .eq("user_id", existingUser.id)
         .maybeSingle();
 
-      if (data?.id) {
-        await callMemberMutation("set_board_member_access", {
-          p_board_id: boardId,
-          p_user_id: data.id,
-          p_access: access,
-        });
+      if (scope === "workspace" && existingMember) {
+        return fail("That person already has access.", 400);
       }
+
+      if (!existingMember) {
+        const roleId = await resolveRoleIdForAccess(svc, access);
+        const { error: insertMemberErr } = await svc
+          .from("workspace_members")
+          .insert({
+            user_id: existingUser.id,
+            workspace_id: workspaceId,
+            ...(roleId ? { role_id: roleId } : {}),
+            role: access === "edit" ? "staff" : "client",
+            can_view: true,
+            can_edit: access === "edit",
+          });
+
+        if (insertMemberErr) throw new Error(insertMemberErr.message);
+
+        if (organizationId) {
+          await svc
+            .from("organization_members")
+            .upsert(
+              {
+                organization_id: organizationId,
+                user_id: existingUser.id,
+                role: "member",
+              },
+              { onConflict: "organization_id,user_id", ignoreDuplicates: true },
+            );
+        }
+      }
+
+      if (scope === "board" && boardId) {
+        const { error: overrideErr } = await svc
+          .from("board_member_overrides")
+          .upsert(
+            {
+              board_id: boardId,
+              user_id: existingUser.id,
+              access,
+              granted_by: user.id,
+            },
+            { onConflict: "board_id,user_id" },
+          );
+
+        if (overrideErr) throw new Error(overrideErr.message);
+      }
+
+      // Consume any pending invites for this user on this workspace.
+      await svc
+        .from("workspace_invites")
+        .update({
+          used_at: new Date().toISOString(),
+          used_by: existingUser.id,
+        })
+        .eq("workspace_id", workspaceId)
+        .ilike("email", email)
+        .is("used_at", null);
+
+      return NextResponse.json({ success: true, invited: false });
     }
 
-    return NextResponse.json({ success: true, invited });
+    // No account exists yet for this email -> create or refresh a pending workspace invite.
+    const { data: existingInvites } = await svc
+      .from("workspace_invites")
+      .select("code, expires_at")
+      .eq("workspace_id", workspaceId)
+      .ilike("email", email)
+      .is("used_at", null)
+      .order("created_at", { ascending: false })
+      .limit(1);
+
+    const activeInvite = (existingInvites ?? []).find((inv) => {
+      if (!inv.expires_at) return true;
+      return new Date(inv.expires_at as string).getTime() > Date.now();
+    });
+
+    const nextExpiry = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+    if (activeInvite?.code) {
+      const { error: updateInviteErr } = await svc
+        .from("workspace_invites")
+        .update({
+          role: access === "edit" ? "staff" : "client",
+          can_edit: access === "edit",
+          created_at: new Date().toISOString(),
+          expires_at: nextExpiry,
+        })
+        .eq("code", activeInvite.code as string);
+
+      if (updateInviteErr) throw new Error(updateInviteErr.message);
+    } else {
+      const code = crypto.randomUUID().replace(/-/g, "");
+      const { error: insertInviteErr } = await svc
+        .from("workspace_invites")
+        .insert({
+          code,
+          workspace_id: workspaceId,
+          email,
+          role: access === "edit" ? "staff" : "client",
+          can_edit: access === "edit",
+          created_by: user.id,
+          expires_at: nextExpiry,
+        });
+
+      if (insertInviteErr) throw new Error(insertInviteErr.message);
+    }
+
+    return NextResponse.json({ success: true, invited: true });
   } catch (err) {
     return fail(err instanceof Error ? err.message : "Could not add that member", 400);
   }
@@ -488,6 +699,8 @@ export async function PATCH(request: NextRequest) {
   const action = body.action;
 
   try {
+    const svc = await createServiceClient();
+
     // ── Pending invites ───────────────────────────────────────────────────
     if (action === "resend_invite" || action === "cancel_invite") {
       const workspaceId = typeof body.workspace_id === "string" ? body.workspace_id : null;
@@ -498,10 +711,36 @@ export async function PATCH(request: NextRequest) {
         return fail("Only the owner and users with edit access can manage invites", 403);
       }
 
-      await callMemberMutation(
-        action === "resend_invite" ? "resend_workspace_invite" : "cancel_workspace_invite",
-        { p_workspace_id: workspaceId, p_code: code },
-      );
+      if (action === "resend_invite") {
+        const { data: updated, error } = await svc
+          .from("workspace_invites")
+          .update({
+            created_at: new Date().toISOString(),
+            expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+          })
+          .eq("workspace_id", workspaceId)
+          .eq("code", code)
+          .is("used_at", null)
+          .select("code");
+
+        if (error) throw new Error(error.message);
+        if (!updated || updated.length === 0) {
+          return fail("That invite no longer exists", 404);
+        }
+      } else {
+        const { data: deleted, error } = await svc
+          .from("workspace_invites")
+          .delete()
+          .eq("workspace_id", workspaceId)
+          .eq("code", code)
+          .is("used_at", null)
+          .select("code");
+
+        if (error) throw new Error(error.message);
+        if (!deleted || deleted.length === 0) {
+          return fail("That invite no longer exists", 404);
+        }
+      }
 
       return NextResponse.json({ success: true });
     }
@@ -527,31 +766,65 @@ export async function PATCH(request: NextRequest) {
 
     if (action === "clear_override") {
       if (!boardId) return fail("board_id is required to clear a board override", 400);
-      await callMemberMutation("remove_board_member_access", {
-        p_board_id: boardId,
-        p_user_id: userId,
-      });
+      const { error } = await svc
+        .from("board_member_overrides")
+        .delete()
+        .eq("board_id", boardId)
+        .eq("user_id", userId);
+
+      if (error) throw new Error(error.message);
       return NextResponse.json({ success: true });
     }
 
     if (action !== "set_access") return fail("Unknown action", 400);
 
-    const access: GrantableAccess = body.access === "view" ? "view" : "edit";
+    if (!isGrantableAccess(body.access)) return fail("access must be either view or edit", 400);
+    const access: GrantableAccess = body.access;
+
+    const { data: ws } = await svc
+      .from("workspaces")
+      .select("owner_id")
+      .eq("id", workspaceId)
+      .maybeSingle();
+
+    if (ws?.owner_id === userId) {
+      return fail("The workspace owner's access cannot be changed", 400);
+    }
 
     if (scope === "board" && boardId) {
-      await callMemberMutation("set_board_member_access", {
-        p_board_id: boardId,
-        p_user_id: userId,
-        p_access: access,
-      });
+      const { error } = await svc
+        .from("board_member_overrides")
+        .upsert(
+          {
+            board_id: boardId,
+            user_id: userId,
+            access,
+            granted_by: user.id,
+          },
+          { onConflict: "board_id,user_id" },
+        );
+
+      if (error) throw new Error(error.message);
       return NextResponse.json({ success: true, access });
     }
 
-    await callMemberMutation("set_workspace_member_access", {
-      p_workspace_id: workspaceId,
-      p_user_id: userId,
-      p_access: access,
-    });
+    const roleId = await resolveRoleIdForAccess(svc, access);
+    const { data: updatedRows, error } = await svc
+      .from("workspace_members")
+      .update({
+        ...(roleId ? { role_id: roleId } : {}),
+        role: access === "edit" ? "staff" : "client",
+        can_view: true,
+        can_edit: access === "edit",
+      })
+      .eq("workspace_id", workspaceId)
+      .eq("user_id", userId)
+      .select("id");
+
+    if (error) throw new Error(error.message);
+    if (!updatedRows || updatedRows.length === 0) {
+      return fail("That user is not a member of this workspace", 404);
+    }
 
     return NextResponse.json({ success: true, access });
   } catch (err) {
@@ -565,24 +838,27 @@ export async function DELETE(request: NextRequest) {
 
   const body = (await request.json().catch(() => ({}))) as PatchBody;
 
-  // DELETE carries either a member to remove (user_id) or an invite to cancel
-  // (code). Two unrelated nouns in one verb is a smell, but they are the same
-  // "stop this pending relationship" action from the dialog's point of view.
   const code = typeof body.code === "string" ? body.code : null;
   const userId = typeof body.user_id === "string" ? body.user_id : null;
 
   const workspaceId =
     typeof body.workspace_id === "string" ? body.workspace_id : null;
 
+  const svc = await createServiceClient();
+
   if (workspaceId && code) {
     try {
       if (!(await canManageMembers(user.id, workspaceId, null))) {
         return fail("Only the owner and users with edit access can cancel invites", 403);
       }
-      await callMemberMutation("cancel_workspace_invite", {
-        p_workspace_id: workspaceId,
-        p_code: code,
-      });
+      const { error } = await svc
+        .from("workspace_invites")
+        .delete()
+        .eq("workspace_id", workspaceId)
+        .eq("code", code)
+        .is("used_at", null);
+
+      if (error) throw new Error(error.message);
       return NextResponse.json({ success: true, cancelled: true });
     } catch (err) {
       return fail(err instanceof Error ? err.message : "Could not cancel that invite", 400);
@@ -599,13 +875,17 @@ export async function DELETE(request: NextRequest) {
   if (!resolvedWorkspaceId) return fail("That workspace could not be found", 404);
 
   try {
-    // At board scope, removing means "drop the override and hand them back to
-    // the workspace role" — it must not strip workspace access as a side effect.
     if (scope === "board" && boardId) {
-      await callMemberMutation("remove_board_member_access", {
-        p_board_id: boardId,
-        p_user_id: userId,
-      });
+      if (!(await canManageMembers(user.id, resolvedWorkspaceId, boardId))) {
+        return fail("Only the owner and users with edit access can remove members", 403);
+      }
+      const { error } = await svc
+        .from("board_member_overrides")
+        .delete()
+        .eq("board_id", boardId)
+        .eq("user_id", userId);
+
+      if (error) throw new Error(error.message);
       return NextResponse.json({ success: true, scope });
     }
 
@@ -613,10 +893,27 @@ export async function DELETE(request: NextRequest) {
       return fail("Only the owner and users with edit access can remove members", 403);
     }
 
-    await callMemberMutation("remove_workspace_member", {
-      p_workspace_id: resolvedWorkspaceId,
-      p_user_id: userId,
-    });
+    if (userId === user.id) {
+      return fail("You cannot remove yourself", 400);
+    }
+
+    const { data: ws } = await svc
+      .from("workspaces")
+      .select("owner_id")
+      .eq("id", resolvedWorkspaceId)
+      .maybeSingle();
+
+    if (ws?.owner_id === userId) {
+      return fail("The workspace owner cannot be removed", 400);
+    }
+
+    const { error } = await svc
+      .from("workspace_members")
+      .delete()
+      .eq("workspace_id", resolvedWorkspaceId)
+      .eq("user_id", userId);
+
+    if (error) throw new Error(error.message);
 
     return NextResponse.json({ success: true, scope });
   } catch (err) {

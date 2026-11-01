@@ -93,11 +93,11 @@ export const quickCreateActions: QuickCreateAction[] = [
  * so the typecheck does not fail while the files are still on disk.
  */
 export const mockUser = {
-  name: "Alex Chen",
-  email: "alex@powerweave.studio",
+  name: "",
+  email: "",
   role: "Admin",
-  avatar: "AC",
-  avatarColor: "bg-gradient-to-br from-amber-500 to-orange-600",
+  avatar: "?",
+  avatarColor: "bg-muted",
 };
 
 /**

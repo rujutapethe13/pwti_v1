@@ -28,7 +28,7 @@ export function FormulaCellRenderer({ value }: CellRendererComponentProps) {
     return (
       <span className="text-sm">
         {value ? (
-          <span className="text-green-600 dark:text-green-400">✓ True</span>
+          <span className="text-[var(--surface-accent)]">✓ True</span>
         ) : (
           <span className="text-muted-foreground">✗ False</span>
         )}
@@ -52,4 +52,3 @@ export function FormulaCellRenderer({ value }: CellRendererComponentProps) {
     </span>
   );
 }
-

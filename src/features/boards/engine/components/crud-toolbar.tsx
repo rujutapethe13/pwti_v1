@@ -39,7 +39,7 @@ export function CrudToolbar({ title, actions, showUndoRedo = true, className, lo
   }, [redo]);
 
   return (
-    <div className={cn("flex items-center justify-between rounded-xl border border-border bg-card px-4 py-2 shadow-sm", className)}>
+    <div className={cn("flex min-h-9 items-center justify-between rounded-lg border border-border bg-card px-3 py-1 shadow-sm", className)}>
       <div className="flex items-center gap-2">
         {title && <h3 className="text-sm font-medium text-foreground">{title}</h3>}
         {children}
@@ -58,7 +58,19 @@ export function CrudToolbar({ title, actions, showUndoRedo = true, className, lo
         )}
 
         {actions.map((action, i) => (
-          <Button key={i} variant={action.variant ?? "default"} size="sm" onClick={action.onClick} disabled={action.disabled || loading}>
+          <Button
+            key={i}
+            variant={action.variant ?? (action.label === "New Item" ? "default" : "ghost")}
+            size="sm"
+            className={cn(
+              "h-9 rounded-lg",
+              action.label === "New Item"
+                ? "text-primary-foreground"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground",
+            )}
+            onClick={action.onClick}
+            disabled={action.disabled || loading}
+          >
             {action.icon}
             {action.label}
           </Button>
@@ -70,7 +82,7 @@ export function CrudToolbar({ title, actions, showUndoRedo = true, className, lo
 
 export function CrudToolbarAddButton({ onClick, label = "Add" }: { onClick: () => void; label?: string }) {
   return (
-    <Button variant="default" size="sm" onClick={onClick}>
+    <Button variant="default" size="sm" className="h-9 rounded-lg" onClick={onClick}>
       <Plus className="mr-1 size-4" />
       {label}
     </Button>

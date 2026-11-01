@@ -269,10 +269,10 @@ function SidePanel({ open, zIndex, title, icon, actions, onClose, children }: Si
           panel itself (see diagnostic #5). */}
       <div className="fixed inset-0" style={{ zIndex: zIndex - 1 }} onClick={onClose} aria-hidden="true" />
       <div
-        className="fixed top-0 right-0 bottom-0 flex w-96 shrink-0 flex-col border-l border-border bg-white opacity-100 shadow-xl"
+        className="fixed top-0 right-0 bottom-0 flex w-96 shrink-0 flex-col border-l border-border bg-card opacity-100 shadow-xl"
         style={{ zIndex: zIndex + 50 }}
       >
-        <div className="flex items-center justify-between border-b border-border bg-white px-4 py-3">
+        <div className="flex items-center justify-between border-b border-border bg-card px-4 py-3">
           <div className="flex items-center gap-2">
             {icon}
             <span className="text-sm font-semibold text-foreground">{title}</span>
@@ -284,7 +284,7 @@ function SidePanel({ open, zIndex, title, icon, actions, onClose, children }: Si
             </Button>
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto bg-white">{children}</div>
+        <div className="flex-1 overflow-y-auto bg-card">{children}</div>
       </div>
     </>
   );

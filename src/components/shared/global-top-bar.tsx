@@ -25,10 +25,14 @@ import {
   useNotifications,
 } from "@/components/shared/notification-list";
 import { UserMenu } from "@/components/shared/user-menu";
+import { MembersAccessModal } from "@/components/shared/members-access-modal";
+import { useWorkspace } from "@/lib/workspace-context";
 
 export function GlobalTopBar() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [membersOpen, setMembersOpen] = useState(false);
   const { unreadCount } = useNotifications();
+  const { activeWorkspaceId, activeWorkspace } = useWorkspace();
 
   const handleSearchSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +91,14 @@ export function GlobalTopBar() {
           </DropdownMenuContent>
         </DropdownMenu>
 
-        <Button variant="ghost" size="icon" className="size-8" aria-label="Add person">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-8"
+          aria-label="Add person"
+          title="Members & access"
+          onClick={() => setMembersOpen(true)}
+        >
           <UserPlus className="size-4" aria-hidden="true" />
         </Button>
 
@@ -95,6 +106,14 @@ export function GlobalTopBar() {
 
         <ThemeToggle />
       </div>
+
+      <MembersAccessModal
+        open={membersOpen}
+        onOpenChange={setMembersOpen}
+        scope={activeWorkspaceId ? { kind: "workspace", id: activeWorkspaceId } : null}
+        workspaceId={activeWorkspaceId ?? undefined}
+        subjectName={activeWorkspace?.name}
+      />
     </header>
   );
 }

@@ -22,6 +22,7 @@ import { PersonCell } from "./person-cell";
 import { LongTextCell } from "./long-text-cell";
 import { ProgressCell } from "./progress-cell";
 import { TagsCell } from "./tags-cell";
+import { AttachmentCell } from "./attachment-cell";
 import { RatingCell } from "./rating-cell";
 import { PlaceholderCell } from "./placeholder-cell";
 import { ConnectedBoardCellRenderer } from "./connected-board-cell";
@@ -56,6 +57,7 @@ export function registerAllCellRenderers(): void {
     { type: "tags", component: TagsCell },
     { type: "rating", component: RatingCell },
     { type: "files", component: TagsCell },
+    { type: "attachment", component: AttachmentCell },
     // Connected Data Engine types
     { type: "connected_board", component: ConnectedBoardCellRenderer },
     { type: "mirror", component: MirrorCellRenderer },

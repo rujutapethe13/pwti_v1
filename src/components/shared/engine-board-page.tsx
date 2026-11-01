@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import "@/features/boards/engine/view-engine/views";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -8,11 +8,11 @@ import { BoardLayout } from "@/components/shared/board-layout";
 import { registerAllCellRenderers } from "@/features/boards/engine";
 import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
 import { toast } from "sonner";
-import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn } from "@/features/boards/engine/lib/primary-column";
+import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn, repairPrimaryColumn } from "@/features/boards/engine/lib/primary-column";
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
-import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey } from "@/features/boards/engine/types";
+import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey, CellChangeMetadata } from "@/features/boards/engine/types";
 import { buildInitialCellValues } from "@/features/boards/engine/lib/record-defaults";
-import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, updateColumnLabels } from "@/features/boards/engine/actions";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, deleteView, updateColumnLabels } from "@/features/boards/engine/actions";
 import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
 import { resolveTitleColumnLabel } from "@/features/boards/engine/lib/title-column";
 import { applyColumnUpdates, buildColumnSettings, mergeColumns, sanitizeLabels } from "@/features/boards/engine/lib/option-lookup";
@@ -22,6 +22,12 @@ import type { DropdownOption } from "@/features/boards/engine/types";
 import { refreshClient360Snapshot } from "@/features/client-360/actions/snapshot-actions";
 import { MirrorDataProvider } from "@/features/boards/engine/connected-data/mirror-data-context";
 import { MirrorSettingsModal } from "@/features/boards/engine/components/mirror-settings-modal";
+import { ColumnAccessModal, type ColumnVisibilityConfig } from "@/features/boards/engine/components/column-access-modal";
+import { useScopeAccess } from "@/lib/members-client";
+import { useUser } from "@/lib/user-context";
+import { Eye } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { executeBoardCellAutomations, runAllActiveBoardAutomations } from "@/features/automations/board-automation-executor";
 
 interface EngineBoardPageProps {
   data: DemoBoardPageData;
@@ -89,11 +95,12 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
   useEffect(() => {
     registerAllCellRenderers();
   }, []);
-  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, views, groups: initialGroups } = data;
+  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, cellMetadata: initialCellMetadata, views, groups: initialGroups } = data;
 
-  const [columns, setColumns] = useState<ColumnDefinition[]>(initialColumns);
+  const [columns, setColumns] = useState<ColumnDefinition[]>(repairPrimaryColumn(initialColumns));
   const [records, setRecords] = useState<BoardRecord[]>(initialRecords);
   const [cellValues, setCellValues] = useState<Map<string, ColumnValue>>(cellValuesArrayToMap(initialCellValues));
+  const [cellMetadata, setCellMetadata] = useState<Map<string, CellChangeMetadata>>(new Map(initialCellMetadata ?? []));
   const [boardViews, setBoardViews] = useState<BoardView[]>(views);
   const [activeViewId, setActiveViewId] = useState<string>(views[0]?.id ?? "");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -104,10 +111,26 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
    const [bulkArchiveLoading, setBulkArchiveLoading] = useState(false);
    const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null);
    const [mirrorColumnId, setMirrorColumnId] = useState<string | null>(null);
+  const { members, access, isOwner } = useScopeAccess("board", board.workspaceId ?? null, board.id);
+  const { user } = useUser();
+  const [accessModalColumn, setAccessModalColumn] = useState<ColumnDefinition | null>(null);
+  const [previewAsUserId, setPreviewAsUserId] = useState<string | null>(null);
 
   // Groups live in state so a newly created group appears immediately — the
   // server props are only the initial snapshot.
   const [groups, setGroups] = useState<Group[]>(initialGroups);
+
+  // Re-sync local state when server data changes (Back/Forward navigation, reload)
+  useEffect(() => {
+    setColumns(repairPrimaryColumn(initialColumns));
+    setRecords(initialRecords);
+    setCellValues(cellValuesArrayToMap(initialCellValues));
+    setCellMetadata(new Map(initialCellMetadata ?? []));
+    setBoardViews(views);
+    setActiveViewId(views[0]?.id ?? "");
+    setGroups(initialGroups);
+    setTitleColumnLabel(resolveTitleColumnLabel(board.titleColumnLabel));
+  }, [board.id]);
 
   // The pinned title column header label. Stored on the board itself, never
   // derived from `columns[0]`.
@@ -143,6 +166,51 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
       cancelled = true;
     };
   }, []);
+
+  const handleMoveToGroup = useCallback(
+    async (recordIds: string[], targetGroupId: string) => {
+      const prevRecords = records.filter((r) => recordIds.includes(r.id));
+      setRecords((prev) =>
+        prev.map((r) => (recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r)),
+      );
+      try {
+        const response = await bulkUpdateRecords(recordIds, {}, targetGroupId);
+        if (response.error) {
+          setRecords((prev) => {
+            const remaining = prev.filter((r) => !recordIds.includes(r.id));
+            return [...remaining, ...prevRecords];
+          });
+          toast.error(response.error);
+        } else {
+          toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`);
+        }
+      } catch {
+        setRecords((prev) => {
+          const remaining = prev.filter((r) => !recordIds.includes(r.id));
+          return [...remaining, ...prevRecords];
+        });
+        toast.error("Failed to move records.");
+      }
+    },
+    [records],
+  );
+
+  const automationCtxRef = useRef({
+    board,
+    columns,
+    groups,
+    records,
+    cellValues,
+    handleMoveToGroup,
+  });
+  automationCtxRef.current = {
+    board,
+    columns,
+    groups,
+    records,
+    cellValues,
+    handleMoveToGroup,
+  };
 
   const handleCellChange = useCallback(
     async ({ recordId, columnId, value }: { recordId: string; columnId: string; value: ColumnValue }) => {
@@ -183,6 +251,22 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
             ),
           );
           toast.error(response.error);
+        } else {
+          // Execute any active board automations matching this cell edit
+          const ctx = automationCtxRef.current;
+          const updatedCellMap = new Map(ctx.cellValues);
+          updatedCellMap.set(key, value);
+          void executeBoardCellAutomations(recordId, columnId, value, {
+            board: ctx.board,
+            columns: ctx.columns,
+            groups: ctx.groups,
+            records: ctx.records,
+            cellValues: updatedCellMap,
+            setCellValues,
+            setRecords,
+            updateCellFn: updateCell,
+            moveRecordToGroupFn: (recId, grpId) => ctx.handleMoveToGroup([recId], grpId),
+          });
         }
       } catch {
         // Rollback on thrown error
@@ -200,7 +284,7 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         toast.error("Failed to save cell value.");
       }
     },
-    [board, cellValues, records],
+    [board, cellValues, columns, records],
   );
 
    const handleBulkDelete = useCallback(
@@ -344,38 +428,10 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         toast.error("Failed to duplicate record.");
       }
     },
-    [board, cellValues, records],
+    [board, cellValues, columns, records],
   );
 
-  const handleMoveToGroup = useCallback(
-    async (recordIds: string[], targetGroupId: string) => {
-      const prevRecords = records.filter((r) => recordIds.includes(r.id));
-      setRecords((prev) =>
-        prev.map((r) => (recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r)),
-      );
-      try {
-        const response = await bulkUpdateRecords(recordIds, {}, targetGroupId);
-        if (response.error) {
-          setRecords((prev) => {
-            const remaining = prev.filter((r) => !recordIds.includes(r.id));
-            return [...remaining, ...prevRecords];
-          });
-          toast.error(response.error);
-        } else {
-          toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`);
-        }
-      } catch {
-        setRecords((prev) => {
-          const remaining = prev.filter((r) => !recordIds.includes(r.id));
-          return [...remaining, ...prevRecords];
-        });
-        toast.error("Failed to move records.");
-      }
-    },
-    [records],
-  );
-
-  const handleMoveToStatus = useCallback(
+    const handleMoveToStatus = useCallback(
     async (recordIds: string[], statusName: string) => {
       const prevRecords = records.filter((r) => recordIds.includes(r.id));
       setRecords((prev) =>
@@ -721,6 +777,26 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       prev.map((c) => (c.id === columnId ? { ...c, restrictEditing: !c.restrictEditing, updatedAt: new Date().toISOString() } : c)),
     );
   }, []);
+
+    const handleColumnManageAccess = useCallback((column: ColumnDefinition) => {
+    setAccessModalColumn(column);
+  }, []);
+
+  const handleSaveColumnAccess = useCallback(async (columnId: string, config: ColumnVisibilityConfig) => {
+    const col = columns.find((c) => c.id === columnId);
+    if (!col) return;
+    const patch: Partial<ColumnDefinition> = {
+      settings: {
+        ...col.settings,
+        visibility: config,
+      },
+      restrictView: config.mode !== "everyone",
+      updatedAt: new Date().toISOString(),
+    };
+    await handleColumnUpdateSettings(columnId, patch);
+    const modeLabel = config.mode === "everyone" ? "Visible to everyone" : config.mode === "staff_only" ? "Internal Staff Only" : `Visible to ${config.allowedUserIds.length} selected accounts`;
+    toast.success(`Access updated for "${col.label}": ${modeLabel}`);
+  }, [columns, handleColumnUpdateSettings]);
 
   const handleColumnToggleRestrictView = useCallback((columnId: string) => {
     setColumns((prev) =>
@@ -1074,11 +1150,17 @@ setImporting(true);
         await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, orderedFinalColumns);
 
         if (newRecords.length > 0) {
-          await upsertBoardRecords(board.id, board.organizationId, board.workspaceId, newRecords);
+          const RECORD_BATCH = 200;
+          for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
+            await upsertBoardRecords(board.id, board.organizationId, board.workspaceId, newRecords.slice(i, i + RECORD_BATCH));
+          }
         }
 
         if (newCellValues.length > 0) {
-          await upsertBoardCellValues(board.id, board.organizationId, board.workspaceId, newCellValues);
+          const CELL_BATCH = 1000;
+          for (let i = 0; i < newCellValues.length; i += CELL_BATCH) {
+            await upsertBoardCellValues(board.id, board.organizationId, board.workspaceId, newCellValues.slice(i, i + CELL_BATCH));
+          }
         }
 
         // (d) Delete the unmapped default columns. Runs ONCE, after the import
@@ -1092,69 +1174,7 @@ setImporting(true);
         // upsert, or a leftover from a previous run) would make the
         // deleteBoardColumns endpoint reject the whole batch with
         // "invalid column id" and leave every unmapped default column behind.
-        if (!importCleanupDoneRef.current) {
-          importCleanupDoneRef.current = true;
-          try {
-            // Log the id AND its type right before each delete call so any
-            // "invalid column id" regression is traceable to a specific id.
-            if (columnsToDelete.length > 0) {
-              console.warn("[EngineBoardPage] import cleanup delete batch", {
-                boardId: board.id,
-                count: columnsToDelete.length,
-                ids: columnsToDelete.map((c) => c.id),
-                idsWithType: columnsToDelete.map((c) => ({ id: c.id, type: typeof c.id, label: c.label })),
-              });
-              await deleteBoardColumns(
-                board.id,
-                columnsToDelete.map((c) => c.id),
-              );
-            }
-
-            // (e) Refetch the board columns from the backend and replace local
-            // state with that result. This guarantees the UI matches the
-            // source of truth (including the new `order` values written above)
-            // rather than trusting the in-memory plan.
-            const freshColumnsResult = await loadBoardColumns(board.id);
-            let freshColumns: ColumnDefinition[] = [];
-            if (freshColumnsResult.error || !freshColumnsResult.data) {
-              throw new Error(freshColumnsResult.error ?? "Failed to load columns");
-            }
-            freshColumns = freshColumnsResult.data;
-
-            // Merge instead of replace: a response that carries no labels (or
-            // that is older than the local copy) must never wipe the labels
-            // the user just saved.
-            setColumns((prev) => mergeColumns(prev, freshColumns));
-            setBoardViews((prevViews) =>
-              prevViews.map((view) => ({
-                ...view,
-                visibleColumnIds: freshColumns.map((c) => c.id),
-                columnWidths: Object.fromEntries(
-                  Object.entries(view.columnWidths ?? {}).filter(([id]) =>
-                    freshColumns.some((c) => c.id === id),
-                  ),
-                ),
-                filters: (view.filters ?? []).filter((f) =>
-                  freshColumns.some((c) => c.id === f.columnId),
-                ),
-                sorting: (view.sorting ?? []).filter((s) =>
-                  freshColumns.some((c) => c.id === s.columnId),
-                ),
-                grouping: (view.grouping ?? []).filter((g) =>
-                  freshColumns.some((c) => c.id === g.columnId),
-                ),
-              })),
-            );
-          } catch (cleanupErr) {
-            // The import itself succeeded; a cleanup failure must not roll it
-            // back or lose the imported data. Surface it and let the user
-            // retry the cleanup from the board UI.
-            console.error("[EngineBoardPage] import cleanup failed:", cleanupErr);
-            toast.error("Import finished, but some unmapped columns could not be removed. You can delete them manually.");
-          }
-        }
-
-        setRecords((prev) => [...prev, ...newRecords]);
+         setRecords((prev) => [...prev, ...newRecords]);
         setCellValues((prev) => {
           const next = new Map(prev);
           newCellValues.forEach(([key, value]) => next.set(key, value));
@@ -1272,28 +1292,135 @@ setImporting(true);
    useEffect(() => {
      const handleImportEvent = () => handleOpenImport();
      const handleExportEvent = () => handleExportExcel();
+     const handleCellUpdateEvent = (e: Event) => {
+       const detail = (e as CustomEvent).detail;
+       if (detail && detail.recordId && detail.columnId) {
+         setCellValues((prev) => {
+           const next = new Map(prev);
+           next.set(`${detail.recordId}:${detail.columnId}`, detail.value);
+           return next;
+         });
+       }
+     };
      window.addEventListener("board:open-import", handleImportEvent);
      window.addEventListener("board:export-excel", handleExportEvent);
+     window.addEventListener("board:apply-cell-update", handleCellUpdateEvent);
+      const handleRunAutomations = (e?: Event) => {
+        const detail = (e as CustomEvent)?.detail;
+        const ctx = automationCtxRef.current;
+        void runAllActiveBoardAutomations(
+          {
+            board: ctx.board,
+            columns: ctx.columns,
+            groups: ctx.groups,
+            records: ctx.records,
+            cellValues: ctx.cellValues,
+            setCellValues,
+            setRecords,
+            updateCellFn: updateCell,
+            moveRecordToGroupFn: (recId, grpId) => ctx.handleMoveToGroup([recId], grpId),
+          },
+          detail?.ruleId ? { targetRuleId: detail.ruleId } : undefined
+        );
+      };
+      window.addEventListener("board:run-automations", handleRunAutomations);
      return () => {
        window.removeEventListener("board:open-import", handleImportEvent);
        window.removeEventListener("board:export-excel", handleExportEvent);
+       window.removeEventListener("board:apply-cell-update", handleCellUpdateEvent);
+        window.removeEventListener("board:run-automations", handleRunAutomations);
      };
-}, [handleOpenImport, handleExportExcel]);
+   }, [handleOpenImport, handleExportExcel]);
+
+   // Auto-evaluate active automations once board items and cell values are loaded
+   const hasAutoEvaluatedRef = useRef(false);
+   useEffect(() => {
+     if (!hasAutoEvaluatedRef.current && records.length > 0 && cellValues.size > 0) {
+       hasAutoEvaluatedRef.current = true;
+       const timer = setTimeout(() => {
+         const ctx = automationCtxRef.current;
+         void runAllActiveBoardAutomations(
+           {
+             board: ctx.board,
+             columns: ctx.columns,
+             groups: ctx.groups,
+             records: ctx.records,
+             cellValues: ctx.cellValues,
+             setCellValues,
+             setRecords,
+             updateCellFn: updateCell,
+             moveRecordToGroupFn: (recId, grpId) => ctx.handleMoveToGroup([recId], grpId),
+           },
+           { silent: true }
+         );
+       }, 500);
+       return () => clearTimeout(timer);
+     }
+   }, [records.length, cellValues.size]);
+
+  const visibleColumns = useMemo(() => {
+    return columns.filter((col) => {
+      const settings = (col.settings ?? {}) as Record<string, unknown>;
+      const vis = settings.visibility as ColumnVisibilityConfig | undefined;
+
+      if (!vis && !col.restrictView) return true;
+
+      const mode = vis?.mode ?? (col.restrictView ? "staff_only" : "everyone");
+      if (mode === "everyone") return true;
+
+      // If in preview simulation mode:
+      if (previewAsUserId) {
+        const previewMember = members.find((m) => m.user_id === previewAsUserId);
+        const isPreviewStaff = previewMember ? (previewMember.role === "owner" || previewMember.role === "edit") : false;
+        if (mode === "staff_only") {
+          return isPreviewStaff;
+        }
+        if (mode === "selected") {
+          const allowedIds = new Set(vis?.allowedUserIds ?? []);
+          const allowedEmails = new Set((vis?.allowedEmails ?? []).map((e) => e.toLowerCase()));
+          const isAllowed = allowedIds.has(previewAsUserId) || (previewMember?.email && allowedEmails.has(previewMember.email.toLowerCase()));
+          return isAllowed || previewMember?.role === "owner";
+        }
+      }
+
+      // Real user logic:
+      // Owners & Board Admins see all columns when not simulating
+      if (isOwner || access === "owner") return true;
+
+      // Staff (role: "edit") can see staff_only columns
+      if (mode === "staff_only") {
+        return access === "edit";
+      }
+
+      if (mode === "selected") {
+        const currentUserId = user?.id;
+        const currentUserEmail = user?.email?.toLowerCase();
+        const allowedIds = new Set(vis?.allowedUserIds ?? []);
+        const allowedEmails = new Set((vis?.allowedEmails ?? []).map((e) => e.toLowerCase()));
+        const isAllowed = (currentUserId && allowedIds.has(currentUserId)) ||
+                          (currentUserEmail && allowedEmails.has(currentUserEmail));
+        return Boolean(isAllowed);
+      }
+
+      return true;
+    });
+  }, [columns, previewAsUserId, members, isOwner, access, user]);
 
    const boardData = useMemo(
     () => ({
       board,
-      columns,
+      columns: visibleColumns,
       groups,
       records,
       cellValues,
+      cellMetadata,
       totalRecords: records.length,
       filteredRecordCount: records.length,
       page: 1,
       pageSize: records.length,
       totalPages: 1,
     }),
-    [board, columns, groups, records, cellValues],
+    [board, visibleColumns, groups, records, cellValues, cellMetadata],
   );
 
   /**
@@ -1348,9 +1475,34 @@ setImporting(true);
     [],
   );
 
+  const handleDeleteView = useCallback(
+    async (viewId: string) => {
+      const target = boardViews.find((v) => v.id === viewId);
+      if (!target) return;
+      // Keep at least one view
+      if (boardViews.length <= 1) {
+        toast.error("Cannot delete the last view.");
+        return;
+      }
+      // Optimistic update
+      setBoardViews((prev) => prev.filter((v) => v.id !== viewId));
+      if (activeViewId === viewId) {
+        const remaining = boardViews.filter((v) => v.id !== viewId);
+        setActiveViewId(remaining[0]?.id ?? "");
+      }
+      const response = await deleteView(viewId);
+      if (response.error) {
+        // Rollback
+        setBoardViews((prev) => [...prev, target]);
+        toast.error(response.error ?? "Failed to delete the view.");
+      } else {
+        toast.success(`Deleted “${target.name}”.`);
+      }
+    },
+    [boardViews, activeViewId],
+  ); 
   /**
-   * Create a row from a view (the calendar's inline "add item").
-   * Returns the created record so the caller can focus its title.
+   * Create a row from a view
    */
   const handleRecordCreate = useCallback(
     async (payload: { title: string; cellValues: Record<string, ColumnValue>; groupId?: string | null }) => {
@@ -1468,7 +1620,8 @@ setImporting(true);
   );
 
   return (
-    <MirrorDataProvider boardId={board.id} cellValues={cellValues} columns={columns} records={records}>
+    <MirrorDataProvider boardId={board.id} cellValues={cellValues} columns={columns}
+        groups={groups} records={records}>
       <>
         <BoardLayout
         boardId={board.id}
@@ -1483,6 +1636,7 @@ setImporting(true);
         activeViewId={activeViewId}
         onViewChange={setActiveViewId}
         onCreateView={handleCreateView}
+        onDeleteView={handleDeleteView}
         columns={columns}
       >
           <ViewEngine
@@ -1512,6 +1666,8 @@ setImporting(true);
               onColumnUpdateDescription: handleColumnUpdateDescription,
               onColumnToggleRestrictEditing: handleColumnToggleRestrictEditing,
               onColumnToggleRestrictView: handleColumnToggleRestrictView,
+              onColumnManageAccess: handleColumnManageAccess,
+              members,
                onColumnToggleWrapText: handleColumnToggleWrapText,
                onColumnResize: handleColumnResize,
                onColumnReorder: handleColumnReorder,
@@ -1542,6 +1698,14 @@ setImporting(true);
             bulkDeleteLoading={bulkDeleteLoading}
           />
       </BoardLayout>
+
+            <ColumnAccessModal
+        open={accessModalColumn !== null}
+        onOpenChange={(open) => !open && setAccessModalColumn(null)}
+        column={accessModalColumn}
+        members={members}
+        onSave={handleSaveColumnAccess}
+      />
 
       <MirrorSettingsModal
         open={mirrorColumnId !== null}

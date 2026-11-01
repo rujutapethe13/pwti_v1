@@ -36,6 +36,7 @@ export const columnTypeKeys = [
   "url",
   "formula",
   "files",
+  "attachment",
   "rating",
   "tags",
   "connected_board",
@@ -66,6 +67,7 @@ export type ColumnTypeKey =
   | "url"
   | "formula"
   | "files"
+  | "attachment"
   | "rating"
   | "tags"
   | "connected_board"
@@ -434,6 +436,15 @@ export interface BoardRecord {
   archivedAt?: string | null;
   createdAt: string;
   updatedAt: string;
+  lastEditedAt?: string | null;
+  lastEditedBy?: string | null;
+}
+
+export interface CellChangeMetadata {
+  changedAt?: string | null;
+  changedBy?: string | null;
+  source?: "user" | "import" | "automation" | "api" | null;
+  approximate?: boolean;
 }
 
 export interface CellValue {
@@ -916,3 +927,22 @@ export interface SettingsPanelProps {
 }
 
 // TableViewProps moved to ./components/table-view.tsx
+
+
+export interface CellChange {
+  id: string;
+  itemId: string;
+  columnId: string;
+  boardId: string;
+  oldValue: unknown;
+  newValue: unknown;
+  changedBy: string | null;
+  changedAt: string;
+  source: string;
+}
+
+export interface CellChangeMeta {
+  changedAt?: string | null;
+  changedBy?: string | null;
+  isLegacy?: boolean;
+}

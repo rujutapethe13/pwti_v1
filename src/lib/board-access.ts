@@ -67,8 +67,21 @@ export async function isOwner(userId: string): Promise<boolean> {
     .eq("id", userId)
     .maybeSingle();
 
-  if (error || !data) return false;
-  return data.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
+  if (!error && data?.email) {
+    return data.email.toLowerCase() === OWNER_EMAIL.toLowerCase();
+  }
+
+  const profileRes = await svc
+    .from("profiles")
+    .select("email")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (!profileRes.error && profileRes.data?.email) {
+    return String(profileRes.data.email).toLowerCase() === OWNER_EMAIL.toLowerCase();
+  }
+
+  return false;
 }
 
 /**

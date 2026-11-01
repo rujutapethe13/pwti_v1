@@ -183,7 +183,72 @@ export interface Client360DailyActivity {
   clients: Client360DailyActivityClient[];
   daily_breakdown: Client360SnapshotDailyBreakdown[];
   unmapped_boards: number;
+  /** Row-level job counts (1 row with Type of Job = 1 job, not SKU sum) */
+  row_total_jobs?: number;
+  row_clients?: Client360DailyActivityClient[];
+  row_busiest_client?: Client360DailyActivityClient | null;
+  row_daily_breakdown?: Client360SnapshotDailyBreakdown[];
 }
+
+export type ActivityMode = "received" | "due";
+
+export type ActivityGroupBy =
+  | "due_bucket"
+  | "workspace"
+  | "board"
+  | "client"
+  | "assignee"
+  | "status"
+  | "job_type"
+  | "none";
+
+export interface ActivityTaskRow {
+  item_id: string;
+  job_name: string;
+  client: string | null;
+  workspace_id: string;
+  workspace_name: string;
+  board_id: string;
+  board_slug?: string | null;
+  board_name: string;
+  group_name: string | null;
+  job_type: string | null;
+  status: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  received_at: string | null;
+  due_date: string | null;
+  days_from_today: number | null;
+  bucket: string;
+  priority: string | null;
+  due_column: string | null;
+  is_finished: boolean;
+  assigned_to_me?: boolean;
+}
+
+export interface ActivityTasksResponse {
+  selectedDate: string;
+  today: string;
+  mode: ActivityMode;
+  start: string;
+  end: string;
+  items: ActivityTaskRow[];
+  daily_breakdown: Array<{ date: string; total: number }>;
+  due_summary: {
+    due_selected_day: number;
+    overdue: number;
+    upcoming: number;
+    upcoming_next_7_days: number;
+    next_due_date: string | null;
+    no_due_date: number;
+    clients_active: number;
+    boards_touched: number;
+  };
+  boards_due_columns: Array<{ board_id: string; board_name: string; due_column: string | null }>;
+  boards_without_due_date: string[];
+  finished_statuses: string[];
+}
+
 
 // ── Pending Work (sub-tab) types ─────────────────────────────────────────────
 

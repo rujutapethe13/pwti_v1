@@ -15,8 +15,7 @@ import {
 export interface VolumeBreakdownOptions {
   organizationId: string;
   range: ResolvedTimeRange;
-  /** Restricts the aggregate to specific workspaces. Null means all in the org. */
-  workspaceIds?: string[] | null;
+  boardIds?: string[] | null;
 }
 
 /** Coerces a JSONB number to a non-negative integer, defaulting to 0. */
@@ -61,7 +60,7 @@ function parseItems(value: unknown): BreakdownItem[] {
  */
 export async function fetchVolumeBreakdown(
   supabase: SupabaseClient,
-  { organizationId, range, workspaceIds = null }: VolumeBreakdownOptions,
+  { organizationId, range, boardIds = null }: VolumeBreakdownOptions,
 ): Promise<BreakdownPayload> {
   // Records written moments ago only reach the snapshot on refresh; without it
   // the breakdown would under-report the current range.
@@ -69,12 +68,12 @@ export async function fetchVolumeBreakdown(
 
   const window =
     range.id === "all"
-      ? narrowAllTimeRange(range, await fetchDataBounds(supabase, organizationId, workspaceIds))
+      ? narrowAllTimeRange(range, await fetchDataBounds(supabase, organizationId, null))
       : range;
 
   const { data, error } = await supabase.rpc("overview_volume_breakdown", {
     p_organization_id: organizationId,
-    p_workspace_ids: workspaceIds,
+    p_board_ids: boardIds,
     p_from: window.from,
     p_to: window.to,
   });
@@ -102,5 +101,3 @@ export async function fetchVolumeBreakdown(
     items: parseItems(root.items),
   };
 }
-
-

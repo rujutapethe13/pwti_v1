@@ -22,6 +22,14 @@ export function getPrimaryColumn(
     ?? scoped[0];
 }
 
+export function repairPrimaryColumn(columns: ColumnDefinition[]): ColumnDefinition[] {
+  const hasPrimary = columns.some((c) => c.isPrimary);
+  if (hasPrimary) return columns;
+  // mark first text-compatible (or first) column as primary
+  const target = columns.find(isTextCompatibleColumn) ?? columns[0];
+  if (!target) return columns;
+  return columns.map((c) => (c.id === target.id ? { ...c, isPrimary: true } : c));
+}
 export function setPrimaryColumn(
   columns: ColumnDefinition[],
   columnId: string,

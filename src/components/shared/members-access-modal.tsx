@@ -40,10 +40,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { ConfirmDialog } from "@/features/boards/engine/components/confirm-dialog";
-import { cn } from "@/lib/utils";
 import {
   ACCESS_OPTIONS,
   accessRoleLabel,
+  isGrantableAccess,
   isValidEmail,
   type GrantableAccess,
   type Member,
@@ -131,8 +131,8 @@ export function MembersAccessModal({
   workspaceId,
   onMembersChanged,
 }: MembersAccessModalProps) {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
+  const { resolvedTheme, theme } = useTheme();
+  const isDark = (resolvedTheme ?? theme) === "dark";
 
   const kind = scope?.kind ?? "workspace";
   const scopedId = scope?.id ?? "";
@@ -163,24 +163,42 @@ export function MembersAccessModal({
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const takenEmails = useMemo(() => {
+    if (kind === "board") {
+      const set = new Set<string>();
+      for (const member of members) {
+        const lower = member.email.toLowerCase();
+        if (member.role === "owner" || (!member.inherited && member.role === access)) {
+          set.add(lower);
+        }
+      }
+      return set;
+    }
     const set = new Set(members.map((member) => member.email.toLowerCase()));
     for (const invite of pendingInvites) set.add(invite.email.toLowerCase());
     return set;
-  }, [members, pendingInvites]);
+  }, [kind, members, pendingInvites, access]);
 
   const typedEmail = query.trim().toLowerCase();
   const canInviteByEmail = isValidEmail(typedEmail) && !takenEmails.has(typedEmail);
   const isDuplicate = typedEmail.length > 0 && takenEmails.has(typedEmail);
 
+  const refresh = useCallback(() => {
+    if (workspaceId) invalidateScope(kind, workspaceId, boardId);
+  }, [kind, workspaceId, boardId]);
+
   // Reset the form when the modal closes so a half-typed address does not
-  // reappear next time.
+  // reappear next time; refresh when it opens so the list is always current.
   useEffect(() => {
-    if (open) return;
+    if (open) {
+      refresh();
+      return;
+    }
     setQuery("");
     setCandidates([]);
     setSuggestionsOpen(false);
     setFormError(null);
-  }, [open]);
+    setAccess("edit");
+  }, [open, refresh]);
 
   // Autocomplete. Owner and edit only — a view user has nothing to add.
   useEffect(() => {
@@ -238,13 +256,15 @@ export function MembersAccessModal({
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [suggestionsOpen, listboxId]);
 
-  const refresh = useCallback(() => {
-    if (workspaceId) invalidateScope(kind, workspaceId, boardId);
-  }, [kind, workspaceId, boardId]);
-
   const submit = useCallback(
     async (emailOverride?: string) => {
-      const email = (emailOverride ?? query).trim().toLowerCase();
+      let email = (emailOverride ?? query).trim().toLowerCase();
+      if (!emailOverride && !isValidEmail(email) && candidates.length > 0) {
+        const picked = candidates[Math.min(highlighted, candidates.length - 1)];
+        if (picked?.email) {
+          email = picked.email.trim().toLowerCase();
+        }
+      }
 
       if (!canManageMembers) {
         setFormError("You need edit access to add members.");
@@ -289,7 +309,7 @@ export function MembersAccessModal({
         setSubmitting(false);
       }
     },
-    [access, boardId, canManageMembers, kind, query, refresh, takenEmails, workspaceId, onMembersChanged],
+    [access, boardId, canManageMembers, candidates, highlighted, kind, query, refresh, takenEmails, workspaceId, onMembersChanged],
   );
 
   const handleInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
@@ -328,7 +348,7 @@ export function MembersAccessModal({
 
   const handleChangeAccess = useCallback(
     async (member: Member, next: GrantableAccess) => {
-      if (member.role === next) return;
+      if (member.role === next && (!boardId || !member.inherited)) return;
 
       setBusyUserId(member.user_id);
       setMemberAccess({
@@ -468,7 +488,9 @@ export function MembersAccessModal({
                     onChange={(event) => setQuery(event.target.value)}
                     onKeyDown={handleInputKeyDown}
                     onFocus={() => {
-                      if (candidates.length > 0) setSuggestionsOpen(true);
+                      if (candidates.length > 0 || query.trim().length > 0) {
+                        setSuggestionsOpen(true);
+                      }
                     }}
                     placeholder="Add members by name or email"
                     autoComplete="off"
@@ -491,7 +513,9 @@ export function MembersAccessModal({
                         id={listboxId}
                         role="listbox"
                         aria-label="Matching people"
-                        className="fixed z-[10000] max-h-56 overflow-y-auto rounded-[8px] p-[4px]"
+                        data-members-autocomplete-portal="true"
+                        onPointerDown={(e) => e.stopPropagation()}
+                        className="fixed z-[10002] max-h-56 overflow-y-auto rounded-[8px] p-[4px] pointer-events-auto"
                         style={{
                           left: wrapperRef.current.getBoundingClientRect().left,
                           top: wrapperRef.current.getBoundingClientRect().bottom + 4,
@@ -502,6 +526,8 @@ export function MembersAccessModal({
                             ? "0 8px 24px rgba(0,0,0,0.4)"
                             : "0 8px 24px rgba(0,0,0,0.2)",
                           color: isDark ? "#ffffff" : "#1a1a2e",
+                          pointerEvents: "auto",
+                          zIndex: 10002,
                         }}
                       >
                         {searching && candidates.length === 0 && (
@@ -515,6 +541,12 @@ export function MembersAccessModal({
                             aria-selected
                             onMouseDown={(event) => {
                               event.preventDefault();
+                              event.stopPropagation();
+                              void submit(typedEmail);
+                            }}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
                               void submit(typedEmail);
                             }}
                             className="flex cursor-pointer items-center gap-2 rounded-sm px-[12px] py-[8px] text-sm"
@@ -552,6 +584,12 @@ export function MembersAccessModal({
                             onMouseEnter={() => setHighlighted(index)}
                             onMouseDown={(event) => {
                               event.preventDefault();
+                              event.stopPropagation();
+                              void submit(candidate.email);
+                            }}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
                               void submit(candidate.email);
                             }}
                             className="flex cursor-pointer items-center gap-2 rounded-sm px-[12px] py-[8px] text-sm"
@@ -580,16 +618,20 @@ export function MembersAccessModal({
 
                 <Select
                   value={access}
-                  onValueChange={(value) => setAccess(value as GrantableAccess)}
+                  onValueChange={(value) => {
+                    if (isGrantableAccess(value)) setAccess(value);
+                  }}
                 >
                   <SelectTrigger
                     className="h-9 text-sm sm:w-44"
                     aria-label="Access level"
                     disabled={!canManageMembers || submitting}
                   >
-                    <SelectValue />
+                    <SelectValue>
+                      {ACCESS_OPTIONS.find((o) => o.value === access)?.label ?? access}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent sideOffset={8}>
+                  <SelectContent sideOffset={8} className="z-[100] min-w-[260px]">
                     {ACCESS_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label} — {option.description}
@@ -604,7 +646,7 @@ export function MembersAccessModal({
                     !canManageMembers ||
                     submitting ||
                     typedEmail.length === 0 ||
-                    isDuplicate
+                    (isDuplicate && candidates.length === 0)
                   }
                   className="h-9 sm:w-28"
                 >

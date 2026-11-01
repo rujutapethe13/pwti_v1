@@ -93,6 +93,7 @@ export const columnTypeRegistry: Record<ColumnTypeKey, ColumnTypeDefinition> = {
   url: definition("url", { label: "URL", description: "Link value.", defaultValue: "", compatibleTypes: ["text", "email"] }),
   formula: definition("formula", { label: "Formula", description: "Computed value from other columns.", defaultValue: null, category: "formula", compatibleTypes: ["number", "currency", "status", "text"] }),
   files: definition("files", { label: "Files", description: "Attachment collection.", defaultValue: [], compatibleTypes: ["tags"] }),
+  attachment: definition("attachment", { label: "Attachment", description: "File attachments.", defaultValue: [], compatibleTypes: ["files", "tags"] }),
   rating: definition("rating", { label: "Rating", description: "Ordinal rating value.", defaultValue: 0, compatibleTypes: ["number", "priority"] }),
   tags: definition("tags", { label: "Tags", description: "Freeform tag tokens.", defaultValue: [], compatibleTypes: ["text", "multi_select", "dropdown"] }),
   connected_board: definition("connected_board", { label: "Connected Board", description: "Reference to another board.", defaultValue: null, category: "future", supportsPermissions: true, settingsSchema: [...connectedBoardSettings] }),

@@ -25,6 +25,9 @@ interface BoardLayoutProps {
   onDeleteView?: (viewId: string) => Promise<void>;
   onCreateView?: (data: { type: string; name?: string; settings?: Record<string, unknown> }) => void;
   columns?: ColumnDefinition[];
+  groups?: any[];
+  previewAsUserId?: string | null;
+  onPreviewAsChange?: (userId: string | null) => void;
 }
 
 export function BoardLayout({
@@ -46,6 +49,9 @@ export function BoardLayout({
   onDeleteView,
   onCreateView,
   columns,
+  groups,
+  previewAsUserId,
+  onPreviewAsChange,
 }: BoardLayoutProps) {
   const catalogBoard = getBoardDefinition(boardId);
   const boardDefinition = board ?? catalogBoard;
@@ -68,11 +74,15 @@ export function BoardLayout({
       {boardDefinition && (
         <BoardToolbar
           board={boardDefinition}
+          previewAsUserId={previewAsUserId}
+          onPreviewAsChange={onPreviewAsChange}
           onNewItem={onNewItem}
           onImport={onImport}
           onExport={onExport}
           importing={importing}
           exporting={exporting}
+          columns={columns}
+          groups={groups}
         />
       )}
 
