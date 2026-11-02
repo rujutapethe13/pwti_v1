@@ -24,15 +24,15 @@ function readValue(value: ColumnValue): string {
 }
 
 export function CellRenderer({ board, record, column, value, readOnly, onChange, onUpdateColumnLabels, onConfigureMirror }: CellRendererProps & { onConfigureMirror?: (column: ColumnDefinition) => void }) {
-  const definition = columnTypeRegistry[column.type];
-  const displayValue = readValue(value ?? definition.defaultValue);
+  const definition = columnTypeRegistry[column.type] ?? columnTypeRegistry.text;
+  const displayValue = readValue(value ?? definition?.defaultValue);
 
   const Renderer = getCellRenderer(column.type);
 
   if (Renderer) {
     return (
       <Renderer
-        value={value ?? definition.defaultValue}
+        value={value ?? definition?.defaultValue}
         column={column}
         recordId={record.id}
         boardId={board.id}

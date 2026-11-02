@@ -519,7 +519,7 @@ function BarChart({ series, showLabels, showGrid, stacked, benchmarkLines, width
       )}
       {hover && (
         <div
-          className="pointer-events-none absolute z-10 rounded-md border border-border bg-white px-2 py-1.5 text-[11px] shadow-md"
+          className="pointer-events-none absolute z-10 rounded-md border border-border bg-popover text-popover-foreground px-2 py-1.5 text-[11px] shadow-md"
           style={{ left: Math.min(hover.x + 10, width - 180), top: Math.min(hover.y + 10, height - 50) }}
         >
           {hover.lines.map((l, i) => (
@@ -627,7 +627,7 @@ function ColumnChart({ series, showLabels, showGrid, stacked, benchmarkLines, wi
       </svg>
       {hover && (
         <div
-          className="pointer-events-none absolute z-10 rounded-md border border-border bg-white px-2 py-1.5 text-[11px] shadow-md"
+          className="pointer-events-none absolute z-10 rounded-md border border-border bg-popover text-popover-foreground px-2 py-1.5 text-[11px] shadow-md"
           style={{ left: Math.min(hover.x + 10, width - 180), top: Math.min(hover.y + 10, height - 50) }}
         >
           {hover.lines.map((l, i) => (

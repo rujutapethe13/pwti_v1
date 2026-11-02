@@ -432,7 +432,7 @@ export function AdvancedFilterPanel({
   const totalCount = records.length;
 
   return (
-    <div className="flex h-full w-96 flex-col border-l border-border bg-white">
+    <div className="flex h-full w-96 flex-col border-l border-border bg-card">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">

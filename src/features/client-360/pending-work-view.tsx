@@ -371,7 +371,7 @@ export function Client360PendingWorkView() {
       )}
 
       {result && result.unmapped_boards > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/35 p-3 text-sm text-amber-800 dark:text-amber-300">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>
             {result.unmapped_boards} board{result.unmapped_boards !== 1 ? "s" : ""}
@@ -406,19 +406,19 @@ export function Client360PendingWorkView() {
                 gridTemplateColumns: TABLE_COLUMNS,
               }}
             >
-              <div className="sticky top-0 z-30 border-b border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+              <div className="sticky top-0 z-30 border-b border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                 Item
               </div>
-              <div className="sticky top-0 z-30 border-b border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+              <div className="sticky top-0 z-30 border-b border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                 Status
               </div>
-              <div className="sticky top-0 z-30 border-b border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+              <div className="sticky top-0 z-30 border-b border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                 Job Date
               </div>
-              <div className="sticky top-0 z-30 border-b border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+              <div className="sticky top-0 z-30 border-b border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                 Due Date
               </div>
-              <div className="sticky top-0 z-30 border-b border-border bg-white px-3 py-2 text-xs font-medium text-muted-foreground">
+              <div className="sticky top-0 z-30 border-b border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                 Assigned To
               </div>
 

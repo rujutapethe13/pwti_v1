@@ -50,12 +50,12 @@ const PLANNED_VIEWS = new Set([
   "docs",
 ]);
 
-// ── Create-view dialog design tokens (monday.com) ───────────
+// ── Create-view dialog design tokens (theme-aware) ───────────
 const DIALOG_FONT =
   'var(--font-inter, "Inter"), "DM Sans", Roboto, system-ui, -apple-system, "Segoe UI", sans-serif';
-const DIALOG_TEXT = "#323338";
-const DIALOG_MUTED = "#676879";
-const DIALOG_BORDER = "#C3C6D4";
+const DIALOG_TEXT = "hsl(var(--foreground))";
+const DIALOG_MUTED = "hsl(var(--muted-foreground))";
+const DIALOG_BORDER = "hsl(var(--border))";
 const DIALOG_ACCENT = "#0073EA";
 
 interface ViewTabsProps {
@@ -349,10 +349,8 @@ export function ViewTabs({
       {/* Create view dialog */}
       <Dialog open={showCreateDialog} onOpenChange={handleCreateDialogChange}>
         <DialogContent
-          className="max-w-[440px] gap-0 p-6 [&>button]:hidden"
+          className="max-w-[440px] gap-0 border border-border bg-popover p-6 text-popover-foreground [&>button]:hidden"
           style={{
-            backgroundColor: "#ffffff",
-            border: "none",
             borderRadius: "12px",
             boxShadow: "0 12px 32px rgba(0, 0, 0, 0.24)",
             fontFamily: DIALOG_FONT,
@@ -379,7 +377,7 @@ export function ViewTabs({
               type="button"
               aria-label="Close"
               onClick={() => handleCreateDialogChange(false)}
-              className="-mt-1 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]"
+              className="-mt-1 -mr-1 flex size-6 shrink-0 items-center justify-center rounded-[4px] transition-colors hover:bg-accent"
               style={{ color: DIALOG_MUTED }}
             >
               <X className="size-4" />
@@ -401,7 +399,7 @@ export function ViewTabs({
                 value={newViewName}
                 onChange={(e) => setNewViewName(e.target.value)}
                 placeholder="My View"
-                className="h-10 w-full rounded-[4px] border bg-white px-3 text-[14px] transition-[border-color,box-shadow] outline-none"
+                className="h-10 w-full rounded-[4px] border bg-background px-3 text-[14px] transition-[border-color,box-shadow] outline-none"
                 style={{
                   borderColor: DIALOG_BORDER,
                   color: DIALOG_TEXT,
@@ -438,7 +436,7 @@ export function ViewTabs({
                   <Select value={newViewDateColumn} onValueChange={setNewViewDateColumn}>
                     <SelectTrigger
                       id="view-date-column"
-                      className="h-10 rounded-[4px] border-[#C3C6D4] px-3 text-[14px] shadow-none focus:border-[#0073EA] focus:ring-2 focus:ring-[#0073EA] focus:ring-offset-0"
+                      className="h-10 rounded-[4px] border-border bg-background px-3 text-[14px] shadow-none focus:border-[#0073EA] focus:ring-2 focus:ring-[#0073EA] focus:ring-offset-0"
                       style={{
                         borderColor: DIALOG_BORDER,
                         color: DIALOG_TEXT,
@@ -464,17 +462,11 @@ export function ViewTabs({
             <button
               type="button"
               onClick={() => handleCreateDialogChange(false)}
-              className="h-10 rounded-[4px] border bg-white px-4 text-[14px] font-medium transition-colors"
+              className="h-10 rounded-[4px] border bg-background px-4 text-[14px] font-medium transition-colors hover:bg-accent"
               style={{
                 borderColor: DIALOG_BORDER,
                 color: DIALOG_TEXT,
                 fontFamily: DIALOG_FONT,
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = "#F7F8FA";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = "#ffffff";
               }}
             >
               Cancel

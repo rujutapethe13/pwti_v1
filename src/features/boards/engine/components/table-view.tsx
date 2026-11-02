@@ -1,3 +1,4 @@
+import type { Member } from '@/lib/members-types';
 "use client";
 
 import {
@@ -154,6 +155,8 @@ export interface TableViewProps {
   onColumnUpdateDescription?: (columnId: string, description: string) => void;
   onColumnToggleRestrictEditing?: (columnId: string) => void;
   onColumnToggleRestrictView?: (columnId: string) => void;
+  onColumnManageAccess?: (column: ColumnDefinition) => void;
+  members?: Member[];
   /** Title (record-title) column label rendered in the pinned first column header */
   titleColumnLabel?: string;
   /** Rename the title (record-title) column */
@@ -226,6 +229,8 @@ function SortableColumnHeaderWrapper({
   onAddDescription,
   onToggleRestrictEditing,
   onToggleRestrictView,
+  onManageAccess,
+  members,
   onSetFilter,
   onClearFilter,
   onToggleCollapse,
@@ -259,6 +264,8 @@ function SortableColumnHeaderWrapper({
   onAddDescription?: (columnId: string, description: string) => void;
   onToggleRestrictEditing?: (columnId: string) => void;
   onToggleRestrictView?: (columnId: string) => void;
+  onManageAccess?: (column: ColumnDefinition) => void;
+  members?: Member[];
   onSetFilter?: (columnId: string, operator: string, value: ColumnValue) => void;
   onClearFilter?: (columnId: string) => void;
   onToggleCollapse?: (columnId: string) => void;
@@ -318,6 +325,8 @@ function SortableColumnHeaderWrapper({
         onAddDescription={onAddDescription}
         onToggleRestrictEditing={onToggleRestrictEditing}
         onToggleRestrictView={onToggleRestrictView}
+        onManageAccess={onManageAccess}
+        members={members}
         onSetFilter={onSetFilter}
         onClearFilter={onClearFilter}
         onToggleCollapse={onToggleCollapse}
@@ -763,6 +772,8 @@ export function TableView({
   onColumnUpdateDescription,
   onColumnToggleRestrictEditing,
   onColumnToggleRestrictView,
+  onColumnManageAccess,
+  members,
   titleColumnLabel,
   onTitleColumnRename,
   sortColumnId,
@@ -1611,6 +1622,8 @@ export function TableView({
                       onAddDescription={handleAddDescription}
                       onToggleRestrictEditing={handleToggleRestrictEditing}
                       onToggleRestrictView={handleToggleRestrictView}
+                      onManageAccess={onColumnManageAccess}
+                      members={members}
                       onSetFilter={handleSetFilter}
                       onClearFilter={handleClearFilter}
                       onToggleCollapse={handleToggleCollapse}

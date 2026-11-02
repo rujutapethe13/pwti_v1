@@ -1440,7 +1440,7 @@ function MappingRow({
               onSetExisting(v);
             }
           }}
-          className="h-7 w-full rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+          className="h-7 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="__skip__">— Skip —</option>
           <option value="__create__">+ Create new column…</option>
@@ -1593,7 +1593,7 @@ export function ConfirmStep({
         </div>
 
         {/* Summary stats */}
-        <div className="grid grid-cols-4 gap-2 text-center mb-3 p-2 bg-white rounded border">
+        <div className="grid grid-cols-4 gap-2 text-center mb-3 p-2 bg-card rounded border border-border">
           <div>
             <div className="font-bold text-lg text-emerald-600">{keepCount}</div>
             <div className="text-[10px] text-muted-foreground">Kept (mapped)</div>
@@ -1614,7 +1614,7 @@ export function ConfirmStep({
 
         {/* Columns to remove list */}
         {removeCount > 0 && (
-          <div className="space-y-2 max-h-48 overflow-y-auto border border-amber-200 rounded p-2 bg-white">
+          <div className="space-y-2 max-h-48 overflow-y-auto border border-amber-200 dark:border-amber-800/60 rounded p-2 bg-card">
             <div className="font-medium text-amber-900 mb-1">
               These {removeCount} column{removeCount === 1 ? "" : "s"} are not mapped and will be removed, along with their data:
             </div>

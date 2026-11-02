@@ -101,17 +101,17 @@ import { CalendarItemPanel } from "./calendar-item-panel";
 // ── Design tokens (monday.com) ──────────────────────────────
 
 const MONDAY = {
-  text: "#323338",
-  muted: "#676879",
-  border: "#D0D4E4",
-  inputBorder: "#C3C6D4",
-  accent: "#0073EA",
-  accentDark: "#0063C7",
-  weekend: "#FAFAFB",
-  outside: "#F1F2F5",
-  hover: "#F7F8FA",
-  dropTarget: "#E9F2FD",
-  neutral: "#C3C6D4",
+  text: "var(--text)",
+  muted: "hsl(var(--muted-foreground))",
+  border: "hsl(hsl(var(--border)))",
+  inputBorder: "hsl(var(--input))",
+  accent: "var(--surface-accent)",
+  accentDark: "hsl(var(--brand-hover))",
+  weekend: "var(--surface-raised)",
+  outside: "hsl(var(--muted))",
+  hover: "var(--row-hover)",
+  dropTarget: "var(--row-selected)",
+  neutral: "#64748b",
 } as const;
 
 /** Height of the date-number strip at the top of every day cell. */
@@ -523,7 +523,7 @@ function CalendarPill({
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: item.id });
 
   const background = item.light ? tintColor(item.color, 0.86) : item.color;
-  const textColor = item.light ? MONDAY.text : "#FFFFFF";
+  const textColor = item.light ? "#1a1a1a" : "#FFFFFF";
   const borderLeft = item.light ? `4px solid ${item.color}` : "4px solid transparent";
 
   if (isEditing) {
@@ -954,7 +954,7 @@ function AgendaList({
             key={day.toISOString()}
             className={cn(
               "flex gap-3 border-b px-3 py-2",
-              focusedDay && isSameDay(day, focusedDay) && "bg-[#E9F2FD]",
+              focusedDay && isSameDay(day, focusedDay) && "bg-[var(--row-selected)]",
             )}
             style={{ borderColor: MONDAY.border }}
           >
@@ -969,7 +969,7 @@ function AgendaList({
               <span
                 className={cn(
                   "flex size-6 items-center justify-center rounded-full text-[13px] font-medium",
-                  isToday(day) ? "bg-[#0073EA] text-white" : "text-[#323338]",
+                  isToday(day) ? "bg-[var(--surface-accent)] text-white" : "text-foreground",
                 )}
               >
                 {format(day, "d")}
@@ -1676,7 +1676,7 @@ export function CalendarView({
                           key={day.toISOString()}
                           className={cn(
                             "flex items-center justify-center gap-1.5 py-1.5",
-                            focusedDay && isSameDay(day, focusedDay) && "bg-[#E9F2FD]",
+                            focusedDay && isSameDay(day, focusedDay) && "bg-[var(--row-selected)]",
                           )}
                           style={{
                             borderRight:
@@ -1692,7 +1692,7 @@ export function CalendarView({
                           <span
                             className={cn(
                               "flex size-6 items-center justify-center rounded-full text-[13px] font-medium",
-                              isToday(day) ? "bg-[#0073EA] text-white" : "text-[#323338]",
+                              isToday(day) ? "bg-[var(--surface-accent)] text-white" : "text-foreground",
                             )}
                           >
                             {format(day, "d")}
@@ -1824,7 +1824,7 @@ export function CalendarView({
               backgroundColor: activeDragItem.light
                 ? tintColor(activeDragItem.color, 0.86)
                 : activeDragItem.color,
-              color: activeDragItem.light ? MONDAY.text : "#FFFFFF",
+              color: activeDragItem.light ? "#1a1a1a" : "#FFFFFF",
               borderLeft: activeDragItem.light
                 ? `4px solid ${activeDragItem.color}`
                 : "4px solid transparent",

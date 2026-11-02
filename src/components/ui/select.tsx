@@ -214,7 +214,7 @@ const SelectContent = React.forwardRef<
     const viewportHeight = window.innerHeight;
     const spaceBelow = viewportHeight - rect.bottom;
     const spaceAbove = rect.top;
-    
+
     const offset = sideOffset ?? 0;
     let top = rect.bottom + 4 + offset;
     let flipAbove = false;
@@ -222,7 +222,7 @@ const SelectContent = React.forwardRef<
       flipAbove = true;
       top = rect.top - 4 - offset;
     }
-    
+
     setPosition({
       top: flipAbove ? Math.max(8, rect.top - 200 - offset) : top,
       left: rect.left,
@@ -233,19 +233,19 @@ const SelectContent = React.forwardRef<
   React.useEffect(() => {
     if (!open) return;
     updatePosition();
-    
+
     const handleScroll = (e: Event) => {
       if (contentRef.current && contentRef.current.contains(e.target as Node)) {
         return;
       }
       updatePosition();
     };
-    
+
     window.addEventListener("scroll", handleScroll, true);
     window.addEventListener("resize", updatePosition);
-    
+
     const timeoutId = setTimeout(updatePosition, 0);
-    
+
     return () => {
       window.removeEventListener("scroll", handleScroll, true);
       window.removeEventListener("resize", updatePosition);
@@ -255,7 +255,7 @@ const SelectContent = React.forwardRef<
 
   React.useEffect(() => {
     if (!open) return;
-    
+
     const handleClickOutside = (e: MouseEvent) => {
       if (
         triggerRef.current &&
@@ -266,17 +266,17 @@ const SelectContent = React.forwardRef<
         setOpen(false);
       }
     };
-    
+
     const handleEscape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setOpen(false);
         triggerRef.current?.focus();
       }
     };
-    
+
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleEscape);
-    
+
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleEscape);
@@ -285,7 +285,7 @@ const SelectContent = React.forwardRef<
 
   React.useEffect(() => {
     if (!open || !triggerRef.current) return;
-    
+
     const observer = new IntersectionObserver(
       (entries) => {
         entries.forEach((entry) => {
@@ -294,9 +294,9 @@ const SelectContent = React.forwardRef<
           }
         });
       },
-      { threshold: 0 }
+      { threshold: 0 },
     );
-    
+
     observer.observe(triggerRef.current);
     return () => observer.disconnect();
   }, [open, setOpen, triggerRef]);
@@ -305,9 +305,10 @@ const SelectContent = React.forwardRef<
 
   const viewportHeight = typeof window !== "undefined" ? window.innerHeight : 600;
   const maxHeight = Math.max(100, viewportHeight - 16);
-  
+
   const panel = (
     <div
+      data-custom-select-portal="true"
       ref={(node) => {
         contentRef.current = node;
         if (typeof ref === "function") {
@@ -321,14 +322,16 @@ const SelectContent = React.forwardRef<
         top: position.top,
         left: position.left,
         width: position.width,
-        zIndex: 10001,
+        zIndex: 10002,
         maxHeight: maxHeight,
         overflowY: "auto",
+        pointerEvents: "auto",
       }}
       className={cn(
-        "rounded-[8px] border border-popover-border bg-popover-bg p-[4px] text-[14px] text-foreground shadow-popover",
+        "pointer-events-auto rounded-[8px] border border-popover-border bg-popover-bg p-[4px] text-[14px] text-foreground shadow-popover",
         className,
       )}
+      onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       {...props}
     >

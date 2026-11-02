@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import "@/features/boards/engine/view-engine/views";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -22,6 +22,12 @@ import type { DropdownOption } from "@/features/boards/engine/types";
 import { refreshClient360Snapshot } from "@/features/client-360/actions/snapshot-actions";
 import { MirrorDataProvider } from "@/features/boards/engine/connected-data/mirror-data-context";
 import { MirrorSettingsModal } from "@/features/boards/engine/components/mirror-settings-modal";
+import { ColumnAccessModal, type ColumnVisibilityConfig } from "@/features/boards/engine/components/column-access-modal";
+import { useScopeAccess } from "@/lib/members-client";
+import { useUser } from "@/lib/user-context";
+import { Eye } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { executeBoardCellAutomations, runAllActiveBoardAutomations } from "@/features/automations/board-automation-executor";
 
 interface EngineBoardPageProps {
   data: DemoBoardPageData;
@@ -105,6 +111,10 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
    const [bulkArchiveLoading, setBulkArchiveLoading] = useState(false);
    const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null);
    const [mirrorColumnId, setMirrorColumnId] = useState<string | null>(null);
+  const { members, access, isOwner } = useScopeAccess("board", board.workspaceId ?? null, board.id);
+  const { user } = useUser();
+  const [accessModalColumn, setAccessModalColumn] = useState<ColumnDefinition | null>(null);
+  const [previewAsUserId, setPreviewAsUserId] = useState<string | null>(null);
 
   // Groups live in state so a newly created group appears immediately — the
   // server props are only the initial snapshot.
@@ -157,6 +167,51 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
     };
   }, []);
 
+  const handleMoveToGroup = useCallback(
+    async (recordIds: string[], targetGroupId: string) => {
+      const prevRecords = records.filter((r) => recordIds.includes(r.id));
+      setRecords((prev) =>
+        prev.map((r) => (recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r)),
+      );
+      try {
+        const response = await bulkUpdateRecords(recordIds, {}, targetGroupId);
+        if (response.error) {
+          setRecords((prev) => {
+            const remaining = prev.filter((r) => !recordIds.includes(r.id));
+            return [...remaining, ...prevRecords];
+          });
+          toast.error(response.error);
+        } else {
+          toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`);
+        }
+      } catch {
+        setRecords((prev) => {
+          const remaining = prev.filter((r) => !recordIds.includes(r.id));
+          return [...remaining, ...prevRecords];
+        });
+        toast.error("Failed to move records.");
+      }
+    },
+    [records],
+  );
+
+  const automationCtxRef = useRef({
+    board,
+    columns,
+    groups,
+    records,
+    cellValues,
+    handleMoveToGroup,
+  });
+  automationCtxRef.current = {
+    board,
+    columns,
+    groups,
+    records,
+    cellValues,
+    handleMoveToGroup,
+  };
+
   const handleCellChange = useCallback(
     async ({ recordId, columnId, value }: { recordId: string; columnId: string; value: ColumnValue }) => {
       const key = `${recordId}:${columnId}`;
@@ -196,6 +251,22 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
             ),
           );
           toast.error(response.error);
+        } else {
+          // Execute any active board automations matching this cell edit
+          const ctx = automationCtxRef.current;
+          const updatedCellMap = new Map(ctx.cellValues);
+          updatedCellMap.set(key, value);
+          void executeBoardCellAutomations(recordId, columnId, value, {
+            board: ctx.board,
+            columns: ctx.columns,
+            groups: ctx.groups,
+            records: ctx.records,
+            cellValues: updatedCellMap,
+            setCellValues,
+            setRecords,
+            updateCellFn: updateCell,
+            moveRecordToGroupFn: (recId, grpId) => ctx.handleMoveToGroup([recId], grpId),
+          });
         }
       } catch {
         // Rollback on thrown error
@@ -213,7 +284,7 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         toast.error("Failed to save cell value.");
       }
     },
-    [board, cellValues, records],
+    [board, cellValues, columns, records],
   );
 
    const handleBulkDelete = useCallback(
@@ -357,38 +428,10 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         toast.error("Failed to duplicate record.");
       }
     },
-    [board, cellValues, records],
+    [board, cellValues, columns, records],
   );
 
-  const handleMoveToGroup = useCallback(
-    async (recordIds: string[], targetGroupId: string) => {
-      const prevRecords = records.filter((r) => recordIds.includes(r.id));
-      setRecords((prev) =>
-        prev.map((r) => (recordIds.includes(r.id) ? { ...r, groupId: targetGroupId } : r)),
-      );
-      try {
-        const response = await bulkUpdateRecords(recordIds, {}, targetGroupId);
-        if (response.error) {
-          setRecords((prev) => {
-            const remaining = prev.filter((r) => !recordIds.includes(r.id));
-            return [...remaining, ...prevRecords];
-          });
-          toast.error(response.error);
-        } else {
-          toast.success(`${recordIds.length} record${recordIds.length !== 1 ? "s" : ""} moved.`);
-        }
-      } catch {
-        setRecords((prev) => {
-          const remaining = prev.filter((r) => !recordIds.includes(r.id));
-          return [...remaining, ...prevRecords];
-        });
-        toast.error("Failed to move records.");
-      }
-    },
-    [records],
-  );
-
-  const handleMoveToStatus = useCallback(
+    const handleMoveToStatus = useCallback(
     async (recordIds: string[], statusName: string) => {
       const prevRecords = records.filter((r) => recordIds.includes(r.id));
       setRecords((prev) =>
@@ -734,6 +777,26 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
       prev.map((c) => (c.id === columnId ? { ...c, restrictEditing: !c.restrictEditing, updatedAt: new Date().toISOString() } : c)),
     );
   }, []);
+
+    const handleColumnManageAccess = useCallback((column: ColumnDefinition) => {
+    setAccessModalColumn(column);
+  }, []);
+
+  const handleSaveColumnAccess = useCallback(async (columnId: string, config: ColumnVisibilityConfig) => {
+    const col = columns.find((c) => c.id === columnId);
+    if (!col) return;
+    const patch: Partial<ColumnDefinition> = {
+      settings: {
+        ...col.settings,
+        visibility: config,
+      },
+      restrictView: config.mode !== "everyone",
+      updatedAt: new Date().toISOString(),
+    };
+    await handleColumnUpdateSettings(columnId, patch);
+    const modeLabel = config.mode === "everyone" ? "Visible to everyone" : config.mode === "staff_only" ? "Internal Staff Only" : `Visible to ${config.allowedUserIds.length} selected accounts`;
+    toast.success(`Access updated for "${col.label}": ${modeLabel}`);
+  }, [columns, handleColumnUpdateSettings]);
 
   const handleColumnToggleRestrictView = useCallback((columnId: string) => {
     setColumns((prev) =>
@@ -1229,18 +1292,124 @@ setImporting(true);
    useEffect(() => {
      const handleImportEvent = () => handleOpenImport();
      const handleExportEvent = () => handleExportExcel();
+     const handleCellUpdateEvent = (e: Event) => {
+       const detail = (e as CustomEvent).detail;
+       if (detail && detail.recordId && detail.columnId) {
+         setCellValues((prev) => {
+           const next = new Map(prev);
+           next.set(`${detail.recordId}:${detail.columnId}`, detail.value);
+           return next;
+         });
+       }
+     };
      window.addEventListener("board:open-import", handleImportEvent);
      window.addEventListener("board:export-excel", handleExportEvent);
+     window.addEventListener("board:apply-cell-update", handleCellUpdateEvent);
+      const handleRunAutomations = (e?: Event) => {
+        const detail = (e as CustomEvent)?.detail;
+        const ctx = automationCtxRef.current;
+        void runAllActiveBoardAutomations(
+          {
+            board: ctx.board,
+            columns: ctx.columns,
+            groups: ctx.groups,
+            records: ctx.records,
+            cellValues: ctx.cellValues,
+            setCellValues,
+            setRecords,
+            updateCellFn: updateCell,
+            moveRecordToGroupFn: (recId, grpId) => ctx.handleMoveToGroup([recId], grpId),
+          },
+          detail?.ruleId ? { targetRuleId: detail.ruleId } : undefined
+        );
+      };
+      window.addEventListener("board:run-automations", handleRunAutomations);
      return () => {
        window.removeEventListener("board:open-import", handleImportEvent);
        window.removeEventListener("board:export-excel", handleExportEvent);
+       window.removeEventListener("board:apply-cell-update", handleCellUpdateEvent);
+        window.removeEventListener("board:run-automations", handleRunAutomations);
      };
-}, [handleOpenImport, handleExportExcel]);
+   }, [handleOpenImport, handleExportExcel]);
+
+   // Auto-evaluate active automations once board items and cell values are loaded
+   const hasAutoEvaluatedRef = useRef(false);
+   useEffect(() => {
+     if (!hasAutoEvaluatedRef.current && records.length > 0 && cellValues.size > 0) {
+       hasAutoEvaluatedRef.current = true;
+       const timer = setTimeout(() => {
+         const ctx = automationCtxRef.current;
+         void runAllActiveBoardAutomations(
+           {
+             board: ctx.board,
+             columns: ctx.columns,
+             groups: ctx.groups,
+             records: ctx.records,
+             cellValues: ctx.cellValues,
+             setCellValues,
+             setRecords,
+             updateCellFn: updateCell,
+             moveRecordToGroupFn: (recId, grpId) => ctx.handleMoveToGroup([recId], grpId),
+           },
+           { silent: true }
+         );
+       }, 500);
+       return () => clearTimeout(timer);
+     }
+   }, [records.length, cellValues.size]);
+
+  const visibleColumns = useMemo(() => {
+    return columns.filter((col) => {
+      const settings = (col.settings ?? {}) as Record<string, unknown>;
+      const vis = settings.visibility as ColumnVisibilityConfig | undefined;
+
+      if (!vis && !col.restrictView) return true;
+
+      const mode = vis?.mode ?? (col.restrictView ? "staff_only" : "everyone");
+      if (mode === "everyone") return true;
+
+      // If in preview simulation mode:
+      if (previewAsUserId) {
+        const previewMember = members.find((m) => m.user_id === previewAsUserId);
+        const isPreviewStaff = previewMember ? (previewMember.role === "owner" || previewMember.role === "edit") : false;
+        if (mode === "staff_only") {
+          return isPreviewStaff;
+        }
+        if (mode === "selected") {
+          const allowedIds = new Set(vis?.allowedUserIds ?? []);
+          const allowedEmails = new Set((vis?.allowedEmails ?? []).map((e) => e.toLowerCase()));
+          const isAllowed = allowedIds.has(previewAsUserId) || (previewMember?.email && allowedEmails.has(previewMember.email.toLowerCase()));
+          return isAllowed || previewMember?.role === "owner";
+        }
+      }
+
+      // Real user logic:
+      // Owners & Board Admins see all columns when not simulating
+      if (isOwner || access === "owner") return true;
+
+      // Staff (role: "edit") can see staff_only columns
+      if (mode === "staff_only") {
+        return access === "edit";
+      }
+
+      if (mode === "selected") {
+        const currentUserId = user?.id;
+        const currentUserEmail = user?.email?.toLowerCase();
+        const allowedIds = new Set(vis?.allowedUserIds ?? []);
+        const allowedEmails = new Set((vis?.allowedEmails ?? []).map((e) => e.toLowerCase()));
+        const isAllowed = (currentUserId && allowedIds.has(currentUserId)) ||
+                          (currentUserEmail && allowedEmails.has(currentUserEmail));
+        return Boolean(isAllowed);
+      }
+
+      return true;
+    });
+  }, [columns, previewAsUserId, members, isOwner, access, user]);
 
    const boardData = useMemo(
     () => ({
       board,
-      columns,
+      columns: visibleColumns,
       groups,
       records,
       cellValues,
@@ -1451,7 +1620,8 @@ setImporting(true);
   );
 
   return (
-    <MirrorDataProvider boardId={board.id} cellValues={cellValues} columns={columns} records={records}>
+    <MirrorDataProvider boardId={board.id} cellValues={cellValues} columns={columns}
+        groups={groups} records={records}>
       <>
         <BoardLayout
         boardId={board.id}
@@ -1496,6 +1666,8 @@ setImporting(true);
               onColumnUpdateDescription: handleColumnUpdateDescription,
               onColumnToggleRestrictEditing: handleColumnToggleRestrictEditing,
               onColumnToggleRestrictView: handleColumnToggleRestrictView,
+              onColumnManageAccess: handleColumnManageAccess,
+              members,
                onColumnToggleWrapText: handleColumnToggleWrapText,
                onColumnResize: handleColumnResize,
                onColumnReorder: handleColumnReorder,
@@ -1526,6 +1698,14 @@ setImporting(true);
             bulkDeleteLoading={bulkDeleteLoading}
           />
       </BoardLayout>
+
+            <ColumnAccessModal
+        open={accessModalColumn !== null}
+        onOpenChange={(open) => !open && setAccessModalColumn(null)}
+        column={accessModalColumn}
+        members={members}
+        onSave={handleSaveColumnAccess}
+      />
 
       <MirrorSettingsModal
         open={mirrorColumnId !== null}

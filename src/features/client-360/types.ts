@@ -183,6 +183,11 @@ export interface Client360DailyActivity {
   clients: Client360DailyActivityClient[];
   daily_breakdown: Client360SnapshotDailyBreakdown[];
   unmapped_boards: number;
+  /** Row-level job counts (1 row with Type of Job = 1 job, not SKU sum) */
+  row_total_jobs?: number;
+  row_clients?: Client360DailyActivityClient[];
+  row_busiest_client?: Client360DailyActivityClient | null;
+  row_daily_breakdown?: Client360SnapshotDailyBreakdown[];
 }
 
 export type ActivityMode = "received" | "due";

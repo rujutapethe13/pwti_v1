@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Plus,
   CheckCheck,
@@ -9,18 +10,29 @@ import {
   Activity,
   Zap,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
   AlertCircle,
   RefreshCw,
   Users,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { TimeRangeSelector } from "@/features/overview/time-range-selector";
 import { StatCardsSection } from "@/features/overview/stat-cards-section";
 import { DailyListsSection } from "@/features/overview/daily-lists-section";
 import { VolumeTrendSection } from "@/features/overview/volume-trend-section";
 import { VolumeBreakdownSection } from "@/features/overview/volume-breakdown-section";
+import {
+  OverviewDrilldownPanel,
+  type OverviewDrilldownTarget,
+} from "@/features/overview/overview-drilldown-panel";
+import type { OverviewDrilldownPayload } from "@/features/overview/overview-drilldown-service";
+import type { StatCardId } from "@/features/overview/stat-cards";
+import type { DailyListPanelId } from "@/features/overview/daily-lists";
 import {
   DEFAULT_TIME_RANGE_ID,
   isDateKey,
@@ -249,16 +261,48 @@ function OverviewPage() {
   // from an earlier visit. Never a dummy — null renders nothing.
   const userName = (data?.userName ?? seedName) || null;
 
-  // A custom range only counts once both bounds are real dates, so a half-filled
-  // picker cannot narrow the window to a single day by accident.
+  // Additive state for Overview interactive drilldowns
+  const [drilldownData, setDrilldownData] = useState<OverviewDrilldownPayload | null>(
+    null,
+  );
+  const [activeTarget, setActiveTarget] = useState<OverviewDrilldownTarget | null>(null);
+  const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
+  const [selectedWorkloadBoard, setSelectedWorkloadBoard] = useState<string | null>(null);
+
+  const { settings } = useUser();
+  const timeZone = settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  const [seedName, setSeedName] = useState("");
+  useEffect(() => {
+    try {
+      setSeedName(localStorage.getItem("overview-first-name") ?? "");
+    } catch {
+      setSeedName("");
+    }
+  }, []);
+
+  const [mounted, setMounted] = useState(false);
+  const [greeting, setGreeting] = useState("");
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  useEffect(() => {
+    if (!mounted) return;
+    const refresh = () => setGreeting(greetingForHour(hourInZone(timeZone)));
+    refresh();
+    const t = setInterval(refresh, 60_000);
+    return () => clearInterval(t);
+  }, [mounted, timeZone]);
+
+  const workspaceName = activeWorkspace?.name;
+  const userName = (data?.userName ?? seedName) || null;
+
   const effectiveCustomRange = useMemo<CustomRange | null>(() => {
     if (!customRange) return null;
     if (!isDateKey(customRange.from) || !isDateKey(customRange.to)) return null;
     return customRange;
   }, [customRange]);
 
-  // The resolved window is sent to the query layer so every section is
-  // re-queried for the selected range — nothing is sliced client-side.
   const rangeQuery = useMemo(
     () => timeRangeQueryString(resolveSelectedTimeRange(rangeId, effectiveCustomRange)),
     [rangeId, effectiveCustomRange],
@@ -285,6 +329,11 @@ function OverviewPage() {
         }
       }
       setData(json);
+
+      if (drillRes && drillRes.ok) {
+        const drillJson = (await drillRes.json()) as OverviewDrilldownPayload;
+        setDrilldownData(drillJson);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
@@ -295,6 +344,32 @@ function OverviewPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const handleSelectStatCard = (cardId: StatCardId) => {
+    if (!ENABLE_OVERVIEW_DRILLDOWN) return;
+    setSelectedDateFilter(null);
+    setActiveTarget((prev) => (prev === cardId ? null : cardId));
+  };
+
+  const handleSelectBucketDate = (dateKey: string) => {
+    if (!ENABLE_OVERVIEW_DRILLDOWN) return;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+      setSelectedDateFilter((prev) => (prev === dateKey ? null : dateKey));
+      setActiveTarget("jobsReceived");
+    }
+  };
+
+  const handleSelectDailyListPanel = (panelId: DailyListPanelId) => {
+    if (!ENABLE_OVERVIEW_DRILLDOWN) return;
+    const targetMap: Record<DailyListPanelId, OverviewDrilldownTarget> = {
+      today: "today_list",
+      overdue: "overdue_list",
+      upcoming: "upcoming_list",
+    };
+    const nextTarget = targetMap[panelId];
+    setSelectedDateFilter(null);
+    setActiveTarget((prev) => (prev === nextTarget ? null : nextTarget));
+  };
 
   const rangeCaption = useMemo(() => {
     const active = data?.range;
@@ -309,6 +384,15 @@ function OverviewPage() {
     });
     return `${from} – ${to}`;
   }, [data]);
+
+  const activeDailyPanelId: DailyListPanelId | null =
+    activeTarget === "today_list"
+      ? "today"
+      : activeTarget === "overdue_list"
+        ? "overdue"
+        : activeTarget === "upcoming_list"
+          ? "upcoming"
+          : null;
 
   return (
     <div className="mx-auto max-w-[1440px] space-y-8 px-6 py-10 sm:px-8 lg:px-12">
@@ -361,10 +445,42 @@ function OverviewPage() {
       </div>
 
       {/* ── Stat cards (own loading / empty / error states) ── */}
-      <StatCardsSection rangeId={rangeId} customRange={effectiveCustomRange} />
+      <StatCardsSection
+        rangeId={rangeId}
+        customRange={effectiveCustomRange}
+        activeCardId={
+          activeTarget &&
+          !["today_list", "overdue_list", "upcoming_list"].includes(activeTarget)
+            ? (activeTarget as StatCardId)
+            : null
+        }
+        onSelectCard={ENABLE_OVERVIEW_DRILLDOWN ? handleSelectStatCard : undefined}
+        resolvedSummary={drilldownData?.resolvedSummary ?? null}
+      />
+
+      {/* ── Inline Drilldown Panel (opens below the 6 KPI cards, pushing Volume trend down) ── */}
+      {ENABLE_OVERVIEW_DRILLDOWN && activeTarget && drilldownData && (
+        <OverviewDrilldownPanel
+          data={drilldownData}
+          activeTarget={activeTarget}
+          selectedDateFilter={selectedDateFilter}
+          onClearDateFilter={() => setSelectedDateFilter(null)}
+          onClose={() => {
+            setActiveTarget(null);
+            setSelectedDateFilter(null);
+          }}
+        />
+      )}
 
       {/* ── Volume trend (own loading / empty / error states) ── */}
-      <VolumeTrendSection rangeId={rangeId} customRange={effectiveCustomRange} />
+      <VolumeTrendSection
+        rangeId={rangeId}
+        customRange={effectiveCustomRange}
+        selectedBucketDate={selectedDateFilter}
+        onSelectBucketDate={
+          ENABLE_OVERVIEW_DRILLDOWN ? handleSelectBucketDate : undefined
+        }
+      />
 
       {/* ── Volume breakdown by job type (own states) ── */}
       <VolumeBreakdownSection
@@ -375,10 +491,14 @@ function OverviewPage() {
         onBoardChange={updateBreakdownBoards}
       />
 
-      {/* ── Today's jobs / Overdue / Upcoming ──────────────────────────
-          Always "now"-relative: these three lists ignore the range selector
-          above, and each panel owns its loading, empty and error state. ── */}
-      <DailyListsSection />
+      {/* ── Today's jobs / Overdue / Upcoming ────────────────────────── */}
+      <DailyListsSection
+        activePanelId={activeDailyPanelId}
+        onSelectPanel={
+          ENABLE_OVERVIEW_DRILLDOWN ? handleSelectDailyListPanel : undefined
+        }
+        boardsWithoutDueDateList={drilldownData?.boardsWithoutDueDate}
+      />
 
       {/* ── Two-Column: Activity + Volume/Workload ────────────── */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
@@ -409,17 +529,8 @@ function OverviewPage() {
               <ActivitySkeleton />
             ) : error ? (
               <ErrorState message={error} onRetry={loadData} />
-            ) : data?.activityMissing ? (
-              <div className="text-muted-foreground py-8 text-center">
-                <Activity className="mx-auto mb-2 size-8 opacity-50" />
-                <p className="text-sm">
-                  Activity feed unavailable — audit log table not configured
-                </p>
-              </div>
-            ) : data?.activityFeed.length === 0 ? (
-              <EmptyState message="No activity yet" icon={Activity} />
-            ) : (
-              data!.activityFeed.map((event: ActivityEvent, i: number) => {
+            ) : data?.activityFeed && data.activityFeed.length > 0 ? (
+              data.activityFeed.map((event: ActivityEvent, i: number) => {
                 const Icon = iconMap[event.icon] ?? Activity;
                 return (
                   <div key={event.id}>
@@ -442,10 +553,54 @@ function OverviewPage() {
                         {event.timestamp}
                       </span>
                     </div>
-                    {i < data!.activityFeed.length - 1 && <Separator />}
+                    {i < data.activityFeed.length - 1 && <Separator />}
                   </div>
                 );
               })
+            ) : ENABLE_OVERVIEW_DRILLDOWN &&
+              drilldownData &&
+              drilldownData.periodItems.length > 0 ? (
+              <div className="divide-border/60 divide-y">
+                {drilldownData.periodItems.slice(0, 6).map((item) => (
+                  <div
+                    key={item.item_id}
+                    className="flex items-center justify-between gap-3 py-3"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-foreground truncate text-sm font-medium">
+                          {item.job_name}
+                        </p>
+                        {item.job_type && (
+                          <Badge variant="outline" className="shrink-0 text-[10px]">
+                            {item.job_type}
+                          </Badge>
+                        )}
+                      </div>
+                      <p className="text-muted-foreground mt-0.5 truncate text-xs">
+                        {item.client ?? "—"} · {item.board_name} · Received{" "}
+                        {item.received_at ?? "—"}
+                      </p>
+                    </div>
+                    <Link
+                      href={`/${item.board_slug ?? item.board_id}?record=${item.item_id}`}
+                      className="border-border bg-background hover:bg-accent inline-flex h-7 shrink-0 items-center gap-1 rounded border px-2.5 text-xs font-medium transition-colors"
+                    >
+                      Open
+                      <ExternalLink className="size-3" />
+                    </Link>
+                  </div>
+                ))}
+              </div>
+            ) : data?.activityMissing ? (
+              <div className="text-muted-foreground py-8 text-center">
+                <Activity className="mx-auto mb-2 size-8 opacity-50" />
+                <p className="text-sm">
+                  Activity feed unavailable — audit log table not configured
+                </p>
+              </div>
+            ) : (
+              <EmptyState message="No activity yet" icon={Activity} />
             )}
           </div>
         </Card>
@@ -461,7 +616,7 @@ function OverviewPage() {
             <p className="text-muted-foreground mt-1 text-xs">
               {selectedBoardIds.length} boards · distribution in selected range
             </p>
-            <div className="mt-5 space-y-4">
+            <div className="mt-5 space-y-3">
               {isLoading ? (
                 <WorkloadSkeleton />
               ) : error ? (
@@ -479,18 +634,8 @@ function OverviewPage() {
                         {team.jobs} {team.jobs === 1 ? "job" : "jobs"}
                       </span>
                     </div>
-                    <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">
-                      <div
-                        className="bg-highlight/70 h-full rounded-full transition-all duration-300"
-                        style={{ width: `${team.percentage}%` }}
-                        role="progressbar"
-                        aria-valuenow={team.percentage}
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                      />
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </Card>

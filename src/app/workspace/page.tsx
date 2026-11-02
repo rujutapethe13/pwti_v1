@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState, useRef, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -155,7 +155,7 @@ export default function WorkspacePage() {
   };
 
   const handleShare = () => {
-    setShowShare(true);
+    setShowMembers(true);
     setHeaderDropdown(false);
   };
 
@@ -480,7 +480,7 @@ export default function WorkspacePage() {
                   </div>
                   <button
                     onClick={() => setShowMembers(true)}
-                    className="flex w-full flex-col items-center justify-center rounded-lg border border-gray-200 py-10 text-center hover:bg-accent/40"
+                    className="flex w-full flex-col items-center justify-center rounded-lg border border-border py-10 text-center hover:bg-accent/40"
                   >
                     <Users2 className="size-8 text-muted-foreground/50" aria-hidden="true" />
                     <span className="mt-2 text-sm font-medium">

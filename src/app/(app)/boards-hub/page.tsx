@@ -218,7 +218,7 @@ export default function BoardsHubPage() {
             className={cn(
               "h-7 px-2.5 text-xs",
               board.is_restricted
-                ? "border-orange-200 text-orange-700 hover:bg-orange-50"
+                ? "border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800/60 dark:text-orange-300 dark:hover:bg-orange-950/40"
                 : "text-muted-foreground",
             )}
             disabled={restrictPending.current.get(board.id)}
@@ -250,7 +250,7 @@ export default function BoardsHubPage() {
     if (!board.is_restricted) {
       // Open board — access granted
       return (
-        <Badge className="bg-green-50 text-green-700 border-green-200">
+        <Badge className="bg-green-50 text-green-700 border-green-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800/60">
           Open access
         </Badge>
       );

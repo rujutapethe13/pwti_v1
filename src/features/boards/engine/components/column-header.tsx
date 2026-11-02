@@ -1,3 +1,4 @@
+import type { Member } from '@/lib/members-types';
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -6,7 +7,7 @@ import {
   ArrowUp,
   ArrowDown,
   Lock,
-  EyeOff,
+  Eye, EyeOff, Shield,
   Info,
   Filter,
   ArrowLeftRight,
@@ -58,6 +59,8 @@ export interface ColumnHeaderProps {
   onAddDescription?: (columnId: string, description: string) => void;
   onToggleRestrictEditing?: (columnId: string) => void;
   onToggleRestrictView?: (columnId: string) => void;
+  onManageAccess?: (column: ColumnDefinition) => void;
+  members?: Member[];
   onSetFilter?: (columnId: string, operator: string, value: ColumnValue) => void;
   onClearFilter?: (columnId: string) => void;
   onToggleCollapse?: (columnId: string) => void;
@@ -242,6 +245,8 @@ export function ColumnHeader({
   onAddDescription,
   onToggleRestrictEditing,
   onToggleRestrictView,
+  onManageAccess,
+  members,
   onSetFilter,
   onClearFilter,
   onToggleCollapse,
@@ -381,7 +386,7 @@ export function ColumnHeader({
       )}
 
       {/* Restrict view icon */}
-      {restrictView && (
+      {(restrictView || (column.settings as any)?.visibility?.mode === "staff_only" || (column.settings as any)?.visibility?.mode === "selected") && (
         <Tooltip>
           <TooltipTrigger asChild>
             <span className="inline-flex size-3.5 shrink-0 text-red-600">
@@ -389,7 +394,7 @@ export function ColumnHeader({
             </span>
           </TooltipTrigger>
           <TooltipContent>
-            <p className="text-xs">Column view is restricted</p>
+            <p className="text-xs">{(column.settings as any)?.visibility?.mode === "selected" ? `Restricted access (${((column.settings as any)?.visibility?.allowedUserIds?.length ?? 0)} accounts)` : "Restricted view (Staff only)"}</p>
           </TooltipContent>
         </Tooltip>
       )}
@@ -428,6 +433,7 @@ export function ColumnHeader({
         onAddDescription={onAddDescription}
         onToggleRestrictEditing={onToggleRestrictEditing}
         onToggleRestrictView={onToggleRestrictView}
+        onManageAccess={onManageAccess}
         onSetFilter={onSetFilter}
         onClearFilter={onClearFilter}
         onToggleCollapse={onToggleCollapse}

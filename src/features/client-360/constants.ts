@@ -46,9 +46,30 @@ export function normalizeStatus(value: unknown): string {
   return STATUS_NORMALIZATION[str] ?? "Other";
 }
 
-export const CLIENT_COLUMN_NAME_HINTS = ["client", "customer", "account", "company", "account name", "client name"];
+export const CLIENT_COLUMN_NAME_HINTS = [
+  "client",
+  "customer",
+  "account",
+  "company",
+  "account name",
+  "client name",
+  "brand",
+  "item name",
+];
 
-export const CLIENT_COLUMN_TYPES = ["text", "dropdown", "status", "person", "long_text", "email", "phone", "url", "multi_select"];
+export const CLIENT_COLUMN_TYPES = [
+  "text",
+  "dropdown",
+  "status",
+  "person",
+  "long_text",
+  "email",
+  "phone",
+  "url",
+  "multi_select",
+  "connected_board",
+  "mirror",
+];
 
 export function isClientColumn(column: { label: string; type: string; settings?: Record<string, unknown> }): boolean {
   const labelLower = column.label.toLowerCase();
@@ -288,4 +309,4 @@ export function isJobTypeColumn(column: { label: string; type: string; settings?
   return JOB_TYPE_COLUMN_NAME_HINTS.some((hint) => labelLower.includes(hint));
 }
 export const DEFAULT_PAGE_SIZE = 50;
-export const SEARCH_DEBOUNCE_MS = 300;
+export const SEARCH_DEBOUNCE_MS = 200;

@@ -21,11 +21,11 @@ import type { BoardRecord, ColumnDefinition, ColumnValue } from "../../types";
 import { findOptionForValue, getColumnOptions } from "../../lib/option-lookup";
 
 const MONDAY = {
-  text: "#323338",
-  muted: "#676879",
-  border: "#D0D4E4",
+  text: "var(--text)",
+  muted: "hsl(var(--muted-foreground))",
+  border: "hsl(var(--border))",
   accent: "#0073EA",
-  hover: "#F7F8FA",
+  hover: "var(--row-hover)",
 } as const;
 
 interface CalendarItemPanelProps {
@@ -124,7 +124,7 @@ export function CalendarItemPanel({
 
   return (
     <aside
-      className="flex h-full w-[320px] shrink-0 flex-col border-l bg-white"
+      className="flex h-full w-[320px] shrink-0 flex-col border-l bg-[var(--surface)]"
       style={{ borderColor: MONDAY.border }}
       aria-label="Item details"
     >
@@ -139,7 +139,7 @@ export function CalendarItemPanel({
           type="button"
           onClick={onClose}
           aria-label="Close item details"
-          className="flex size-6 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]"
+          className="flex size-6 items-center justify-center rounded-[4px] transition-colors hover:bg-accent"
           style={{ color: MONDAY.muted }}
         >
           <X className="size-4" />

@@ -55,7 +55,11 @@ function scopeKey(
   boardId?: string | null,
 ): string | null {
   if (!workspaceId || workspaceId === "null" || workspaceId === "undefined") return null;
-  if (scope === "board") return boardId && boardId !== "null" && boardId !== "undefined" ? `board::${boardId}` : null;
+  if (scope === "board") {
+    return boardId && boardId !== "null" && boardId !== "undefined"
+      ? `board::${boardId}`
+      : null;
+  }
   return `workspace::${workspaceId}`;
 }
 
@@ -80,7 +84,9 @@ function queryFor(
   q?: string,
 ): string {
   if (!workspaceId || (scope === "board" && !boardId)) {
-    throw new Error("Invalid scope parameters: workspaceId and boardId (for board scope) are required");
+    throw new Error(
+      "Invalid scope parameters: workspaceId and boardId (for board scope) are required",
+    );
   }
   if (scope !== "workspace" && scope !== "board") {
     throw new Error("Invalid scope: must be 'workspace' or 'board'");
@@ -101,22 +107,33 @@ async function loadScope(
   scope: MemberScope,
   workspaceId: string,
   boardId: string | null,
+  force = false,
 ) {
-  if (inFlight.has(key)) return inFlight.get(key);
+  if (!force && inFlight.has(key)) return inFlight.get(key);
 
+  const previous = cache.get(key);
   const task = (async () => {
-    cache.set(key, LOADING);
+    // Preserve previous access/members during a background refresh so the modal
+    // never flashes "view-only" or an empty list while re-fetching after a write.
+    cache.set(
+      key,
+      previous && previous.access !== null
+        ? { ...previous, loading: false, error: null }
+        : LOADING,
+    );
     publish(key);
 
     try {
-      const response = await fetch(queryFor(scope, workspaceId, boardId));
+      const response = await fetch(queryFor(scope, workspaceId, boardId), {
+        cache: "no-store",
+      });
       const payload = (await response.json().catch(() => null)) as
         | (MembersPayload & { error?: string })
         | null;
 
       if (!response.ok || !payload?.success) {
         cache.set(key, {
-          ...LOADING,
+          ...(previous ?? LOADING),
           loading: false,
           error: payload?.error ?? "Could not load members",
         });
@@ -134,26 +151,31 @@ async function loadScope(
       });
       publish(key);
     } catch {
-      cache.set(key, { ...LOADING, loading: false, error: "Could not load members" });
+      cache.set(key, {
+        ...(previous ?? LOADING),
+        loading: false,
+        error: "Could not load members",
+      });
       publish(key);
     }
   })();
 
   inFlight.set(key, task);
   await task;
-  inFlight.delete(key);
+  if (inFlight.get(key) === task) {
+    inFlight.delete(key);
+  }
 }
 
-/** Re-read a scope after a mutation so every consumer sees the new state. */
+/** Re-read a scope after a mutation so every consumer sees the new state immediately. */
 export function invalidateScope(
   scope: MemberScope,
   workspaceId: string | null,
   boardId?: string | null,
 ) {
   const key = scopeKey(scope, workspaceId, boardId);
-  if (!key) return;
-  cache.delete(key);
-  publish(key);
+  if (!key || !workspaceId) return;
+  void loadScope(key, scope, workspaceId, boardId ?? null, true);
 }
 
 export function useScopeAccess(
@@ -162,10 +184,18 @@ export function useScopeAccess(
   boardId?: string | null,
 ) {
   const key = scopeKey(scope, workspaceId, boardId);
-  const [state, setState] = useState<ScopeState>(() => (key ? cache.get(key) ?? LOADING : IDLE));
+  const [state, setState] = useState<ScopeState>(() =>
+    key ? cache.get(key) ?? LOADING : IDLE,
+  );
 
   useEffect(() => {
-    if (!key || !workspaceId || workspaceId === "null" || workspaceId === "undefined" || (scope === "board" && (!boardId || boardId === "null" || boardId === "undefined"))) {
+    if (
+      !key ||
+      !workspaceId ||
+      workspaceId === "null" ||
+      workspaceId === "undefined" ||
+      (scope === "board" && (!boardId || boardId === "null" || boardId === "undefined"))
+    ) {
       setState(IDLE);
       return;
     }
@@ -173,7 +203,7 @@ export function useScopeAccess(
     let cancelled = false;
     setState(cache.get(key) ?? LOADING);
     const unsubscribe = subscribe(key, () => {
-      if (!cancelled) setState(cache.get(key) ?? IDLE);
+      if (!cancelled) setState(cache.get(key) ?? LOADING);
     });
 
     void loadScope(key, scope, workspaceId, boardId ?? null);
@@ -209,7 +239,9 @@ export async function searchMemberCandidates(
   boardId: string | null,
   query: string,
 ) {
-  const response = await fetch(queryFor(scope, workspaceId, boardId, query));
+  const response = await fetch(queryFor(scope, workspaceId, boardId, query), {
+    cache: "no-store",
+  });
   const payload = (await response.json().catch(() => null)) as MembersPayload | null;
   if (!response.ok || !payload?.success) return [];
   return payload.candidates;

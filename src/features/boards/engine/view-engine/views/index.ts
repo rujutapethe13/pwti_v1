@@ -99,6 +99,8 @@ function TableViewRenderer(props: ViewRendererProps) {
     onColumnUpdateDescription: ops.onColumnUpdateDescription,
     onColumnToggleRestrictEditing: ops.onColumnToggleRestrictEditing,
     onColumnToggleRestrictView: ops.onColumnToggleRestrictView,
+    onColumnManageAccess: ops.onColumnManageAccess,
+    members: ops.members,
     onColumnToggleWrapText: ops.onColumnToggleWrapText,
     sortColumnId: ops.sortColumnId,
     sortDirection: ops.sortDirection,

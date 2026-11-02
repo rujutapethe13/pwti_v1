@@ -543,7 +543,7 @@ function PreviewTable({
               <tr
                 key={idx}
                 className={cn(
-                  "odd:bg-white even:bg-muted/10",
+                  "odd:bg-card even:bg-muted/10",
                   isHeaderRow && "bg-primary/5 font-medium",
                   isHighlightRow && "ring-2 ring-primary",
                 )}
@@ -612,7 +612,7 @@ function Step1FirstRow({
         <select
           value={headerRowOffset}
           onChange={(e) => onOffsetChange(Number(e.target.value))}
-          className="h-8 w-full rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
         >
           {previewRows.map((_, idx) => (
             <option key={idx} value={idx}>
@@ -660,7 +660,7 @@ function Step2FirstColumn({
         <select
           value={titleColumnIndex ?? ""}
           onChange={(e) => onTitleColumnChange(e.target.value || null)}
-          className="h-8 w-full rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+          className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
         >
           <option value="">— Generate titles automatically —</option>
           {headers.map((h) => {
@@ -713,7 +713,7 @@ function Step3CustomizeColumns({
           const det = detected.find((d) => d.header === h);
           const currentType = columnTypes[h] ?? "text";
           return (
-            <div key={h} className="flex items-center gap-2 rounded-md border border-border bg-white p-2">
+            <div key={h} className="flex items-center gap-2 rounded-md border border-border bg-card p-2">
               <div className="w-36 shrink-0 truncate text-xs font-medium text-foreground" title={h}>
                 {h}
               </div>

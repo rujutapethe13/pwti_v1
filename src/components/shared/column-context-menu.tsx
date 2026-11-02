@@ -23,6 +23,7 @@ import {
   MoreHorizontal,
   LayoutTemplate,
   Lock,
+  Shield,
   X,
   Check,
   ChevronDown,
@@ -82,6 +83,7 @@ interface ColumnContextMenuProps {
   onAddDescription?: (columnId: string, description: string) => void;
   onToggleRestrictEditing?: (columnId: string) => void;
   onToggleRestrictView?: (columnId: string) => void;
+  onManageAccess?: (column: ColumnDefinition) => void;
   onSetFilter?: (columnId: string, operator: string, value: ColumnValue) => void;
   onClearFilter?: (columnId: string) => void;
   onToggleCollapse?: (columnId: string) => void;
@@ -298,6 +300,7 @@ export function ColumnContextMenu({
   onAddDescription,
   onToggleRestrictEditing,
   onToggleRestrictView,
+  onManageAccess,
   onSetFilter,
   onClearFilter,
   onUpdateColumnSettings,
@@ -460,6 +463,10 @@ export function ColumnContextMenu({
               <DropdownMenuItem onSelect={() => onToggleRestrictEditing?.(column.id)}>
                 <Lock className={cn("mr-2 size-3.5", restrictEditing && "fill-primary")} />
                 {restrictEditing ? "Restrict column editing (on)" : "Restrict column editing"}
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => onManageAccess?.(column)}>
+                <Shield className="mr-2 size-3.5 text-primary" />
+                Manage visibility (Who can see)
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onToggleRestrictView?.(column.id)}>
                 <EyeOff className={cn("mr-2 size-3.5", restrictView && "fill-primary")} />

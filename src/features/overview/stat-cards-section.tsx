@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, ChevronDown, ChevronUp } from "lucide-react";
 
 import { Card } from "@/components/ui/card";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -14,7 +14,14 @@ import {
   type CustomRange,
   type TimeRangeId,
 } from "@/features/overview/time-range";
-import { formatCount, type StatCard, type StatCardsResult } from "@/features/overview/stat-cards";
+import {
+  buildCountTrend,
+  formatCount,
+  type StatCard,
+  type StatCardId,
+  type StatCardsResult,
+} from "@/features/overview/stat-cards";
+import type { OverviewDrilldownPayload } from "@/features/overview/overview-drilldown-service";
 import { cn } from "@/lib/utils";
 
 const SKELETON_CARD_COUNT = 6;
@@ -44,10 +51,54 @@ const sentimentClasses = {
   neutral: "text-muted-foreground",
 } as const;
 
-function StatCardTile({ card }: { card: StatCard }) {
+function StatCardTile({
+  card,
+  isActive = false,
+  onSelect,
+}: {
+  card: StatCard;
+  isActive?: boolean;
+  onSelect?: (id: StatCardId) => void;
+}) {
+  const interactive = Boolean(onSelect);
   return (
-    <Card className="border-border/60 flex flex-col p-6 shadow-none">
-      <p className="metric-eyebrow">{card.label}</p>
+    <Card
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? () => onSelect?.(card.id) : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onSelect?.(card.id);
+              }
+            }
+          : undefined
+      }
+      className={cn(
+        "border-border/60 flex flex-col p-6 shadow-none transition-all",
+        interactive &&
+          "hover:border-primary/60 cursor-pointer hover:-translate-y-0.5 hover:shadow-sm",
+        isActive && "border-primary bg-primary/[0.03] ring-primary/30 ring-2",
+      )}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="metric-eyebrow">{card.label}</p>
+        {interactive && (
+          <span className="text-muted-foreground inline-flex items-center gap-0.5 text-[11px] font-medium">
+            {isActive ? (
+              <>
+                Hide <ChevronUp className="size-3" />
+              </>
+            ) : (
+              <>
+                Details <ChevronDown className="size-3" />
+              </>
+            )}
+          </span>
+        )}
+      </div>
 
       {card.unavailable ? (
         <>
@@ -122,6 +173,12 @@ interface StatCardsSectionProps {
   rangeId: TimeRangeId;
   /** Bounds for a "Custom range" selection. */
   customRange?: CustomRange | null;
+  /** Additive: currently selected stat card for inline drilldown */
+  activeCardId?: StatCardId | null;
+  /** Additive: click callback to open inline drilldown panel */
+  onSelectCard?: (cardId: StatCardId) => void;
+  /** Additive: board-resolved summary to enrich unmapped client/turnaround details */
+  resolvedSummary?: OverviewDrilldownPayload["resolvedSummary"] | null;
 }
 
 /**
@@ -137,7 +194,13 @@ interface StatCardsSectionProps {
  * empty state says how many items sit outside the range rather than implying the
  * workspace is empty.
  */
-export function StatCardsSection({ rangeId, customRange }: StatCardsSectionProps) {
+export function StatCardsSection({
+  rangeId,
+  customRange,
+  activeCardId = null,
+  onSelectCard,
+  resolvedSummary = null,
+}: StatCardsSectionProps) {
   const rangeQuery = useMemo(
     () => timeRangeQueryString(resolveSelectedTimeRange(rangeId, customRange)),
     [rangeId, customRange],
@@ -170,6 +233,85 @@ export function StatCardsSection({ rangeId, customRange }: StatCardsSectionProps
   useEffect(() => {
     load();
   }, [load]);
+
+  const displayCards = useMemo(() => {
+    if (!data?.cards) return [];
+    if (!resolvedSummary) return data.cards;
+
+    return data.cards.map((card) => {
+      const currentNum = Number(String(card.value).replace(/,/g, "")) || 0;
+      const days = data.range.days;
+
+      if (card.id === "clientsActive" && resolvedSummary.clientsActive > currentNum) {
+        return {
+          ...card,
+          unavailable: false,
+          value: formatCount(resolvedSummary.clientsActive),
+          trend: buildCountTrend(
+            resolvedSummary.clientsActive,
+            resolvedSummary.priorClientsActive,
+            { days },
+          ),
+        };
+      }
+      if (card.id === "busiestClient" && resolvedSummary.busiestClient) {
+        const currentDetail = (card.detail ?? "").trim();
+        const shouldUseResolved =
+          card.unavailable ||
+          resolvedSummary.busiestClient.count > currentNum ||
+          !currentDetail ||
+          currentDetail.length <= 1;
+
+        if (shouldUseResolved) {
+          return {
+            ...card,
+            unavailable: false,
+            value: formatCount(resolvedSummary.busiestClient.count),
+            detail: resolvedSummary.busiestClient.name,
+            caption: `Most jobs received by one client · ${resolvedSummary.busiestClient.name}`,
+            trend: buildCountTrend(
+              resolvedSummary.busiestClient.count,
+              resolvedSummary.busiestClient.priorCount,
+              { days },
+            ),
+          };
+        }
+      }
+      if (
+        card.id === "avgTurnaround" &&
+        card.unavailable &&
+        resolvedSummary.turnaroundAvgDays !== null
+      ) {
+        return {
+          ...card,
+          unavailable: false,
+          value: `${resolvedSummary.turnaroundAvgDays.toFixed(1)}d`,
+          detail: `Across ${resolvedSummary.turnaroundSample} ${
+            resolvedSummary.turnaroundSample === 1 ? "job" : "jobs"
+          } with Date of Upload`,
+          trend: {
+            ...card.trend,
+            label: `${resolvedSummary.turnaroundSample} ${
+              resolvedSummary.turnaroundSample === 1 ? "job has" : "jobs have"
+            } both Receive Date and Upload Date`,
+          },
+          caption: "Mean days from Receive Date Post Production to Date of Upload",
+        };
+      }
+      if (
+        card.id === "jobsCompleted" &&
+        card.value === "0" &&
+        resolvedSummary.jobsCompleted > 0
+      ) {
+        return {
+          ...card,
+          value: formatCount(resolvedSummary.jobsCompleted),
+          detail: `${resolvedSummary.jobsReceived - resolvedSummary.jobsCompleted} still in progress`,
+        };
+      }
+      return card;
+    });
+  }, [data, resolvedSummary]);
 
   if (error) {
     return (
@@ -207,8 +349,13 @@ export function StatCardsSection({ rangeId, customRange }: StatCardsSectionProps
 
   return (
     <div className="grid grid-cols-2 gap-5 lg:grid-cols-3">
-      {data?.cards.map((card) => (
-        <StatCardTile key={card.id} card={card} />
+      {displayCards.map((card) => (
+        <StatCardTile
+          key={card.id}
+          card={card}
+          isActive={activeCardId === card.id}
+          onSelect={onSelectCard}
+        />
       ))}
     </div>
   );

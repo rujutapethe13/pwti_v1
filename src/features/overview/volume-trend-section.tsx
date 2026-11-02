@@ -160,6 +160,10 @@ interface VolumeTrendSectionProps {
   customRange?: CustomRange | null;
   className?: string;
   height?: number;
+  /** Additive: currently selected bucket date key */
+  selectedBucketDate?: string | null;
+  /** Additive: click callback when a bucket point is clicked on the chart */
+  onSelectBucketDate?: (dateKey: string) => void;
 }
 
 /**
@@ -187,6 +191,8 @@ export function VolumeTrendSection({
   customRange,
   className,
   height = 240,
+  selectedBucketDate = null,
+  onSelectBucketDate,
 }: VolumeTrendSectionProps) {
   const rangeQuery = useMemo(
     () => timeRangeQueryString(resolveSelectedTimeRange(rangeId, customRange)),
@@ -356,7 +362,16 @@ export function VolumeTrendSection({
           />
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
+            <AreaChart
+              data={chartData}
+              margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
+              onClick={(chartState) => {
+                const clickedKey = chartState?.activeLabel;
+                if (clickedKey && onSelectBucketDate) {
+                  onSelectBucketDate(String(clickedKey));
+                }
+              }}
+            >
               <defs>
                 <linearGradient id="volume-trend-fill" x1="0" y1="0" x2="0" y2="1">
                   <stop
@@ -396,6 +411,19 @@ export function VolumeTrendSection({
                 content={<TrendTooltip metric={activeMetric} />}
                 cursor={{ stroke: "hsl(var(--border))" }}
               />
+              {selectedBucketDate && (
+                <ReferenceLine
+                  x={selectedBucketDate}
+                  stroke="hsl(var(--primary))"
+                  strokeDasharray="3 3"
+                  label={{
+                    value: "Selected",
+                    position: "top",
+                    fill: "hsl(var(--primary))",
+                    fontSize: 10,
+                  }}
+                />
+              )}
               {todayInRange && (
                 <ReferenceLine
                   x={todayInRange}
