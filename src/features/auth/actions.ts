@@ -9,14 +9,10 @@ import { clientEnv } from "@/config/env";
 /**
  * Auth server actions.
  *
- * ── Signup is invite-only ───────────────────────────────────────────────────
- * A user may create an account only with a workspace invite code. Admins use
- * the invite flow rather than creating empty workspaces for new users.
- *
- * An optional invite code (or an invite matched on email) pre-enrols the new
- * user into a specific workspace on first login. The invite table has a CHECK
- * constraint forbidding the admin role, because only the super admin may create
- * admins and that has to hold for the invite path too.
+ * ── Signup and workspace access ─────────────────────────────────────────────
+ * Anyone may create an account. Workspace membership is separate: until an
+ * admin adds the account, authenticated app routes show the access-required
+ * state and no workspace data is exposed.
  *
  * ── What this file does not decide ─────────────────────────────────────────
  * Nothing here grants access. Signup creates an identity; permissions come from
@@ -126,41 +122,38 @@ export async function signUpWithEmail(formData: FormData) {
   const name = formData.get("name") as string;
   const email = formData.get("email") as string;
   const password = formData.get("password") as string;
-  const inviteCode = ((formData.get("invite_code") as string | null) ?? "").trim();
 
   if (!email || !password) {
     return { error: "Email and password are required" };
   }
-  if (!inviteCode) {
-    return { error: "An invitation is required to create an account" };
+
+  try {
+    const supabase = await createClient(await cookies());
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: { name },
+        emailRedirectTo: callbackUrl(),
+      },
+    });
+
+    if (error) {
+      return { error: error.message };
+    }
+
+    // Supabase returns a user with no session when email confirmation is on.
+    return {
+      success: true,
+      email,
+      needsConfirmation: !data.session,
+    };
+  } catch (error) {
+    console.error("[auth] signup failed:", error);
+    return {
+      error: error instanceof Error ? error.message : "Could not create your account",
+    };
   }
-
-  const supabase = await createClient(await cookies());
-
-  const { data, error } = await supabase.auth.signUp({
-    email,
-    password,
-    options: {
-      // The trigger reads `name` and `invite_code` out of this metadata.
-      data: inviteCode ? { name, invite_code: inviteCode } : { name },
-      emailRedirectTo: callbackUrl(),
-    },
-  });
-
-  if (error) {
-    return { error: error.message };
-  }
-
-  // Supabase returns a user with no session when email confirmation is on,
-  // which is the intended state: they must confirm before they can sign in.
-  const needsConfirmation = !data.session;
-
-  return {
-    success: true,
-    email,
-    needsConfirmation,
-    invited: inviteCode.length > 0,
-  };
 }
 
 export async function resendVerificationEmail(formData: FormData) {

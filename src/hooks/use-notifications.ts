@@ -30,6 +30,19 @@ export interface UseNotificationsResult {
   dismiss: (id: string) => Promise<void>;
 }
 
+function mergeNotifications(
+  current: Notification[],
+  incoming: Notification[],
+): Notification[] {
+  const byId = new Map<string, Notification>();
+  for (const notification of [...incoming, ...current]) {
+    byId.set(notification.id, notification);
+  }
+  return [...byId.values()].sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+}
+
 export function useNotifications(): UseNotificationsResult {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
@@ -53,7 +66,7 @@ export function useNotifications(): UseNotificationsResult {
         .limit(50);
 
       if (fetchError) throw fetchError;
-      setNotifications(data ?? []);
+      setNotifications((current) => mergeNotifications(current, data ?? []));
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load notifications");
@@ -88,8 +101,13 @@ export function useNotifications(): UseNotificationsResult {
         },
         (payload) => {
           const newNotification = payload.new as Notification;
-          setNotifications((prev) => [newNotification, ...prev]);
-          toast(`New: ${newNotification.title}`);
+          setNotifications((prev) => {
+            if (prev.some((notification) => notification.id === newNotification.id)) {
+              return prev;
+            }
+            toast(`New: ${newNotification.title}`);
+            return mergeNotifications(prev, [newNotification]);
+          });
         }
       )
       .subscribe();

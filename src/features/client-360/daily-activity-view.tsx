@@ -128,7 +128,6 @@ export function Client360DailyActivityView({
 
   const initialLoaded = useRef(false);
   const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [activityMode, setActivityMode] = useState<ActivityMode>("received");
   const [drilldownCard, setDrilldownCard] = useState<string | null>(null);
   const [drilldownData, setDrilldownData] = useState<ActivityData | null>(null);
   const [drilldownLoading, setDrilldownLoading] = useState(false);
@@ -696,7 +695,7 @@ export function Client360DailyActivityView({
                     <p className="truncate text-3xl font-bold tracking-tight">
                       {data.busiest_client?.client_name ?? "—"}
                     </p>
-                    {data.busiest_client && (
+                    {data.busiest_client && (<>
                       <p className="text-muted-foreground mt-0.5 text-xs">
                         {data.busiest_client.count} jobs
                       </p>
@@ -705,15 +704,16 @@ export function Client360DailyActivityView({
                           ? `${data.row_total_jobs ?? 0} job row${(data.row_total_jobs ?? 0) !== 1 ? "s" : ""} · ${data.total_jobs} SKUs`
                           : `${data.total_jobs} SKUs · ${data.row_total_jobs ?? 0} job row${(data.row_total_jobs ?? 0) !== 1 ? "s" : ""}`}
                       </p>
-                    </div>
+                    </>
+                    )}
+                  </div>
                     <div className={`rounded-full p-2 ${statAccent.tealBg}`}>
                       <Briefcase className={`h-5 w-5 ${statAccent.tealText}`} />
+                      </div>
+                    <div className={`rounded-full p-2 ${statAccent.coralBg}`}>
+                      <Target className={`h-5 w-5 ${statAccent.coralText}`} />
                     </div>
                   </div>
-                  <div className={`rounded-full p-2 ${statAccent.coralBg}`}>
-                    <Target className={`h-5 w-5 ${statAccent.coralText}`} />
-                  </div>
-                </div>
                 <div
                   className={`absolute right-2 bottom-2 border-t border-r ${statAccent.coralBorder} h-4 w-4`}
                 />
@@ -848,7 +848,7 @@ export function Client360DailyActivityView({
                   />
                 </CardContent>
               </Card>
-            </div>
+          </>
           ) : (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
               <Card
@@ -1262,8 +1262,6 @@ export function Client360DailyActivityView({
               </span>
             </div>
           )}
-        </>
-      ) : null}
 
       {/* ── Error state ─────────────────────────────────────────────── */}
       {error && !loading && (

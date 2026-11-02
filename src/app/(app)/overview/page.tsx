@@ -269,34 +269,6 @@ function OverviewPage() {
   const [selectedDateFilter, setSelectedDateFilter] = useState<string | null>(null);
   const [selectedWorkloadBoard, setSelectedWorkloadBoard] = useState<string | null>(null);
 
-  const { settings } = useUser();
-  const timeZone = settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
-
-  const [seedName, setSeedName] = useState("");
-  useEffect(() => {
-    try {
-      setSeedName(localStorage.getItem("overview-first-name") ?? "");
-    } catch {
-      setSeedName("");
-    }
-  }, []);
-
-  const [mounted, setMounted] = useState(false);
-  const [greeting, setGreeting] = useState("");
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-  useEffect(() => {
-    if (!mounted) return;
-    const refresh = () => setGreeting(greetingForHour(hourInZone(timeZone)));
-    refresh();
-    const t = setInterval(refresh, 60_000);
-    return () => clearInterval(t);
-  }, [mounted, timeZone]);
-
-  const workspaceName = activeWorkspace?.name;
-  const userName = (data?.userName ?? seedName) || null;
-
   const effectiveCustomRange = useMemo<CustomRange | null>(() => {
     if (!customRange) return null;
     if (!isDateKey(customRange.from) || !isDateKey(customRange.to)) return null;
@@ -634,8 +606,8 @@ function OverviewPage() {
                         {team.jobs} {team.jobs === 1 ? "job" : "jobs"}
                       </span>
                     </div>
-                  );
-                })
+                  </div>
+                ))
               )}
             </div>
           </Card>

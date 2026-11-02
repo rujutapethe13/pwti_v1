@@ -725,18 +725,39 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
   }, [board, columns]);
 
   const handleColumnChangeType = useCallback(async (columnId: string, newType: ColumnTypeKey) => {
+    const previous = columns.find((column) => column.id === columnId);
+    if (!previous || previous.type === newType) return;
+
+    setColumns((current) =>
+      current.map((column) =>
+        column.id === columnId
+          ? {
+              ...column,
+              type: newType,
+              updatedAt: new Date().toISOString(),
+            }
+          : column,
+      ),
+    );
+
     try {
       const response = await changeColumnType(columnId, newType);
       if (response.error) {
+        setColumns((current) =>
+          current.map((column) => (column.id === columnId ? previous : column)),
+        );
         toast.error(response.error);
       } else {
         toast.success("Column type changed.");
       }
     } catch (err) {
+      setColumns((current) =>
+        current.map((column) => (column.id === columnId ? previous : column)),
+      );
       const message = err instanceof Error ? err.message : "Failed to change column type";
       toast.error(message);
     }
-  }, []);
+  }, [columns]);
 
   const handleColumnUpdateSettings = useCallback(async (columnId: string, patch: Partial<ColumnDefinition>) => {
     const prevColumns = columns;
@@ -1227,16 +1248,16 @@ setImporting(true);
           return prevViews.map((v) => (v.id === activeViewId ? updatedView : v));
         });
 
-        try {
-          const result = await refreshClient360Snapshot();
+        setImportWizardOpen(false);
+        // Snapshot refresh can scan the whole database and must not keep the
+        // import dialog open after the board data has already been saved.
+        void refreshClient360Snapshot().then((result) => {
           if (!result.success) {
             console.warn("[EngineBoardPage] Client 360 snapshot refresh failed:", result.error);
           }
-        } catch (err) {
+        }).catch((err) => {
           console.warn("[EngineBoardPage] Client 360 snapshot refresh failed:", err);
-        }
-
-        setImportWizardOpen(false);
+        });
         return { createdCount: newRecords.length, importErrors: args.skippedRows.map((s) => ({ rowIndex: s.rowIndex, reason: s.reason })) };
       } catch (err) {
         const message = err instanceof Error ? err.message : "Import failed";

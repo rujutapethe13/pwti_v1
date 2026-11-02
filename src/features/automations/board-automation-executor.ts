@@ -37,7 +37,8 @@ export async function executeBoardCellAutomations(
   recordId: string,
   columnId: string,
   newValue: ColumnValue,
-  ctx: BoardAutomationContext
+  ctx: BoardAutomationContext,
+  options?: { silent?: boolean }
 ): Promise<boolean> {
   const {
     board,
@@ -75,11 +76,10 @@ export async function executeBoardCellAutomations(
     if (isDateTrigger) {
       const targetColName = (rule.trigger.columnName || "Date of Upload").trim().toLowerCase();
       const colMatches =
-        colLabel === targetColName ||
-        (colLabel.includes("upload") && targetColName.includes("upload")) ||
-        (editedCol.type === "date" && colLabel.includes("upload")) ||
-        (editedCol.type === "date" && (colLabel.includes("date") || targetColName.includes("date"))) ||
-        (rule.trigger.columnId && editedCol.id === rule.trigger.columnId);
+        (rule.trigger.columnId
+          ? editedCol.id === rule.trigger.columnId
+          : colLabel === targetColName ||
+            (editedCol.key || "").trim().toLowerCase() === targetColName);
 
       const hasValue = newValue !== null && newValue !== undefined && String(newValue).trim() !== "";
 
@@ -93,11 +93,10 @@ export async function executeBoardCellAutomations(
     if (rule.trigger.type === "status_change") {
       const targetColName = (rule.trigger.columnName || "Status").trim().toLowerCase();
       const isStatusCol =
-        colLabel === targetColName ||
-        editedCol.type === "status" ||
-        colLabel === "tat" ||
-        colLabel === "status" ||
-        (rule.trigger.columnId && editedCol.id === rule.trigger.columnId);
+        (rule.trigger.columnId
+          ? editedCol.id === rule.trigger.columnId
+          : colLabel === targetColName ||
+            (editedCol.key || "").trim().toLowerCase() === targetColName);
 
       if (isStatusCol) {
         // Resolve option label for newValue if options exist
@@ -125,7 +124,13 @@ export async function executeBoardCellAutomations(
       rule.trigger.type === "value_change"
     ) {
       const targetColName = (rule.trigger.columnName || "").trim().toLowerCase();
-      if (!targetColName || colLabel === targetColName || colLabel.includes(targetColName) || (rule.trigger.columnId && editedCol.id === rule.trigger.columnId)) {
+      if (
+        (rule.trigger.columnId
+          ? editedCol.id === rule.trigger.columnId
+          : !targetColName ||
+            colLabel === targetColName ||
+            (editedCol.key || "").trim().toLowerCase() === targetColName)
+      ) {
         matches = true;
         matchReason = `Column "${editedCol.label}" changed`;
       }
@@ -162,13 +167,13 @@ export async function executeBoardCellAutomations(
       if (action.type === "change_status") {
         // Find matching status column with strict priority to prevent shadowing
         const targetColName = (action.targetColumnName || "Status").trim().toLowerCase();
-        const statusCol =
-          columns.find((c) => (c.label || "").trim().toLowerCase() === targetColName) ||
-          columns.find((c) => (c.key || "").trim().toLowerCase() === targetColName) ||
-          columns.find((c) => c.type === "status" && ((c.label || "").trim().toLowerCase() === "status" || c.key?.toLowerCase() === "tat")) ||
-          columns.find((c) => (c.label || "").replace(/\s+/g, " ").trim().toLowerCase() === targetColName) ||
-          columns.find((c) => (c.label || "").trim().toLowerCase().includes(targetColName)) ||
-          columns.find((c) => c.type === "status");
+        const statusCol = action.targetColumnId
+          ? columns.find((c) => c.id === action.targetColumnId)
+          : columns.find(
+              (c) =>
+                (c.label || "").trim().toLowerCase() === targetColName ||
+                (c.key || "").trim().toLowerCase() === targetColName,
+            );
 
         if (statusCol) {
           const statusKey = `${recordId}:${statusCol.id}`;
@@ -212,7 +217,7 @@ export async function executeBoardCellAutomations(
 
             // Cascading check: trigger next rule in sequence if appropriate
             setTimeout(() => {
-              void executeBoardCellAutomations(recordId, statusCol.id, valToSet, ctx);
+              void executeBoardCellAutomations(recordId, statusCol.id, valToSet, ctx, options);
             }, 50);
           }
         }
@@ -247,10 +252,12 @@ export async function executeBoardCellAutomations(
 
     if (actionsSummaries.length > 0) {
       // 1. Show user feedback
-      toast.success(`⚡ Automation Applied: ${rule.name}`, {
-        description: actionsSummaries.join(" · "),
-        duration: 4500,
-      });
+      if (!options?.silent) {
+        toast.success(`⚡ Automation Applied: ${rule.name}`, {
+          description: actionsSummaries.join(" · "),
+          duration: 4500,
+        });
+      }
 
       // 2. Audit Log
       const auditLog: AutomationAuditLog = {
@@ -320,7 +327,9 @@ export async function runAllActiveBoardAutomations(
     for (const col of columns) {
       const val = cellValues.get(`${record.id}:${col.id}`);
       if (val !== undefined && val !== null && String(val).trim() !== "") {
-        const applied = await executeBoardCellAutomations(record.id, col.id, val, ctx);
+        const applied = await executeBoardCellAutomations(record.id, col.id, val, ctx, {
+          silent: options?.silent,
+        });
         if (applied) {
           totalApplied++;
         }

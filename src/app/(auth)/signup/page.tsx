@@ -123,7 +123,7 @@ export default function SignUpPage() {
         </div>
 
         <div className="rounded-md border border-border bg-muted/50 px-3 py-3 text-sm text-muted-foreground">
-          Signups are currently restricted. Only the workspace owner can create an account.
+          Create an account to sign in. Workspace access will be available after an admin adds you.
         </div>
 
         <form onSubmit={handleSignup} className="space-y-5">
