@@ -75,6 +75,7 @@ interface VolumeBreakdownSectionProps {
   boards?: OverviewBoard[];
   selectedBoardIds?: string[];
   onBoardChange?: (ids: string[]) => void;
+  drilldownItems?: OverviewDrilldownItem[];
 }
 
 /**
@@ -89,6 +90,7 @@ export function VolumeBreakdownSection({
   boards = [],
   selectedBoardIds: selectedBoardIdsProp,
   onBoardChange: onBoardChangeProp,
+  drilldownItems,
 }: VolumeBreakdownSectionProps) {
   const selectedBoardIds = selectedBoardIdsProp ?? EMPTY_BOARD_IDS;
   const onBoardChange = onBoardChangeProp ?? (() => undefined);

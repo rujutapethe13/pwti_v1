@@ -26,5 +26,19 @@ export function createClient() {
   );
 }
 
-// Singleton for convenience in client components
-export const supabase = createClient();
+let supabaseInstance: ReturnType<typeof createClient> | null = null;
+
+export const supabase = new Proxy(
+  {} as ReturnType<typeof createClient>,
+  {
+    get(_target, prop: string | symbol) {
+      if (!supabaseInstance) {
+        supabaseInstance = createClient();
+      }
+      const value = (supabaseInstance as unknown as Record<string, unknown>)[
+        prop as string
+      ];
+      return typeof value === "function" ? value.bind(supabaseInstance) : value;
+    },
+  },
+);

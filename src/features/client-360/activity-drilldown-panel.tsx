@@ -22,6 +22,29 @@ const GROUPS: Array<{ value: ActivityGroupBy; label: string }> = [
   { value: "none", label: "None" },
 ];
 
+export function formatDaysAwayBadgeText(daysFromToday: number | null | undefined): {
+  text: string;
+  tone: "overdue" | "today" | "upcoming" | "none";
+} {
+  if (daysFromToday === null || daysFromToday === undefined) {
+    return { text: "No due date", tone: "none" };
+  }
+  if (daysFromToday < 0) {
+    const days = Math.abs(daysFromToday);
+    return {
+      text: `Overdue by ${days} day${days === 1 ? "" : "s"}`,
+      tone: "overdue",
+    };
+  }
+  if (daysFromToday === 0) {
+    return { text: "Due today", tone: "today" };
+  }
+  return {
+    text: `Due in ${daysFromToday} day${daysFromToday === 1 ? "" : "s"}`,
+    tone: "upcoming",
+  };
+}
+
 function groupKey(item: ActivityItem, groupBy: ActivityGroupBy): string {
   if (groupBy === "workspace") return item.workspace_name;
   if (groupBy === "board") return item.board_name;

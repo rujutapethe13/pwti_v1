@@ -142,6 +142,16 @@ function findItemById(
   return null;
 }
 
+function isPublicAuthRoute(pathname: string) {
+  return (
+    pathname.startsWith("/signin") ||
+    pathname.startsWith("/signup") ||
+    pathname.startsWith("/forgot-password") ||
+    pathname.startsWith("/reset-password") ||
+    pathname.startsWith("/auth/callback")
+  );
+}
+
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [hasHydrated, setHasHydrated] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>(() =>
@@ -169,7 +179,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const abortControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    if (!bootReady) return;
+    if (!bootReady || isPublicAuthRoute(pathname)) return;
     let cancelled = false;
 
     clearLegacyStorage();
@@ -269,7 +279,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [bootReady]);
+  }, [bootReady, pathname]);
 
   // Subscribe to favorites update events from other components
   useEffect(() => {
