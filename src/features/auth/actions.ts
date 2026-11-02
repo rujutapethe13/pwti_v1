@@ -128,12 +128,12 @@ export async function signInWithGoogle(formData?: FormData) {
 }
 
 export async function signUpWithEmail(formData: FormData) {
-  const name = formData.get("name") as string;
-  const email = formData.get("email") as string;
-  const password = formData.get("password") as string;
+  const name = String(formData.get("name") ?? "").trim();
+  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const password = String(formData.get("password") ?? "");
 
   if (!email || !password) {
-    return { error: "Email and password are required" };
+    return { error: "Email and password are required", status: 400 };
   }
 
   try {
@@ -148,19 +148,32 @@ export async function signUpWithEmail(formData: FormData) {
     });
 
     if (error) {
-      return { error: error.message };
+      console.error("[auth] signup failed:", {
+        message: error.message,
+        email,
+        status: (error as { status?: number }).status,
+      });
+      const msg = /already registered|already exists/i.test(error.message)
+        ? "This email is already registered"
+        : error.message;
+      return { error: msg, status: 409 };
     }
 
-    // Supabase returns a user with no session when email confirmation is on.
     return {
       success: true,
       email,
       needsConfirmation: !data.session,
     };
   } catch (error) {
-    console.error("[auth] signup failed:", error);
+    console.error("[auth] signup threw:", {
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      email,
+    });
     return {
-      error: error instanceof Error ? error.message : "Could not create your account",
+      error:
+        error instanceof Error ? error.message : "Could not create your account",
+      status: 500,
     };
   }
 }
