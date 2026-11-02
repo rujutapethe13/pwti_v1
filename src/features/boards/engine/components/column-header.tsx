@@ -296,8 +296,8 @@ export function ColumnHeader({
   return (
     <div
       className={cn(
-        "group relative flex items-center gap-1 border-r border-border bg-white px-3 py-2 text-xs font-medium uppercase tracking-wide text-muted-foreground overflow-hidden",
-        frozen && "sticky left-0 z-10 shadow-sm",
+        "group relative flex items-center gap-1 overflow-hidden border-r border-[var(--border)] px-3 py-2 text-xs font-semibold tracking-wide text-[var(--text-muted)]",
+        frozen && "sticky left-12 z-10 board-table-sticky",
         hidden && "opacity-40",
         resizing && "select-none",
       )}

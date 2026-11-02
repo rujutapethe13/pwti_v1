@@ -185,6 +185,56 @@ export interface Client360DailyActivity {
   unmapped_boards: number;
 }
 
+export type ActivityMode = "received" | "due";
+export type ActivityGroupBy =
+  | "workspace"
+  | "board"
+  | "client"
+  | "assignee"
+  | "status"
+  | "job_type"
+  | "due_bucket"
+  | "none";
+
+export interface ActivityItem {
+  item_id: string;
+  job_name: string;
+  client: string | null;
+  workspace_id: string;
+  workspace_name: string;
+  board_id: string;
+  board_slug?: string | null;
+  board_name: string;
+  group_name: string | null;
+  job_type: string | null;
+  status: string | null;
+  assignee_id: string | null;
+  assignee_name: string | null;
+  received_at: string;
+  due_date: string | null;
+  days_from_today: number | null;
+  bucket: string;
+  priority: string | null;
+  quantity: string | null;
+  received_column: string | null;
+  due_column: string | null;
+  client_column: string | null;
+  type_column: string | null;
+  status_column: string | null;
+  assignee_column: string | null;
+  is_finished: boolean;
+}
+
+export interface ActivityData {
+  selectedDate: string;
+  today: string;
+  mode: ActivityMode;
+  items: ActivityItem[];
+  daily_breakdown: Array<{ date: string; total: number }>;
+  boards_without_due_date: string[];
+  finished_statuses: string[];
+}
+
 // ── Pending Work (sub-tab) types ─────────────────────────────────────────────
 
 export type PendingDateField = "any" | "job_date" | "due_date";

@@ -22,6 +22,7 @@ import type {
   ColumnTypeKey,
   ViewSettingsByType,
   AddGroupPayload,
+  CellChangeMetadata,
 } from "../types";
 import type { BoardQueryResult } from "../query/query-service";
 
@@ -86,6 +87,7 @@ export interface GroupOperations {
 }
 
 export interface ViewRendererProps {
+  cellMetadata?: Map<string, CellChangeMetadata>;
   /** The board being rendered */
   board: BoardDefinition;
 

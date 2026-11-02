@@ -220,9 +220,7 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
             const pctNum = percent;
             const onSliceText = showValueAs === "value" ? String(s.value) : `${pctNum.toFixed(pctNum >= 10 ? 0 : 1)}%`;
             return (
-              <g
-                key={i}
-                onMouseMove={(e) => {
+              <g key={`${s.label}-${i}`} onMouseMove={(e) => {
                   const rect = (e.currentTarget.ownerSVGElement?.getBoundingClientRect?.()) ?? null;
                   const px = rect ? e.clientX - rect.left : e.nativeEvent.offsetX;
                   const py = rect ? e.clientY - rect.top : e.nativeEvent.offsetY;
@@ -252,11 +250,11 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
       </svg>
       {hover && (
         <div
-          className="pointer-events-none absolute z-10 rounded-md border border-border bg-white px-2 py-1.5 text-[11px] shadow-md"
-          style={{ left: Math.min(hover.x + 10, Math.max(0, pieW - 160)), top: Math.min(hover.y + 10, Math.max(0, pieH - 50)) }}
+          className="pointer-events-none absolute z-10 rounded-md border px-2 py-1.5 text-[11px] shadow-md"
+          style={{ left: Math.min(hover.x + 10, pieW - 160), top: Math.min(hover.y + 10, pieH - 50), backgroundColor: "var(--surface-overlay)", borderColor: "var(--border)", color: "var(--text)" }}
         >
-          {hover.lines.map((l, i) => (
-            <div key={i} className={l.bold ? "font-semibold flex items-center gap-1.5" : "text-muted-foreground"}>
+          {(hover as any).lines?.map((l: any, i: number) => (
+            <div key={`${l.text ?? l.label ?? i}-${i}`} className={l.bold ? "font-semibold flex items-center gap-1.5" : "text-muted-foreground"}>
               {l.color && <span className="inline-block h-2 w-2 rounded-full" style={{ background: l.color }} />}
               {l.text}
             </div>
@@ -362,7 +360,7 @@ function BarChart({ series, showLabels, showGrid, stacked, benchmarkLines, width
   const plotChartH = Math.max(0, chartH - legendH);
 
   const line = (y: number, label: string) => (
-    <g key={label}>
+    <g key={label + "-" + y}>
       <line x1={padding.left} y1={y + rowH / 2} x2={width - padding.right} y2={y + rowH / 2} stroke="hsl(var(--border))" strokeWidth={1} />
       <text x={padding.left - 6} y={y + rowH / 2 + 4} textAnchor="end" className="fill-muted-foreground text-[9px]">
         {label}
@@ -408,7 +406,7 @@ function BarChart({ series, showLabels, showGrid, stacked, benchmarkLines, width
           const barXEnd = padding.left + (total / maxValue) * chartW;
           return (
             <g
-              key={label}
+              key={`${label}-${i}`}
               onClick={onLabelClick ? () => onLabelClick(label) : undefined}
               style={{ cursor: onLabelClick ? "pointer" : "default" }}
             >
@@ -583,7 +581,7 @@ function ColumnChart({ series, showLabels, showGrid, stacked, benchmarkLines, wi
           const total = bucket.reduce((a, b) => a + b, 0);
           let offsetY = 0;
           return (
-            <g key={label}>
+            <g key={`${label}-${i}`}>
               {bucket.map((val, si) => {
                 const barH = (val / maxValue) * chartH;
                 const x = baseX + si * (barW + 2);
@@ -592,7 +590,7 @@ function ColumnChart({ series, showLabels, showGrid, stacked, benchmarkLines, wi
                 const segPct = total > 0 ? (val / total) * 100 : 0;
                 return (
                   <g
-                    key={si}
+                    key={`${label}-${si}`}
                     onMouseMove={(e) => {
                       const rect = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
                       const px = rect ? e.clientX - rect.left : e.nativeEvent.offsetX;
@@ -617,24 +615,15 @@ function ColumnChart({ series, showLabels, showGrid, stacked, benchmarkLines, wi
                     )}
                   </g>
                 );
-              })}
-              <text
-                x={padding.left + i * groupW + groupW / 2}
-                y={height - 4}
-                textAnchor="end"
-                className="fill-muted-foreground text-[8px]"
-                transform={`rotate(-30, ${padding.left + i * groupW + groupW / 2}, ${height - 4})`}
-              >
-                {label}
-              </text>
-              {showLabels && (
-                <text x={padding.left + i * groupW + groupW / 2} y={padding.top + chartH - total / maxValue * chartH - 4} textAnchor="middle" className="fill-foreground text-[10px] font-bold pointer-events-none">
-                  {Math.round(total)}
-                </text>
-              )}
-            </g>
-          );
-        })}
+               })}
+           {showLabels && (
+             <text x={padding.left + i * groupW + groupW / 2} y={padding.top + chartH - total / maxValue * chartH - 4} textAnchor="middle" className="fill-foreground text-[10px] font-bold pointer-events-none">
+               {Math.round(total)}
+             </text>
+           )}
+             </g>
+           );
+         })}
       </svg>
       {hover && (
         <div
@@ -724,7 +713,7 @@ function LineChart({ type, series, showLabels, showGrid, width, height }: ChartR
 
       {labels.map((label, i) => (
         <text
-          key={label}
+          key={`${label}-${i}`}
           x={padding.left + i * xStep}
           y={height - 4}
           textAnchor="end"
@@ -804,7 +793,7 @@ function BubbleChart({ series, showLabels, showGrid, benchmarkLines, width, heig
         const y = padding.top + chartH * (1 - p.value / maxValue);
         const r = Math.max(3, (p.value / maxValue) * maxR);
         return (
-          <g key={i}>
+          <g key={`${p.label}-${i}`}>
             <circle cx={x} cy={y} r={r} fill={series[0].color} />
             {showLabels && (
               <text x={x + r + 2} y={y + 3} className="fill-foreground text-[8px]">{p.label}</text>
@@ -815,7 +804,7 @@ function BubbleChart({ series, showLabels, showGrid, benchmarkLines, width, heig
 
       {labels.map((label, i) => (
         <text
-          key={label}
+          key={`${label}-${i}`}
           x={padding.left + i * xStep}
           y={height - 4}
           textAnchor={i === 0 ? "start" : i === n - 1 ? "end" : "middle"}
@@ -843,3 +832,5 @@ export const RenderChart = memo((props: ChartRenderProps) => {
   return <BarChart {...props} />;
 });
 RenderChart.displayName = "RenderChart";
+
+

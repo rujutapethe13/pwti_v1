@@ -491,9 +491,11 @@ export function WorkspacePanel() {
                 className="flex size-6 shrink-0 items-center justify-center rounded-md text-xs font-bold text-white"
                 style={{ backgroundColor: activeWorkspace?.color ?? "#f97316" }}
               >
-                {activeWorkspace ? getInitials(activeWorkspace.name) : "M"}
+                {activeWorkspace ? getInitials(activeWorkspace.name) : "?"}
               </span>
-              <span className="flex-1 truncate text-left">{activeWorkspace?.name ?? "Main"}</span>
+              <span className="flex-1 truncate text-left">
+                {activeWorkspace?.name ?? "No workspace"}
+              </span>
               <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             </button>
           </div>

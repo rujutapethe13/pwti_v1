@@ -22,8 +22,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { toast } from "sonner";
-import { fetchClient360DailyActivityAction } from "./daily-activity-action";
-import type { Client360DailyActivity } from "./types";
+import { fetchActivityAction, fetchClient360DailyActivityAction } from "./daily-activity-action";
+import { ActivityDrilldownPanel } from "./activity-drilldown-panel";
+import type { ActivityData, ActivityMode, Client360DailyActivity } from "./types";
 import { formatPeriodLabel, getTodayISO } from "./date-format";
 import {
   LineChart,
@@ -86,6 +87,31 @@ export function Client360DailyActivityView({
   const [daySelectorStartIdx, setDaySelectorStartIdx] = useState(0);
   const initialLoaded = useRef(false);
   const fetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [activityMode, setActivityMode] = useState<ActivityMode>("received");
+  const [drilldownCard, setDrilldownCard] = useState<string | null>(null);
+  const [drilldownData, setDrilldownData] = useState<ActivityData | null>(null);
+  const [drilldownLoading, setDrilldownLoading] = useState(false);
+
+  const loadDrilldown = useCallback(async (mode: ActivityMode, date: string) => {
+    setDrilldownLoading(true);
+    const result = await fetchActivityAction({ mode, selectedDate: date });
+    if (result.error) toast.error(result.error);
+    else setDrilldownData(result.data);
+    setDrilldownLoading(false);
+  }, []);
+
+  const handleActivityModeChange = (mode: ActivityMode) => {
+    setActivityMode(mode);
+    setDrilldownCard(mode === "due" ? "due" : null);
+    void loadDrilldown(mode, selectedDate);
+  };
+
+  const handleDrilldownCard = (card: string) => {
+    setDrilldownCard((current) => current === card ? null : card);
+    if (!drilldownData || drilldownData.mode !== activityMode || drilldownData.selectedDate !== selectedDate) {
+      void loadDrilldown(activityMode, selectedDate);
+    }
+  };
 
   const fetchActivity = useCallback(
     async (date: string) => {
@@ -223,6 +249,21 @@ export function Client360DailyActivityView({
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <div className="bg-muted flex rounded-md p-1" role="group" aria-label="Activity mode">
+              {(["received", "due"] as ActivityMode[]).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => handleActivityModeChange(mode)}
+                  className={cn(
+                    "rounded px-2.5 py-1 text-xs font-medium capitalize",
+                    activityMode === mode && "bg-background shadow",
+                  )}
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
             <Button
               variant="outline"
               size="icon"
@@ -367,8 +408,8 @@ export function Client360DailyActivityView({
           )}
 
           {/* Summary stat cards */}
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <Card className="relative overflow-hidden">
+          {activityMode === "received" && <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Card onClick={() => handleDrilldownCard("jobs")} className={cn("relative cursor-pointer overflow-hidden", drilldownCard === "jobs" && "ring-2 ring-primary")}>
               <div
                 className={`absolute top-0 right-0 h-12 w-12 bg-gradient-to-br ${statAccent.tealGradient} rounded-bl-[2rem] to-transparent`}
               />
@@ -388,7 +429,7 @@ export function Client360DailyActivityView({
               </CardContent>
             </Card>
 
-            <Card className="relative overflow-hidden">
+            <Card onClick={() => handleDrilldownCard("clients")} className={cn("relative cursor-pointer overflow-hidden", drilldownCard === "clients" && "ring-2 ring-primary")}>
               <div
                 className={`absolute top-0 right-0 h-12 w-12 bg-gradient-to-br ${statAccent.amberGradient} rounded-bl-[2rem] to-transparent`}
               />
@@ -410,7 +451,7 @@ export function Client360DailyActivityView({
               </CardContent>
             </Card>
 
-            <Card className="relative overflow-hidden">
+            <Card onClick={() => handleDrilldownCard("boards")} className={cn("relative cursor-pointer overflow-hidden", drilldownCard === "boards" && "ring-2 ring-primary")}>
               <div
                 className={`absolute top-0 right-0 h-12 w-12 bg-gradient-to-br ${statAccent.lavenderGradient} rounded-bl-[2rem] to-transparent`}
               />
@@ -432,7 +473,7 @@ export function Client360DailyActivityView({
               </CardContent>
             </Card>
 
-            <Card className="relative overflow-hidden">
+            <Card onClick={() => handleDrilldownCard("busiest")} className={cn("relative cursor-pointer overflow-hidden", drilldownCard === "busiest" && "ring-2 ring-primary")}>
               <div
                 className={`absolute top-0 right-0 h-12 w-12 bg-gradient-to-br ${statAccent.coralGradient} rounded-bl-[2rem] to-transparent`}
               />
@@ -458,7 +499,16 @@ export function Client360DailyActivityView({
                 />
               </CardContent>
             </Card>
-          </div>
+          </div>}
+
+          {drilldownCard && drilldownData && !drilldownLoading && (
+            <ActivityDrilldownPanel
+              data={drilldownData}
+              selectedDate={selectedDate}
+              mode={activityMode}
+              card={drilldownCard}
+            />
+          )}
 
           {/* Per-client breakdown grid */}
           {data.total_jobs === 0 ? (

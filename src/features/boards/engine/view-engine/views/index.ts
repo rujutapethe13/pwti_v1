@@ -72,6 +72,7 @@ function TableViewRenderer(props: ViewRendererProps) {
     columns: props.columns,
     records: props.records,
     cellValues: props.cellValues,
+    cellMetadata: props.cellMetadata,
     groups: props.groups as unknown as Group[] | undefined,
     onCellChange: props.onCellChange,
     onNewItem: props.onNewItem,

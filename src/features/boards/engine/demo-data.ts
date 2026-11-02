@@ -1,4 +1,4 @@
-import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, BoardView, Group } from "./types";
+import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue, BoardView, Group, CellChangeMetadata } from "./types";
 import { columnTypeRegistry } from "./column-registry";
 
 export interface DemoBoardPageData {
@@ -8,6 +8,7 @@ export interface DemoBoardPageData {
   columns: ColumnDefinition[];
   records: BoardRecord[];
   cellValues: Array<[string, ColumnValue]>;
+  cellMetadata?: Array<[string, CellChangeMetadata]>;
   views: BoardView[];
   groups: Group[];
   recordCount?: number;
@@ -527,4 +528,3 @@ export const dashboardWorkload: DashboardWorkloadItem[] = [
   { department: "Retouching", active: 14, total: 20 },
   { department: "QC", active: 4, total: 6 },
 ];
-

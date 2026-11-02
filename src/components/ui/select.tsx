@@ -158,25 +158,35 @@ SelectTrigger.displayName = "SelectTrigger";
 
 const SelectItem = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & { value: string }
->(({ className, children, value, ...props }, ref) => {
+  React.HTMLAttributes<HTMLDivElement> & { value: string; disabled?: boolean }
+>(({ className, children, value, disabled, onClick, ...props }, ref) => {
   const { value: selectedValue, onValueChange, setOpen } = useSelectContext();
   const isSelected = selectedValue === value;
+
+  const handleSelect = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (disabled) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    onValueChange(value);
+    setOpen(false);
+    onClick?.(e);
+  };
 
   return (
     <div
       ref={ref}
       role="option"
       aria-selected={isSelected}
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onValueChange(value);
-        setOpen(false);
-      }}
+      aria-disabled={disabled}
+      data-disabled={disabled ? "" : undefined}
+      onClick={handleSelect}
       className={cn(
         "relative flex w-full cursor-default select-none items-center rounded-[4px] h-[40px] px-[12px] py-[8px] text-[14px] outline-none",
-        "hover:bg-accent hover:text-accent-foreground",
+        disabled ? "pointer-events-none opacity-50" : "hover:bg-accent hover:text-accent-foreground",
         className,
       )}
       {...props}

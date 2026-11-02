@@ -1,0 +1,1 @@
+-- Create automation for all existing boards per rules

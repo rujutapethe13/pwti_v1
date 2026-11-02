@@ -12,6 +12,7 @@ import {
 } from "@/lib/members-access";
 import {
   isValidEmail,
+  isGrantableAccess,
   type AccessRole,
   type GrantableAccess,
   type Member,
@@ -403,7 +404,8 @@ export async function POST(request: NextRequest) {
 
   const scope: MemberScope = body.scope === "board" ? "board" : "workspace";
   const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
-  const access: GrantableAccess = body.access === "view" ? "view" : "edit";
+  if (!isGrantableAccess(body.access)) return fail("access must be either view or edit", 400);
+  const access: GrantableAccess = body.access;
 
   if (!isValidEmail(email)) return fail("Enter a valid email address", 400);
 
@@ -536,7 +538,8 @@ export async function PATCH(request: NextRequest) {
 
     if (action !== "set_access") return fail("Unknown action", 400);
 
-    const access: GrantableAccess = body.access === "view" ? "view" : "edit";
+    if (!isGrantableAccess(body.access)) return fail("access must be either view or edit", 400);
+    const access: GrantableAccess = body.access;
 
     if (scope === "board" && boardId) {
       await callMemberMutation("set_board_member_access", {

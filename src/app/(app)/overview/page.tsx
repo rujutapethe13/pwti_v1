@@ -30,6 +30,9 @@ import {
   type TimeRangeId,
 } from "@/features/overview/time-range";
 import { useWorkspace } from "@/lib/workspace-context";
+import { useUser } from "@/lib/user-context";
+import { BoardSelector, type OverviewBoard } from "@/features/overview/board-selector";
+import { Skeleton } from "@/components/shared/skeleton";
 
 const iconMap: Record<string, typeof CheckCheck> = {
   CheckCheck,
@@ -51,7 +54,6 @@ interface RangeEcho {
 interface WorkloadItem {
   team: string;
   jobs: number;
-  items: number;
   percentage: number;
 }
 
@@ -66,10 +68,31 @@ interface ActivityEvent {
 interface OverviewResponse {
   range: RangeEcho;
   workloadByTeam: WorkloadItem[];
-  userName: string;
+  userName: string | null;
   activityFeed: ActivityEvent[];
   activityMissing: boolean;
   error?: string;
+}
+
+function capitalize(name: string): string {
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+/** Hour of the day (0-23) in the given IANA time zone. */
+function hourInZone(timeZone: string): number {
+  const hour = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour12: false,
+    hour: "numeric",
+  }).format(new Date());
+  const h = Number(hour);
+  return Number.isFinite(h) ? h : new Date().getHours();
+}
+
+function greetingForHour(h: number): string {
+  if (h >= 5 && h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
 }
 
 function RelativeTime() {
@@ -156,12 +179,75 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
 
 function OverviewPage() {
   const { activeWorkspace } = useWorkspace();
+  const boards = useMemo<OverviewBoard[]>(
+    () => (activeWorkspace?.content ?? [])
+      .filter((item) => item.type === "board" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(item.id))
+      .map((item) => ({ id: item.id, name: item.name })),
+    [activeWorkspace],
+  );
+  const [selectedBoardIds, setSelectedBoardIds] = useState<string[]>([]);
+  const [breakdownBoardIds, setBreakdownBoardIds] = useState<string[]>([]);
+  useEffect(() => {
+    const all = boards.map((board) => board.id);
+    const read = (key: string) => {
+      try {
+        const saved = JSON.parse(localStorage.getItem(key) ?? "null");
+        return Array.isArray(saved) ? saved.filter((id) => all.includes(id)) : all;
+      } catch {
+        return all;
+      }
+    };
+    setSelectedBoardIds(read(`overview-workload-boards-${activeWorkspace?.id ?? ""}`));
+    setBreakdownBoardIds(read(`overview-breakdown-boards-${activeWorkspace?.id ?? ""}`));
+  }, [boards, activeWorkspace?.id]);
+  const updateWorkloadBoards = (ids: string[]) => {
+    setSelectedBoardIds(ids);
+    localStorage.setItem(`overview-workload-boards-${activeWorkspace?.id ?? ""}`, JSON.stringify(ids));
+  };
+  const updateBreakdownBoards = (ids: string[]) => {
+    setBreakdownBoardIds(ids);
+    localStorage.setItem(`overview-breakdown-boards-${activeWorkspace?.id ?? ""}`, JSON.stringify(ids));
+  };
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [rangeId, setRangeId] = useState<TimeRangeId>(DEFAULT_TIME_RANGE_ID);
   const [customRange, setCustomRange] = useState<CustomRange | null>(null);
-  const workspaceName = activeWorkspace?.name ?? "Powerweave Studio";
+  const { settings } = useUser();
+  const timeZone = settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // Seed the greeting with the last known first name so returning visitors see
+  // a name on first paint (never a dummy), then reconcile with the real profile.
+  const [seedName, setSeedName] = useState("");
+  useEffect(() => {
+    try {
+      setSeedName(localStorage.getItem("overview-first-name") ?? "");
+    } catch {
+      setSeedName("");
+    }
+  }, []);
+
+  // The greeting word and the date line share one timezone source: the user's
+  // saved setting, falling back to the browser's local time zone. Computed on
+  // the client only, so there is no UTC/server-time value to hydrate against.
+  const [mounted, setMounted] = useState(false);
+  const [greeting, setGreeting] = useState("");
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  useEffect(() => {
+    if (!mounted) return;
+    const refresh = () => setGreeting(greetingForHour(hourInZone(timeZone)));
+    refresh();
+    const t = setInterval(refresh, 60_000);
+    return () => clearInterval(t);
+  }, [mounted, timeZone]);
+
+  const workspaceName = activeWorkspace?.name;
+
+  // The display name: real profile/auth name first, then the cached first name
+  // from an earlier visit. Never a dummy — null renders nothing.
+  const userName = (data?.userName ?? seedName) || null;
 
   // A custom range only counts once both bounds are real dates, so a half-filled
   // picker cannot narrow the window to a single day by accident.
@@ -182,7 +268,8 @@ function OverviewPage() {
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/overview?${rangeQuery}&range=${rangeId}`, {
+      const boardQuery = selectedBoardIds.length ? `&boards=${selectedBoardIds.join(",")}` : "&boards=";
+      const res = await fetch(`/api/overview?${rangeQuery}&range=${rangeId}${boardQuery}`, {
         cache: "no-store",
       });
       if (!res.ok) {
@@ -190,13 +277,20 @@ function OverviewPage() {
         throw new Error(err.error || "Failed to fetch overview data");
       }
       const json = await res.json();
+      if (json.userName) {
+        try {
+          localStorage.setItem("overview-first-name", json.userName);
+        } catch {
+          // localStorage unavailable or over quota: skip caching.
+        }
+      }
       setData(json);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setIsLoading(false);
     }
-  }, [rangeQuery, rangeId]);
+  }, [rangeQuery, rangeId, selectedBoardIds]);
 
   useEffect(() => {
     loadData();
@@ -221,14 +315,26 @@ function OverviewPage() {
       {/* ── Greeting Block ─────────────────────── */}
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:justify-between">
         <div className="space-y-2">
-          <nav className="text-muted-foreground flex items-center gap-1 text-xs">
-            <span>{workspaceName}</span>
-            <ChevronRight className="size-3" aria-hidden="true" />
-            <span className="text-foreground">Overview</span>
-          </nav>
+          {workspaceName && (
+            <nav className="text-muted-foreground flex items-center gap-1 text-xs">
+              <span>{workspaceName}</span>
+              <ChevronRight className="size-3" aria-hidden="true" />
+              <span className="text-foreground">Overview</span>
+            </nav>
+          )}
           <RelativeTime />
           <h1 className="metric-figure text-foreground mt-2 text-4xl sm:text-5xl">
-            Good morning, {data?.userName ?? "Alex"}.
+            {mounted ? (
+              <>
+                {greeting}
+                {userName ? `, ${capitalize(userName)}.` : "."}
+              </>
+            ) : (
+              <span
+                className="bg-muted animate-pulse rounded inline-block h-7 w-48 sm:w-64"
+                aria-hidden="true"
+              />
+            )}
           </h1>
           <p className="text-muted-foreground text-sm">
             Here&apos;s what&apos;s happening across your studio ·{" "}
@@ -261,7 +367,13 @@ function OverviewPage() {
       <VolumeTrendSection rangeId={rangeId} customRange={effectiveCustomRange} />
 
       {/* ── Volume breakdown by job type (own states) ── */}
-      <VolumeBreakdownSection rangeId={rangeId} customRange={effectiveCustomRange} />
+      <VolumeBreakdownSection
+        rangeId={rangeId}
+        customRange={effectiveCustomRange}
+        boards={boards}
+        selectedBoardIds={breakdownBoardIds}
+        onBoardChange={updateBreakdownBoards}
+      />
 
       {/* ── Today's jobs / Overdue / Upcoming ──────────────────────────
           Always "now"-relative: these three lists ignore the range selector
@@ -340,13 +452,14 @@ function OverviewPage() {
 
         {/* Right column */}
         <div className="flex flex-col gap-5">
-          {/* Workload by Team */}
+          {/* Workload by board: the data model assigns each row to a board, not a team. */}
           <Card className="border-border/60 flex-1 p-6 shadow-none">
-            <h2 className="text-foreground text-base font-medium tracking-tight">
-              Workload by team
-            </h2>
+            <div className="flex items-start justify-between gap-3">
+              <h2 className="text-foreground text-base font-medium tracking-tight">Workload by board</h2>
+              <BoardSelector boards={boards} selectedIds={selectedBoardIds} onChange={updateWorkloadBoards} />
+            </div>
             <p className="text-muted-foreground mt-1 text-xs">
-              Distribution in selected range
+              {selectedBoardIds.length} boards · distribution in selected range
             </p>
             <div className="mt-5 space-y-4">
               {isLoading ? (
@@ -354,7 +467,7 @@ function OverviewPage() {
               ) : error ? (
                 <ErrorState message={error} onRetry={loadData} />
               ) : data?.workloadByTeam.length === 0 ? (
-                <EmptyState message="No team data" icon={Users} />
+                <EmptyState message={selectedBoardIds.length === 0 ? "No boards selected" : "No board data"} icon={Users} />
               ) : (
                 data!.workloadByTeam.map((team: WorkloadItem) => (
                   <div key={team.team} className="space-y-2">
@@ -363,7 +476,7 @@ function OverviewPage() {
                         {team.team}
                       </span>
                       <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
-                        {team.jobs} jobs · {team.items} items
+                        {team.jobs} {team.jobs === 1 ? "job" : "jobs"}
                       </span>
                     </div>
                     <div className="bg-muted h-1.5 w-full overflow-hidden rounded-full">

@@ -151,6 +151,7 @@ const COLUMN_TYPE_META: Record<ColumnTypeKey, { label: string; icon: LucideIcon 
   button: { label: "B", icon: null },
   progress: { label: "123", icon: null },
   time_tracking: { label: "⏱", icon: null },
+  attachment: { label: "A", icon: null },
 };
 
 export interface ColumnTypeBadgeProps {

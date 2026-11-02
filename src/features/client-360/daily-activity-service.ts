@@ -1,11 +1,58 @@
 import "server-only";
 
-import { createServiceClient } from "@/lib/supabase/server";
+import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { getUserOrganizationId } from "@/lib/organization";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Client360DailyActivity } from "./types";
+import type { ActivityData, ActivityMode, Client360DailyActivity } from "./types";
 
 const HISTORICAL_DAYS = 60;
+
+export async function fetchActivity(options: {
+  selectedDate?: string;
+  mode?: ActivityMode;
+  onlyMine?: boolean;
+} = {}): Promise<ActivityData> {
+  const selectedDate = options.selectedDate ?? formatDate(getBusinessTimezoneToday());
+  const mode = options.mode ?? "received";
+  const supabase = await createServiceClient();
+  const sessionClient = await createClient();
+  const { data: { user } } = await sessionClient.auth.getUser();
+  const { data, error } = await supabase.rpc("get_activity_items", {
+    p_mode: mode,
+    p_day: selectedDate,
+    p_only_mine: options.onlyMine ?? false,
+    p_user_id: user?.id ?? null,
+  });
+  if (error) {
+    console.error("Failed to fetch activity items:", error);
+    throw new Error(error.message);
+  }
+  const rows = (data ?? []) as ActivityData["items"];
+  const today = formatDate(getBusinessTimezoneToday());
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const day = mode === "due" ? row.due_date : row.received_at.slice(0, 10);
+    if (day) counts.set(day, (counts.get(day) ?? 0) + 1);
+  }
+  const end = new Date(selectedDate + "T12:00:00");
+  const start = new Date(end);
+  start.setDate(start.getDate() - HISTORICAL_DAYS + 1);
+  const daily_breakdown = Array.from({ length: HISTORICAL_DAYS }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const key = formatDate(date);
+    return { date: key, total: counts.get(key) ?? 0 };
+  });
+  return {
+    selectedDate,
+    today,
+    mode,
+    items: rows,
+    daily_breakdown,
+    boards_without_due_date: Array.from(new Set(rows.filter((r) => !r.due_column).map((r) => r.board_name))),
+    finished_statuses: Array.from(new Set(rows.filter((r) => r.is_finished && r.status).map((r) => r.status as string))),
+  };
+}
 
 function formatDate(date: Date): string {
   const year = date.getFullYear();

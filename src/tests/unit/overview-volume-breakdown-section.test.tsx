@@ -100,7 +100,7 @@ describe("VolumeBreakdownSection", () => {
 
     expect(
       await screen.findByText(
-        "100 volume · last 7 days · 3 job types",
+        "100 volume · 3 job types · last 7 days",
       ),
     ).toBeInTheDocument();
     expect(legendRows()).toEqual([
@@ -156,7 +156,7 @@ describe("VolumeBreakdownSection", () => {
       await screen.findByText(/No board here maps a job-type column/),
     ).toBeInTheDocument();
     // Still a real total, not a fabricated breakdown.
-    expect(screen.getByText("40 volume · last 7 days · 0 job types")).toBeInTheDocument();
+    expect(screen.getByText("40 volume · 0 job types · last 7 days")).toBeInTheDocument();
   });
 
   it("discloses that the smallest job types were rolled into Other", async () => {
@@ -191,7 +191,7 @@ describe("VolumeBreakdownSection", () => {
     render(<VolumeBreakdownSection rangeId="7d" />);
 
     expect(
-      await screen.findByText("12 volume · last 7 days · 1 job type"),
+      await screen.findByText("12 volume · 1 job type · last 7 days"),
     ).toBeInTheDocument();
   });
 
@@ -218,7 +218,7 @@ describe("VolumeBreakdownSection", () => {
     await user.click(within(failure).getByRole("button", { name: "Retry" }));
 
     expect(
-      await screen.findByText("100 volume · last 7 days · 3 job types"),
+      await screen.findByText("100 volume · 3 job types · last 7 days"),
     ).toBeInTheDocument();
   });
 
@@ -227,7 +227,7 @@ describe("VolumeBreakdownSection", () => {
     respondWith(payload());
 
     render(<VolumeBreakdownSection rangeId="7d" />);
-    await screen.findByText("100 volume · last 7 days · 3 job types");
+    await screen.findByText("100 volume · 3 job types · last 7 days");
 
     respondWith(payload());
     await user.click(screen.getByRole("button", { name: "Refresh" }));

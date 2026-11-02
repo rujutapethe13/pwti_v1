@@ -544,7 +544,8 @@ function CalendarPill({
           }
         }}
         onBlur={(e) => onRename?.(e.currentTarget.value)}
-        className="h-6 w-full min-w-0 rounded-[4px] border border-[#0073EA] bg-white px-1.5 text-[12px] text-[#323338] outline-none"
+        className="h-6 w-full min-w-0 rounded-[4px] px-1.5 text-[12px] outline-none"
+        style={{ border: "1px solid var(--accent)", backgroundColor: "var(--surface)", color: "var(--text)" }}
       />
     );
   }
@@ -608,17 +609,20 @@ function DayMorePopover({ items }: { items: CalendarItem[] }) {
         sideOffset={4}
         className="w-[240px] rounded-[8px] p-2"
         style={{
-          backgroundColor: "#ffffff",
-          border: "1px solid #D0D4E4",
+          backgroundColor: "var(--surface-overlay)",
+          border: "1px solid var(--border)",
           boxShadow: "0 4px 12px rgba(0, 0, 0, 0.12)",
-          color: MONDAY.text,
+          color: "var(--text)",
         }}
       >
         <div className="max-h-[220px] overflow-y-auto">
           {items.map((item) => (
             <div
               key={item.id}
-              className="flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[12px] hover:bg-[#F7F8FA]"
+              className="flex items-center gap-2 rounded-[4px] px-1.5 py-1 text-[12px]"
+              style={{ color: "var(--text)" }}
+              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--row-hover)")}
+              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
             >
               <span
                 className="size-2 shrink-0 rounded-full"
@@ -678,11 +682,15 @@ function DayCell({
       ref={setNodeRef}
       className={cn(
         "group relative flex min-h-0 flex-col border-r border-b",
-        isOutside ? "bg-[#F1F2F5]" : isWeekend ? "bg-[#FAFAFB]" : "bg-white",
-        isOver && "bg-[#E9F2FD]",
-        isFocused && "ring-2 ring-[#0073EA] ring-inset",
+        isOutside ? "opacity-60" : "",
+        isWeekend ? "" : "",
+        isOver && "",
+        isFocused && "ring-2 ring-[var(--accent)] ring-inset",
       )}
-      style={{ borderColor: MONDAY.border }}
+      style={{
+        borderColor: "var(--border)",
+        backgroundColor: isOver ? "color-mix(in srgb, var(--accent) 10%, transparent)" : isOutside ? "var(--surface)" : isWeekend ? "color-mix(in srgb, var(--surface-raised) 40%, var(--surface))" : "var(--surface)",
+      }}
     >
       <div
         className="flex shrink-0 items-start justify-between px-1 pt-0.5"
@@ -694,10 +702,12 @@ function DayCell({
             onClick={() => onDayClick(day)}
             className={cn(
               "flex size-6 items-center justify-center rounded-full text-[13px] font-medium",
-              isToday(day) && "bg-[#0073EA] text-white",
-              !isToday(day) && isOutside && "text-[#A8ADBD]",
-              !isToday(day) && !isOutside && "text-[#323338]",
+              isToday(day) && "text-white",
             )}
+            style={{
+              backgroundColor: isToday(day) ? "var(--accent)" : "transparent",
+              color: isToday(day) ? "white" : isOutside ? "var(--text-muted)" : "var(--text)",
+            }}
           >
             {format(day, "d")}
           </button>
@@ -710,7 +720,8 @@ function DayCell({
             type="button"
             onClick={() => onCreateItem(day)}
             aria-label={`Add an item on ${format(day, "MMMM d, yyyy")}`}
-            className="flex size-5 items-center justify-center rounded-[4px] text-[#676879] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[#EDEFF2] focus-visible:opacity-100"
+            className="flex size-5 items-center justify-center rounded-[4px] opacity-0 transition-opacity group-hover:opacity-100 hover:bg-[var(--row-hover)] focus-visible:opacity-100"
+            style={{ color: "var(--text-muted)" }}
           >
             <Plus className="size-3.5" />
           </button>
@@ -825,21 +836,21 @@ function UnscheduledPanel({
 }) {
   return (
     <aside
-      className="flex w-[280px] shrink-0 flex-col border-l bg-white"
-      style={{ borderColor: MONDAY.border }}
+      className="flex w-[280px] shrink-0 flex-col"
+      style={{ borderLeft: "1px solid var(--border)", backgroundColor: "var(--surface-raised)" }}
     >
       <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-3">
         <div className="flex min-w-0 items-center gap-2">
-          <Inbox className="size-4 shrink-0" style={{ color: MONDAY.muted }} />
+          <Inbox className="size-4 shrink-0" style={{ color: "var(--text-muted)" }} />
           <span
             className="truncate text-[13px] font-semibold"
-            style={{ color: MONDAY.text }}
+            style={{ color: "var(--text)" }}
           >
             Unscheduled
           </span>
           <span
-            className="rounded-full bg-[#F1F2F5] px-1.5 text-[11px] font-medium"
-            style={{ color: MONDAY.muted }}
+            className="rounded-full px-1.5 text-[11px] font-medium"
+            style={{ backgroundColor: "var(--surface)", color: "var(--text-muted)" }}
           >
             {records.length}
           </span>
@@ -848,8 +859,8 @@ function UnscheduledPanel({
           type="button"
           onClick={onCollapse}
           aria-label="Collapse unscheduled panel"
-          className="flex size-6 items-center justify-center rounded-[4px] hover:bg-[#F1F2F5]"
-          style={{ color: MONDAY.muted }}
+          className="flex size-6 items-center justify-center rounded-[4px] hover:bg-[var(--row-hover)]"
+          style={{ color: "var(--text-muted)" }}
         >
           <ChevronRight className="size-4" />
         </button>
@@ -857,8 +868,8 @@ function UnscheduledPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-2">
         {records.length === 0 ? (
-          <p className="px-1 py-2 text-[12px]" style={{ color: MONDAY.muted }}>
-            Every item is scheduled.
+          <p className="px-1 py-2 text-[12px]" style={{ color: "var(--text-muted)" }}>
+            Drag items here, or onto a date, to schedule them
           </p>
         ) : (
           <div className="flex flex-col gap-1">
@@ -906,12 +917,12 @@ function UnscheduledRow({
         }
       }}
       className={cn(
-        "flex h-6 w-full min-w-0 cursor-grab items-center rounded-[4px] border-l-4 border-[#C3C6D4] bg-[#F7F8FA] px-2 text-[12px] text-[#323338] transition-shadow hover:shadow-[0_2px_6px_rgba(0,0,0,0.14)]",
+        "flex h-6 w-full min-w-0 cursor-grab items-center rounded-[4px] px-2 text-[12px] transition-shadow hover:shadow-[0_2px_6px_rgba(0,0,0,0.14)]",
         isDragging && "opacity-40",
       )}
-      style={{ touchAction: "none" }}
+      style={{ touchAction: "none", borderLeft: "4px solid var(--border)", backgroundColor: "var(--surface)", color: "var(--text)" }}
     >
-      <span className="truncate">{record.title}</span>
+      <span className="truncate">{record.title || <span className="italic" style={{ color: "var(--text-placeholder)" }}>Untitled</span>}</span>
     </div>
   );
 }
@@ -1378,11 +1389,14 @@ export function CalendarView({
 
   if (!dateColumnId) {
     return (
-      <div className="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 bg-white px-6 text-center">
-        <p className="text-[15px] font-medium" style={{ color: MONDAY.text }}>
+      <div
+        className="flex h-full min-h-[320px] flex-col items-center justify-center gap-2 px-6 text-center"
+        style={{ backgroundColor: "var(--surface)" }}
+      >
+        <p className="text-[15px] font-medium" style={{ color: "var(--text)" }}>
           Add a date column to use the calendar view
         </p>
-        <p className="text-[13px]" style={{ color: MONDAY.muted }}>
+        <p className="text-[13px]" style={{ color: "var(--text-muted)" }}>
           Pick a column of type Date or Timeline and this view will lay your items out on
           a calendar.
         </p>
@@ -1402,7 +1416,8 @@ export function CalendarView({
       onDragCancel={() => setActiveDragId(null)}
     >
       <div
-        className="flex h-full min-h-0 flex-col overflow-hidden bg-white"
+        className="flex h-full min-h-0 flex-col overflow-hidden"
+        style={{ backgroundColor: "var(--surface)" }}
         onKeyDown={(event) => {
           if (event.key !== "Escape") return;
           setOpenItemRecordId(null);
@@ -1412,11 +1427,11 @@ export function CalendarView({
         {/* ── Toolbar ──────────────────────────────────── */}
         <div
           className="flex min-h-12 shrink-0 flex-wrap items-center gap-2 border-b px-3 py-1.5"
-          style={{ borderColor: MONDAY.border }}
+          style={{ borderColor: "var(--border)", backgroundColor: "var(--surface)" }}
         >
           <span
             className="mr-1 truncate text-[15px] font-semibold"
-            style={{ color: MONDAY.text }}
+            style={{ color: "var(--text)" }}
           >
             {view.name}
           </span>
@@ -1424,11 +1439,8 @@ export function CalendarView({
           <button
             type="button"
             onClick={navigateToday}
-            className={cn(
-              toolbarButtonClass,
-              "border transition-colors hover:bg-[#F7F8FA]",
-            )}
-            style={{ borderColor: MONDAY.inputBorder, color: MONDAY.text }}
+            className="flex h-8 items-center gap-1.5 rounded-[8px] px-2 text-[13px] font-medium transition-colors hover:bg-[var(--row-hover)]"
+            style={{ border: "1px solid var(--border)", color: "var(--text)" }}
           >
             Today
           </button>
@@ -1438,8 +1450,8 @@ export function CalendarView({
               type="button"
               onClick={navigatePrev}
               aria-label="Previous period"
-              className="flex size-7 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]"
-              style={{ color: MONDAY.text }}
+              className="flex size-7 items-center justify-center rounded-[4px] transition-colors hover:bg-[var(--row-hover)]"
+              style={{ color: "var(--text)" }}
             >
               <ChevronLeft className="size-4" />
             </button>
@@ -1447,14 +1459,14 @@ export function CalendarView({
               type="button"
               onClick={navigateNext}
               aria-label="Next period"
-              className="flex size-7 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]"
-              style={{ color: MONDAY.text }}
+              className="flex size-7 items-center justify-center rounded-[4px] transition-colors hover:bg-[var(--row-hover)]"
+              style={{ color: "var(--text)" }}
             >
               <ChevronRight className="size-4" />
             </button>
           </div>
 
-          <span className="text-[15px] font-semibold" style={{ color: MONDAY.text }}>
+          <span className="text-[15px] font-semibold" style={{ color: "var(--text)" }}>
             {periodLabel}
           </span>
 
@@ -1462,18 +1474,19 @@ export function CalendarView({
 
           {/* Day | Week | Month */}
           {!isNarrow && (
-            <div className="flex items-center rounded-[4px] bg-[#F1F2F5] p-0.5">
+            <div className="flex items-center rounded-[8px] p-0.5" style={{ backgroundColor: "var(--surface-raised)", border: "1px solid var(--border)" }}>
               {(["day", "week", "month"] as const).map((option) => (
                 <button
                   key={option}
                   type="button"
                   onClick={() => handleModeChange(option)}
                   className={cn(
-                    "h-7 rounded-[4px] px-3 text-[13px] font-medium capitalize transition-colors",
-                    mode === option
-                      ? "bg-white text-[#323338] shadow-[0_1px_2px_rgba(0,0,0,0.12)]"
-                      : "text-[#676879] hover:text-[#323338]",
+                    "h-7 rounded-[6px] px-3 text-[13px] font-medium capitalize transition-colors",
                   )}
+                  style={{
+                    backgroundColor: mode === option ? "color-mix(in srgb, var(--accent) 18%, transparent)" : "transparent",
+                    color: mode === option ? "var(--text)" : "var(--text-muted)",
+                  }}
                 >
                   {option}
                 </button>
@@ -1485,15 +1498,15 @@ export function CalendarView({
           <button
             type="button"
             onClick={() => setShowFilters((open) => !open)}
-            className={cn(toolbarButtonClass, "hover:bg-[#F1F2F5]")}
-            style={{ color: activeFilters.length > 0 ? MONDAY.accent : MONDAY.muted }}
+            className={cn("flex h-8 items-center gap-1.5 rounded-[8px] px-2 text-[13px] font-medium transition-colors hover:bg-[var(--row-hover)]")}
+            style={{ border: "1px solid var(--border)", color: activeFilters.length > 0 ? "var(--accent)" : "var(--text-muted)" }}
           >
             <Filter className="size-3.5" />
             <span className="hidden sm:inline">Filter</span>
             {activeFilters.length > 0 && (
               <span
                 className="flex size-4 items-center justify-center rounded-full text-[10px] font-semibold text-white"
-                style={{ backgroundColor: MONDAY.accent }}
+                style={{ backgroundColor: "var(--accent)" }}
               >
                 {activeFilters.length}
               </span>
@@ -1505,11 +1518,11 @@ export function CalendarView({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className={cn(toolbarButtonClass, "hover:bg-[#F1F2F5]")}
-                style={{ color: MONDAY.muted }}
+                className={cn("flex h-8 items-center gap-1.5 rounded-[8px] px-2 text-[13px] font-medium transition-colors hover:bg-[var(--row-hover)]")}
+                style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
               >
                 <span className="hidden sm:inline">Color by</span>
-                <span style={{ color: MONDAY.text }}>
+                <span style={{ color: "var(--text)" }}>
                   {colorOptions.find((option) => option.id === colorSourceId)?.label ??
                     "None"}
                 </span>
@@ -1534,11 +1547,11 @@ export function CalendarView({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                className={cn(toolbarButtonClass, "hover:bg-[#F1F2F5]")}
-                style={{ color: MONDAY.muted }}
+                className={cn("flex h-8 items-center gap-1.5 rounded-[8px] px-2 text-[13px] font-medium transition-colors hover:bg-[var(--row-hover)]")}
+                style={{ border: "1px solid var(--border)", color: "var(--text-muted)" }}
               >
                 <span className="hidden sm:inline">Date column</span>
-                <span style={{ color: MONDAY.text }}>
+                <span style={{ color: "var(--text)" }}>
                   {dateColumns.find((c) => c.id === dateColumnId)?.label ?? "Select"}
                 </span>
                 <ChevronDown className="size-3.5" />
@@ -1568,10 +1581,9 @@ export function CalendarView({
             onClick={() => setShowSettings((open) => !open)}
             aria-label="Calendar settings"
             className={cn(
-              "flex size-8 items-center justify-center rounded-[4px] transition-colors hover:bg-[#F1F2F5]",
-              showSettings && "bg-[#F1F2F5]",
+              "flex size-8 items-center justify-center rounded-[8px] transition-colors hover:bg-[var(--row-hover)]",
             )}
-            style={{ color: MONDAY.muted }}
+            style={{ color: "var(--text-muted)", border: "1px solid var(--border)", backgroundColor: showSettings ? "var(--row-hover)" : "transparent" }}
           >
             <Settings className="size-4" />
           </button>
@@ -1602,17 +1614,18 @@ export function CalendarView({
                       className="grid shrink-0 border-b"
                       style={{
                         gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-                        borderColor: MONDAY.border,
+                        borderColor: "var(--border)",
+                        backgroundColor: "var(--surface-raised)",
                       }}
                     >
                       {weekdayLabels.map((label, index) => (
                         <div
                           key={label}
-                          className="px-2 py-1.5 text-[11px] font-medium tracking-wide uppercase"
+                          className="px-2 py-1.5 text-[11px] font-semibold tracking-[0.08em] uppercase"
                           style={{
-                            color: MONDAY.muted,
+                            color: "var(--text-muted)",
                             borderRight:
-                              index < 6 ? `1px solid ${MONDAY.border}` : undefined,
+                              index < 6 ? `1px solid var(--border)` : undefined,
                           }}
                         >
                           {label}
@@ -1621,10 +1634,11 @@ export function CalendarView({
                     </div>
 
                     <div
-                      className="grid min-h-0 flex-1"
+                      className="grid shrink-0 border-b"
                       style={{
                         gridTemplateColumns: "repeat(7, minmax(0, 1fr))",
-                        gridTemplateRows: `repeat(${weeks.length}, minmax(0, 1fr))`,
+                        borderColor: "var(--border)",
+                        backgroundColor: "var(--surface-raised)",
                       }}
                     >
                       {weeks.map((week) => (

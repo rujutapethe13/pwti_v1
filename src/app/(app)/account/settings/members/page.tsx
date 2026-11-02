@@ -9,6 +9,7 @@ import { MembersAccessModal } from "@/components/shared/members-access-modal";
 import { ErrorState } from "@/components/shared/error-state";
 import { Skeleton } from "@/components/shared/skeleton";
 import { useUser, useCanManageMembers } from "@/lib/user-context";
+import { useWorkspace } from "@/lib/workspace-context";
 import {
   type Member,
   accessRoleLabel,
@@ -18,6 +19,7 @@ import { cn } from "@/lib/utils";
 export default function MembersSettingsPage() {
   const { user, loading, error, permissions } = useUser();
   const canManage = useCanManageMembers();
+  const { activeWorkspaceId } = useWorkspace();
   const [members, setMembers] = useState<Member[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
@@ -29,11 +31,19 @@ export default function MembersSettingsPage() {
     setMembersError(null);
     void loadMembers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, canManage]);
+  }, [user, canManage, activeWorkspaceId]);
 
   async function loadMembers() {
     try {
-      const params = new URLSearchParams({ workspace_id: "default" });
+      if (!activeWorkspaceId) {
+        setMembers([]);
+        setLoadingMembers(false);
+        return;
+      }
+      const params = new URLSearchParams({
+        scope: "workspace",
+        workspace_id: activeWorkspaceId,
+      });
       const res = await fetch(`/api/members?${params.toString()}`);
       const json = (await res.json().catch(() => ({}))) as {
         success?: boolean;
@@ -151,9 +161,9 @@ export default function MembersSettingsPage() {
       <MembersAccessModal
         open={modalOpen}
         onOpenChange={setModalOpen}
-        scope={{ kind: "workspace", id: "default" }}
+        scope={{ kind: "workspace", id: activeWorkspaceId ?? "" }}
         subjectName="Workspace"
-        workspaceId="default"
+        workspaceId={activeWorkspaceId ?? ""}
       />
     </div>
   );

@@ -61,26 +61,15 @@ export async function GET(request: NextRequest) {
     // truncates at the project max-rows of 1000, and this org holds ~4,200
     // snapshot rows, so the shares would be computed from a fraction of the
     // data and still render as though they were real.
-    const WORKLOAD_ROW_CEILING = 50_000;
-    const workloadResult = await supabase
-      .from("client_360_daily_snapshot")
-      .select("board_id, volume")
-      .eq("organization_id", organizationId)
-      .gte("job_date", rangeFrom)
-      .lte("job_date", rangeTo)
-      .range(0, WORKLOAD_ROW_CEILING);
-
-    console.log("[TEMP-LOG] Workload query — rows:", workloadResult.data?.length ?? 0, "error:", workloadResult.error?.message ?? "none");
-
-    if (
-      workloadResult.data &&
-      workloadResult.data.length >= WORKLOAD_ROW_CEILING
-    ) {
-      console.warn(
-        `Overview workload panel hit its ${WORKLOAD_ROW_CEILING}-row ceiling; ` +
-          `shares may under-report. Aggregate this in SQL instead of reading rows.`,
-      );
-    }
+    const boardIds = (request.nextUrl.searchParams.get("boards") ?? "")
+      .split(",")
+      .filter((id) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id));
+    const workloadResult = await supabase.rpc("overview_workload_by_board", {
+      p_organization_id: organizationId,
+      p_board_ids: boardIds,
+      p_from: rangeFrom,
+      p_to: rangeTo,
+    });
 
     // A failed query used to be indistinguishable from a studio with no
     // records: `data` is null, the map stayed empty, and the page rendered
@@ -93,38 +82,17 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const boardVolumeMap = new Map<string, number>();
-    for (const s of workloadResult.data ?? []) {
-      boardVolumeMap.set(s.board_id, (boardVolumeMap.get(s.board_id) || 0) + (s.volume || 1));
-    }
-
-    const boardIds = Array.from(boardVolumeMap.keys());
-    let workloadByTeam: Array<{ team: string; jobs: number; items: number; percentage: number }> = [];
-
-    if (boardIds.length > 0) {
-      const { data: boards } = await supabase
-        .from("boards")
-        .select("id, name")
-        .in("id", boardIds)
-        .neq("status", "archived");
-
-      const totalJobs = Array.from(boardVolumeMap.values()).reduce((a, b) => a + b, 0);
-      if (boards) {
-        workloadByTeam = boards.map((b) => {
-          const jobs = boardVolumeMap.get(b.id) || 0;
-          return {
-            team: b.name,
-            jobs,
-            items: jobs,
-            percentage: totalJobs > 0 ? Math.round((jobs / totalJobs) * 100) : 0,
-          };
-        });
-      }
-    }
+    const workloadRows = (workloadResult.data ?? []) as Array<{ board_id: string; board_name: string; jobs: number; percentage: number }>;
+    const workloadByTeam = workloadRows.map((row) => ({
+      team: row.board_name,
+      jobs: Number(row.jobs),
+      percentage: Number(row.percentage),
+    }));
 
     // ── 4. Greeting: user name ──
     const { data: { user } } = await supabase.auth.getUser();
-    const userName = user?.user_metadata?.full_name || user?.email?.split("@")[0] || "User";
+    const userName =
+      user?.user_metadata?.full_name || user?.email?.split("@")[0] || null;
 
     // ── 5. Activity feed (from activity_logs, populated by the event-bus subscriber) ──
     // Scoped to the selected range by created_at, so the feed follows the selector.

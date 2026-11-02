@@ -81,17 +81,17 @@ const STATUS_OPTIONS = ["Not Started", "In Progress", "Review", "Approved", "Don
 export function StatusCellRenderer({ value, onChange, readOnly }: BaseCellProps) {
   const current = String(value ?? "Not Started");
   const colors: Record<string, string> = {
-    "Not Started": "bg-gray-100 text-gray-700",
-    "In Progress": "bg-blue-100 text-blue-700",
-    Review: "bg-yellow-100 text-yellow-700",
-    Approved: "bg-green-100 text-green-700",
-    Done: "bg-emerald-100 text-emerald-700",
-    Blocked: "bg-red-100 text-red-700",
+    "Not Started": "board-table-pill",
+    "In Progress": "board-table-pill",
+    Review: "board-table-pill",
+    Approved: "board-table-pill",
+    Done: "board-table-pill",
+    Blocked: "board-table-pill",
   };
 
   if (readOnly) {
     return (
-      <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium", colors[current] || "bg-gray-100 text-gray-700")}>
+      <span className={cn(colors[current] || "board-table-pill")}>
         {current}
       </span>
     );

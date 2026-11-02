@@ -37,7 +37,243 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+:root {
+  --surface: #ffffff;
+  --surface-raised: #f7f7f5;
+  --surface-overlay: #ffffff;
+  --row-hover: #f3f6f3;
+  --row-selected: #e8f3ec;
+  --border: #e8e8e4;
+  --text: #1a1a1a;
+  --text-muted: #6b6b66;
+  --text-placeholder: #a0a09a;
+  --accent: #2f7a4d;
+  --danger: #dc2626;
+  --danger-bg: #fef2f2;
+  --warning: #d97706;
+  --warning-bg: #fffbeb;
+}
+
+.dark {
+  --surface: #0f0f10;
+  --surface-raised: #17171a;
+  --surface-overlay: #1c1c20;
+  --row-hover: #1f1f24;
+  --row-selected: #14261c;
+  --border: #2a2a30;
+  --text: #ececec;
+  --text-muted: #9a9aa3;
+  --text-placeholder: #5d5d66;
+  --accent: #3f9f66;
+  --danger: #f87171;
+  --danger-bg: #1f1315;
+  --warning: #fbbf24;
+  --warning-bg: #1f1a14;
+}
+
+.board-table {
+  --surface: #ffffff;
+  --surface-raised: #f7f7f5;
+  --row-hover: #f3f6f3;
+  --row-selected: #e8f3ec;
+  --border: #e8e8e4;
+  --text: #1a1a1a;
+  --text-muted: #6b6b66;
+  --text-placeholder: #a0a09a;
+  --accent: #2f7a4d;
+  color: var(--text);
+  background: var(--surface);
+  scrollbar-color: var(--border) transparent;
+  scrollbar-width: thin;
+}
+
+.dark .board-table {
+  --surface: #0f0f10;
+  --surface-raised: #17171a;
+  --row-hover: #1c1c20;
+  --row-selected: #14261c;
+  --border: #26262b;
+  --text: #ececec;
+  --text-muted: #9a9aa3;
+  --text-placeholder: #5d5d66;
+  --accent: #3f9f66;
+}
+
+.board-table::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.board-table::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.board-table::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.board-table-row {
+  min-height: 44px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.board-table-row:hover {
+  background: var(--row-hover);
+}
+
+.board-table-row[data-selected="true"] {
+  background: var(--row-selected);
+}
+
+.board-table-cell {
+  min-width: 0;
+  overflow: hidden;
+  padding: 12px;
+  color: var(--text);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  border-right: 1px solid var(--border);
+}
+
+.board-table-cell-content {
+  position: relative;
+  min-width: 0;
+  min-height: 32px;
+}
+
+.board-cell-change-info {
+  position: absolute;
+  right: 0;
+  bottom: -1px;
+  left: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 12px;
+  opacity: 0;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity 120ms ease 150ms;
+}
+
+.board-table-cell:hover .board-cell-change-info,
+.board-table-cell:focus-within .board-cell-change-info {
+  opacity: 1;
+}
+
+.board-table-last-edited {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.board-table-last-edited small {
+  font-size: 10px;
+}
+
+.board-table-cell > input,
+.board-table-cell > textarea,
+.board-table-cell > select {
+  max-width: 100%;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid transparent;
+}
+
+.board-table-cell > input:hover,
+.board-table-cell > textarea:hover,
+.board-table-cell > select:hover,
+.board-table-cell > input:focus,
+.board-table-cell > textarea:focus,
+.board-table-cell > select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
+.board-table-cell input::placeholder {
+  color: var(--text-placeholder);
+}
+
+.board-table-header {
+  color: var(--text-muted);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.board-table-sticky {
+  background: inherit;
+  box-shadow: 8px 0 12px -12px rgb(0 0 0 / 45%);
+}
+
+.board-table-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.board-table-group {
+  min-height: 44px;
+  color: var(--text);
+  background: var(--surface-raised);
+  border-bottom: 1px solid var(--border);
+}
+
+.board-table-group button:hover {
+  background: var(--row-hover);
+}
+
+.board-table-empty {
+  color: var(--text-placeholder);
+  font-weight: 400;
+}
+
+.board-table-pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 999px;
+  padding: 2px 8px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  font-size: 12px;
+  font-weight: 500;
+}
+
 @theme static {
+  /* Semantic surface/text tokens. Components may use these directly when a
+     Tailwind utility does not express the intended elevation. */
+  --bg-app: 0 0% 100%;
+  --bg-sidebar: 0 0% 98%;
+  --bg-rail: 20 14.3% 4.1%;
+  --bg-surface: 0 0% 100%;
+  --bg-surface-raised: 0 0% 100%;
+  --bg-hover: 60 4.8% 95.9%;
+  --bg-selected: 142 30% 94%;
+  --bg-subtle: 60 4.8% 95.9%;
+  --text-primary: 20 14.3% 4.1%;
+  --text-secondary: 25 5.3% 44.7%;
+  --text-muted: 25 5.3% 55%;
+  --text-placeholder: 25 5.3% 65%;
+  --border-default: 20 5.9% 90%;
+  --border-subtle: 20 5.9% 94%;
+  --border-strong: 20 5.9% 78%;
+  --border-focus: 142 72% 29%;
+  --brand-hover: 142 72% 24%;
+  --brand-subtle: 142 30% 94%;
+  --brand-disabled: 142 20% 75%;
+  --danger-subtle: 0 80% 96%;
+  --success-subtle: 142 45% 92%;
+  --overlay: 0 0% 0% / 0.6;
   /* ── Backgrounds ──────────────────────────────── */
   --background: 0 0% 100%;
   --foreground: 20 14.3% 4.1%;
@@ -170,6 +406,28 @@
    adding its alias here too.
    ───────────────────────────────────────────────────────────── */
 @theme inline {
+  --color-bg-app: hsl(var(--bg-app));
+  --color-bg-sidebar: hsl(var(--bg-sidebar));
+  --color-bg-rail: hsl(var(--bg-rail));
+  --color-bg-surface: hsl(var(--bg-surface));
+  --color-bg-surface-raised: hsl(var(--bg-surface-raised));
+  --color-bg-hover: hsl(var(--bg-hover));
+  --color-bg-selected: hsl(var(--bg-selected));
+  --color-bg-subtle: hsl(var(--bg-subtle));
+  --color-text-primary: hsl(var(--text-primary));
+  --color-text-secondary: hsl(var(--text-secondary));
+  --color-text-muted: hsl(var(--text-muted));
+  --color-text-placeholder: hsl(var(--text-placeholder));
+  --color-border-default: hsl(var(--border-default));
+  --color-border-subtle: hsl(var(--border-subtle));
+  --color-border-strong: hsl(var(--border-strong));
+  --color-border-focus: hsl(var(--border-focus));
+  --color-brand-hover: hsl(var(--brand-hover));
+  --color-brand-subtle: hsl(var(--brand-subtle));
+  --color-brand-disabled: hsl(var(--brand-disabled));
+  --color-danger-subtle: hsl(var(--danger-subtle));
+  --color-success-subtle: hsl(var(--success-subtle));
+  --color-overlay: hsl(var(--overlay));
   --color-background: hsl(var(--background));
   --color-foreground: hsl(var(--foreground));
 
@@ -257,6 +515,29 @@
 @layer base {
   /* ── Dark Theme ─────────────────────────────────────────── */
   .dark {
+    color-scheme: dark;
+    --bg-app: 220 16% 7%;
+    --bg-sidebar: 220 14% 9%;
+    --bg-rail: 220 17% 5%;
+    --bg-surface: 220 16% 11%;
+    --bg-surface-raised: 220 16% 14%;
+    --bg-hover: 220 16% 16%;
+    --bg-selected: 145 22% 15%;
+    --bg-subtle: 220 15% 13%;
+    --text-primary: 220 15% 92%;
+    --text-secondary: 220 10% 70%;
+    --text-muted: 220 10% 56%;
+    --text-placeholder: 220 10% 43%;
+    --border-default: 220 14% 20%;
+    --border-subtle: 220 14% 16%;
+    --border-strong: 220 13% 29%;
+    --border-focus: 142 42% 52%;
+    --brand-hover: 142 42% 45%;
+    --brand-subtle: 142 22% 16%;
+    --brand-disabled: 142 18% 28%;
+    --danger-subtle: 0 45% 18%;
+    --success-subtle: 142 28% 17%;
+    --overlay: 0 0% 0% / 0.65;
     --background: 20 14.3% 4.1%;
     --foreground: 60 9.1% 97.8%;
 
@@ -376,6 +657,11 @@
   html {
     font-size: 14px;
     font-family: var(--font-sans);
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
   }
 
   body {

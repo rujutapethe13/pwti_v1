@@ -44,6 +44,7 @@ import { cn } from "@/lib/utils";
 import {
   ACCESS_OPTIONS,
   accessRoleLabel,
+  isGrantableAccess,
   isValidEmail,
   type GrantableAccess,
   type Member,
@@ -180,6 +181,7 @@ export function MembersAccessModal({
     setCandidates([]);
     setSuggestionsOpen(false);
     setFormError(null);
+    setAccess("edit");
   }, [open]);
 
   // Autocomplete. Owner and edit only — a view user has nothing to add.
@@ -580,16 +582,20 @@ export function MembersAccessModal({
 
                 <Select
                   value={access}
-                  onValueChange={(value) => setAccess(value as GrantableAccess)}
+                  onValueChange={(value) => {
+                    if (isGrantableAccess(value)) setAccess(value);
+                  }}
                 >
                   <SelectTrigger
                     className="h-9 text-sm sm:w-44"
                     aria-label="Access level"
                     disabled={!canManageMembers || submitting}
                   >
-                    <SelectValue />
+                    <SelectValue>
+                      {ACCESS_OPTIONS.find((o) => o.value === access)?.label ?? access}
+                    </SelectValue>
                   </SelectTrigger>
-                  <SelectContent sideOffset={8}>
+                  <SelectContent sideOffset={8} className="z-[100] min-w-[260px]">
                     {ACCESS_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
                         {option.label} — {option.description}

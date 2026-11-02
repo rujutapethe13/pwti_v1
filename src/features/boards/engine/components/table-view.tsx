@@ -76,6 +76,7 @@ import type {
   BoardRecord,
   ColumnDefinition,
   ColumnValue,
+  CellChangeMetadata,
   DropdownOption,
   Group,
 } from "../types";
@@ -85,6 +86,7 @@ import {
   isOptionColumnType,
   resolveOptionDisplay,
 } from "../lib/option-lookup";
+import { formatDateTimeIST, formatRelativeIST, getUserLabel } from "../cell-change-utils";
 
 const PRESET_COLORS = [
   "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
@@ -113,6 +115,7 @@ export interface TableViewProps {
   columns: ColumnDefinition[];
   records: BoardRecord[];
   cellValues: Map<string, ColumnValue>;
+  cellMetadata?: Map<string, CellChangeMetadata>;
   onCellChange?: (args: {
     recordId: string;
     columnId: string;
@@ -737,6 +740,7 @@ export function TableView({
   columns,
   records,
   cellValues,
+  cellMetadata,
   onCellChange,
   visibleRowRange,
   visibleColumnRange,
@@ -792,6 +796,20 @@ export function TableView({
   hasMore,
   recordTotal,
 }: TableViewProps) {
+  const [showLastEdited, setShowLastEdited] = useState(true);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(`board:${board.id}:show-last-edited`);
+      if (saved !== null) setShowLastEdited(saved !== "false");
+    } catch { /* optional preference */ }
+  }, [board.id]);
+  const toggleLastEdited = useCallback(() => {
+    setShowLastEdited((current) => {
+      const next = !current;
+      try { window.localStorage.setItem(`board:${board.id}:show-last-edited`, String(next)); } catch { /* optional preference */ }
+      return next;
+    });
+  }, [board.id]);
   // ── Selection ──────────────────────────────────────────
   const recordIds = useMemo(() => records.map((r) => r.id), [records]);
   const selection = useSelection<string>();
@@ -911,6 +929,10 @@ export function TableView({
   const [internalSort, setInternalSort] = useState<{ columnId: string; direction: "asc" | "desc" } | null>(null);
   const activeSortColumnId = sortColumnId ?? internalSort?.columnId;
   const activeSortDirection = sortDirection ?? internalSort?.direction ?? "asc";
+  const lastEditedAt = useCallback(
+    (record: BoardRecord) => record.lastEditedAt ?? record.updatedAt ?? record.createdAt ?? null,
+    [],
+  );
 
   const handleSort = useCallback(
     (columnId: string, direction?: "asc" | "desc") => {
@@ -932,11 +954,15 @@ export function TableView({
   const sortedRecords = useMemo(() => {
     if (!activeSortColumnId) return records;
     const col = columns.find((c) => c.id === activeSortColumnId);
-    if (!col) return records;
+    if (!col && activeSortColumnId !== "__last_edited__") return records;
 
     const sorted = [...records].sort((a, b) => {
-      const aVal = cellValues.get(getCellKey(a.id, col.id)) ?? col.defaultValue;
-      const bVal = cellValues.get(getCellKey(b.id, col.id)) ?? col.defaultValue;
+      const aVal = activeSortColumnId === "__last_edited__"
+        ? lastEditedAt(a)
+        : cellValues.get(getCellKey(a.id, col!.id)) ?? col!.defaultValue;
+      const bVal = activeSortColumnId === "__last_edited__"
+        ? lastEditedAt(b)
+        : cellValues.get(getCellKey(b.id, col!.id)) ?? col!.defaultValue;
 
       let cmp = 0;
       if (aVal === null || aVal === undefined) cmp = 1;
@@ -950,7 +976,7 @@ export function TableView({
       return activeSortDirection === "desc" ? -cmp : cmp;
     });
     return sorted;
-  }, [records, columns, cellValues, activeSortColumnId, activeSortDirection]);
+  }, [records, columns, cellValues, activeSortColumnId, activeSortDirection, lastEditedAt]);
 
   // ── Filtered records ──────────────────────────────────
   const filteredRecords = useMemo(() => {
@@ -1180,8 +1206,9 @@ export function TableView({
         widths.push(`${getColumnWidth(col, columnWidths)}px`);
       }
     }
+    if (showLastEdited) widths.push("190px");
     return widths.join(" ");
-  }, [visibleColumns, columnWidths, collapsedColumns]);
+  }, [visibleColumns, columnWidths, collapsedColumns, showLastEdited]);
 
   const getRowColumns = useCallback((record: BoardRecord) => {
     const group = groups?.find((candidate) => candidate.id === record.groupId);
@@ -1197,8 +1224,9 @@ export function TableView({
       ...rowColumns.map((column) =>
         collapsedColumns.has(column.id) ? "10px" : `${getColumnWidth(column, columnWidths)}px`,
       ),
+      ...(showLastEdited ? ["190px"] : []),
     ].join(" ");
-  }, [collapsedColumns, columnWidths]);
+  }, [collapsedColumns, columnWidths, showLastEdited]);
 
   // ── Virtual scrolling state ─────────────────────────────
   // Record rows are py-3 (24px) around an h-8 control (32px) = 56px,
@@ -1437,7 +1465,7 @@ export function TableView({
       {hasAnyData ? (
         <div
           ref={tableRef}
-          className="min-h-0 flex-1 overflow-auto"
+          className="board-table min-h-0 flex-1 overflow-auto"
           tabIndex={0}
           role="grid"
           aria-label={`${board.name} table`}
@@ -1451,16 +1479,16 @@ export function TableView({
             onDragEnd={handleDragEnd}
           >
             <div
-              className="sticky top-0 z-30 grid rounded-none border-b border-border bg-white"
+              className="board-table-header sticky top-0 z-30 grid rounded-none"
               style={{
                 gridTemplateColumns: columnWidthsList,
               }}
             >
               {/* Selection checkbox header */}
-              <div className="flex items-center justify-center border-r border-border bg-white px-2 py-3">
+              <div className="board-table-sticky sticky left-0 z-10 flex items-center justify-center border-r border-[var(--border)] px-2 py-3">
                 <input
                   type="checkbox"
-                  className="size-4 rounded border-border"
+                  className="board-table-checkbox"
                   checked={selection.isAllSelected(recordIds)}
                   ref={(el) => {
                     if (el) {
@@ -1543,7 +1571,7 @@ export function TableView({
                       <button
                         key={column.id}
                         onClick={() => handleToggleCollapse(column.id)}
-                        className="flex items-center justify-center border-r border-border bg-white hover:bg-gray-50 cursor-pointer"
+                        className="board-table-sticky flex cursor-pointer items-center justify-center border-r border-[var(--border)] hover:bg-[var(--row-hover)]"
                         style={{ width: 10, minWidth: 10 }}
                         aria-label={`Expand ${column.label}`}
                       >
@@ -1597,6 +1625,21 @@ export function TableView({
                     />
                   );
                 })}
+                {showLastEdited && (
+                  <button
+                    type="button"
+                    className="board-table-last-edited-header flex items-center border-r border-[var(--border)] px-3 text-xs font-medium text-muted-foreground hover:text-foreground"
+                    onClick={() => handleSort("__last_edited__")}
+                    title="Sort by last edited"
+                  >
+                    <span>Last edited</span>
+                    <span
+                      className="ml-auto px-1 text-muted-foreground hover:text-foreground"
+                      onClick={(event) => { event.stopPropagation(); toggleLastEdited(); }}
+                      aria-label="Hide Last edited column"
+                    >×</span>
+                  </button>
+                )}
               </SortableContext>
             </div>
           </DndContext>
@@ -1626,7 +1669,7 @@ export function TableView({
               return (
                 <div key={`header-${item.groupId}`} style={style}>
                   <div
-                    className="flex items-center gap-2 border-l-2 bg-muted/30 px-4 py-2 text-sm font-medium"
+                    className="board-table-group flex items-center gap-2 border-l-2 px-4 py-2 text-sm font-semibold"
                     style={{ borderLeftColor: group?.color ?? "#94a3b8", paddingLeft: ROW_CHECKBOX_WIDTH + 16 }}
                   >
                     <button
@@ -1732,18 +1775,18 @@ export function TableView({
                 <div
                   key={record.id}
                   className={cn(
-                    "grid border-b border-border transition-colors",
-                    isSelected && "bg-accent/30",
+                    "board-table-row grid transition-colors",
                     focusedCell?.rowIdx === actualIdx && "ring-1 ring-inset ring-primary/20",
                   )}
+                  data-selected={isSelected}
                   style={{ gridTemplateColumns: getRowWidths(rowColumns), ...style }}
                   role="row"
                   aria-selected={isSelected}
                 >
-                  <div className="flex items-center justify-center border-r border-border bg-white px-2 py-3">
+                  <div className="board-table-sticky sticky left-0 z-10 flex items-center justify-center border-r border-[var(--border)] px-2 py-3">
                     <input
                       type="checkbox"
-                      className="size-4 rounded border-border"
+                      className="board-table-checkbox"
                       checked={isSelected}
                       onChange={() => selection.toggle(record.id)}
                       onClick={(e) => {
@@ -1760,7 +1803,7 @@ export function TableView({
                       return (
                         <div
                         key={`collapsed-${column.id}`}
-                          className="flex items-center justify-center border-r border-border bg-white"
+                          className="board-table-cell flex items-center justify-center"
                           style={{ width: 10, minWidth: 10 }}
                           data-cell-row={actualIdx}
                           data-cell-col={colIdx}
@@ -1776,15 +1819,30 @@ export function TableView({
                       );
                     }
                     const isPrimary = column.id === getPrimaryColumn(columns, { groupId: record.groupId })?.id;
-                    const value = cellValues.get(getCellKey(record.id, column.id))
-                      ?? (isPrimary ? record.title : column.defaultValue);
+                    // The primary column is backed by records.title, not a
+                    // cell_values row. Prefer that canonical value so a
+                    // legacy empty/stale cell row cannot hide the title.
+                    const value = isPrimary
+                      ? record.title
+                      : cellValues.get(getCellKey(record.id, column.id)) ?? column.defaultValue;
+                    const metadata = cellMetadata?.get(getCellKey(record.id, column.id));
+                    const hasValue = value !== null && value !== undefined && value !== "";
+                    const isComputed = ["formula", "mirror", "rollup", "lookup"].includes(column.type);
+                    const changeLabel = isComputed
+                      ? "Calculated"
+                      : metadata?.source === "import"
+                        ? "Import"
+                        : metadata?.source === "automation"
+                          ? "Automation"
+                          : metadata?.changedAt
+                            ? `${metadata.approximate ? "Added" : "Edited"} ${formatDateTimeIST(metadata.changedAt)} · ${getUserLabel(metadata.changedBy)}`
+                            : undefined;
                     return (
                       <div
                         key={column.id}
                         className={cn(
-                          "px-4 py-2 align-top border-r border-border bg-white overflow-hidden",
-                          column.pinned === true && "sticky left-0 z-10 shadow-sm",
-                          isSelected && column.pinned === true && "bg-accent/30",
+                          "board-table-cell align-top",
+                          column.pinned === true && "sticky left-12 z-10 board-table-sticky",
                           wrappedColumns.has(column.id)
                             ? "whitespace-normal break-words"
                             : "whitespace-nowrap",
@@ -1793,6 +1851,7 @@ export function TableView({
                         data-cell-col={colIdx}
                         onClick={() => setFocusedCell({ rowIdx: actualIdx, colIdx })}
                       >
+                        <div className="board-table-cell-content">
                         <CellRenderer
                           board={board}
                           column={column}
@@ -1802,15 +1861,32 @@ export function TableView({
                           onUpdateColumnLabels={onUpdateColumnLabels}
                           onConfigureMirror={onConfigureMirror}
                           onChange={(nextValue) => {
-                            onCellChange?.({ recordId: record.id, columnId: column.id, value: nextValue });
                             if (isPrimary && typeof nextValue === "string") {
                               onRecordTitleChange?.(record.id, nextValue);
+                            } else {
+                              onCellChange?.({ recordId: record.id, columnId: column.id, value: nextValue });
                             }
                           }}
                         />
+                        {hasValue && changeLabel && (
+                          <span className="board-cell-change-info" title={metadata?.changedAt ? formatDateTimeIST(metadata.changedAt) : undefined}>
+                            {changeLabel}
+                          </span>
+                        )}
+                        </div>
                       </div>
                     );
                   })}
+                  {showLastEdited && (
+                    <div className="board-table-cell board-table-last-edited" title={record.lastEditedAt ? formatDateTimeIST(record.lastEditedAt) : undefined}>
+                      {record.lastEditedAt ? (
+                        <>
+                          <span>{formatRelativeIST(record.lastEditedAt)}</span>
+                          <small>by {getUserLabel(record.lastEditedBy)}</small>
+                        </>
+                      ) : <span>Before tracking started</span>}
+                    </div>
+                  )}
                 </div>
               );
             }
@@ -1898,7 +1974,7 @@ export function TableView({
           {/* ── Footer with sums for number columns ────────── */}
           {Object.keys(numberColumnSums).length > 0 && (
             <div
-              className="grid border-t border-border bg-white"
+              className="grid border-t border-[var(--border)] bg-[var(--surface)]"
               style={{ gridTemplateColumns: columnWidthsList }}
               role="row"
             >

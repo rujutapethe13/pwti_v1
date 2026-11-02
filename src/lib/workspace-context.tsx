@@ -123,44 +123,6 @@ export function useWorkspace() {
   return ctx;
 }
 
-const DEFAULT_WORKSPACES: WorkspaceEntry[] = [
-  {
-    id: "ws-design",
-    name: "Design Team",
-    color: "#10b981",
-    description: "Creative design workspace",
-    organizationId: "org-acme",
-    isDefault: true,
-    agents: [],
-    content: [
-      {
-        id: "b-3",
-        type: "board",
-        name: "Manage workspace",
-        icon: "Settings2",
-        isPinned: true,
-      },
-    ],
-  },
-  {
-    id: "ws-eng",
-    name: "Engineering",
-    color: "#8b5cf6",
-    description: "Software engineering workspace",
-    organizationId: "org-acme",
-    agents: [],
-    content: [
-      {
-        id: "b-4",
-        type: "board",
-        name: "Manage workspace",
-        icon: "Settings2",
-        isPinned: true,
-      },
-    ],
-  },
-];
-
 function saveWorkspaces(workspaces: WorkspaceEntry[]) {
   savePersisted("workspaces", workspaces);
 }
@@ -183,10 +145,10 @@ function findItemById(
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [hasHydrated, setHasHydrated] = useState(false);
   const [workspaces, setWorkspaces] = useState<WorkspaceEntry[]>(() =>
-    loadPersisted("workspaces", DEFAULT_WORKSPACES),
+    loadPersisted("workspaces", []),
   );
   const [activeId, setActiveId] = useState<string | null>(() =>
-    loadPersisted("active-workspace", DEFAULT_WORKSPACES[0]?.id ?? null),
+    loadPersisted("active-workspace", null),
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [recentWorkspaceIds, setRecentWorkspaceIds] = useState<string[]>(() =>

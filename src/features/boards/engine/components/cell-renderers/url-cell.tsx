@@ -23,7 +23,7 @@ export function UrlCell({
         href={displayValue}
         target="_blank"
         rel="noopener noreferrer"
-        className="truncate text-sm text-blue-600 underline-offset-2 hover:underline dark:text-blue-400"
+        className="truncate text-sm text-[var(--accent)] underline-offset-2 hover:underline"
         onClick={(e) => e.stopPropagation()}
       >
         {displayValue}

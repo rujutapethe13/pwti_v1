@@ -24,8 +24,10 @@ import {
   type BreakdownSlice,
 } from "@/features/overview/volume-breakdown";
 import { cn } from "@/lib/utils";
+import { BoardSelector, type OverviewBoard } from "@/features/overview/board-selector";
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
+const EMPTY_BOARD_IDS: string[] = [];
 
 function formatVolume(value: number): string {
   return NUMBER_FORMAT.format(value);
@@ -47,7 +49,7 @@ function BreakdownTooltip({ active, payload }: SliceTooltipEntry) {
         {formatPercent(slice.percentage)} of volume
       </p>
       <p className="text-muted-foreground">
-        {formatVolume(slice.volume)} volume · {formatVolume(slice.jobs)}{" "}
+        {formatVolume(slice.volume)} volume (one per job row) · {formatVolume(slice.jobs)}{" "}
         {slice.jobs === 1 ? "job" : "jobs"}
       </p>
     </div>
@@ -60,6 +62,9 @@ interface VolumeBreakdownSectionProps {
   customRange?: CustomRange | null;
   className?: string;
   height?: number;
+  boards?: OverviewBoard[];
+  selectedBoardIds?: string[];
+  onBoardChange?: (ids: string[]) => void;
 }
 
 /**
@@ -91,7 +96,13 @@ export function VolumeBreakdownSection({
   customRange,
   className,
   height = 240,
+  boards = [],
+  selectedBoardIds: selectedBoardIdsProp,
+  onBoardChange: onBoardChangeProp,
 }: VolumeBreakdownSectionProps) {
+  const selectedBoardIds = selectedBoardIdsProp ?? EMPTY_BOARD_IDS;
+  const onBoardChange = onBoardChangeProp ?? (() => undefined);
+  const hasBoardFilter = selectedBoardIdsProp !== undefined;
   const rangeQuery = useMemo(
     () => timeRangeQueryString(resolveSelectedTimeRange(rangeId, customRange)),
     [rangeId, customRange],
@@ -105,7 +116,8 @@ export function VolumeBreakdownSection({
     setIsLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/overview/breakdown?${rangeQuery}&range=${rangeId}`, {
+      const boardQuery = selectedBoardIds.length ? `&boards=${selectedBoardIds.join(",")}` : "&boards=";
+      const res = await fetch(`/api/overview/breakdown?${rangeQuery}&range=${rangeId}${boardQuery}`, {
         cache: "no-store",
       });
       if (!res.ok) {
@@ -119,7 +131,7 @@ export function VolumeBreakdownSection({
     } finally {
       setIsLoading(false);
     }
-  }, [rangeQuery, rangeId]);
+  }, [rangeQuery, rangeId, selectedBoardIds]);
 
   useEffect(() => {
     void load();
@@ -132,10 +144,12 @@ export function VolumeBreakdownSection({
 
   const summary =
     isLoading || !breakdown
-      ? `Loading volume by job type · ${rangeLabel}`
-      : `${formatVolume(breakdown.totalVolume)} volume · ${rangeLabel} · ${breakdown.categoryCount} ${
+      ? `Loading type of job breakdown · ${rangeLabel}`
+      : `${formatVolume(breakdown.totalVolume)} volume · ${breakdown.categoryCount} ${
           breakdown.categoryCount === 1 ? "job type" : "job types"
-        }`;
+        }${selectedBoardIds.length > 0
+          ? ` · ${selectedBoardIds.length} board${selectedBoardIds.length === 1 ? "" : "s"}`
+          : ""} · ${rangeLabel}`;
 
   return (
     <Card className={cn("border-border/60 p-6 shadow-none", className)}>
@@ -146,11 +160,15 @@ export function VolumeBreakdownSection({
               className="text-muted-foreground/70 size-4 shrink-0"
               aria-hidden="true"
             />
-            Volume by job type
+            Type of job
           </h2>
           <p className="text-muted-foreground mt-1 text-xs">{summary}</p>
         </div>
 
+        <div className="flex items-center gap-2">
+          {hasBoardFilter && (
+            <BoardSelector boards={boards} selectedIds={selectedBoardIds} onChange={onBoardChange} />
+          )}
         {!isLoading && !error && data && (
           <Button
             variant="ghost"
@@ -163,6 +181,7 @@ export function VolumeBreakdownSection({
             <RefreshCw className="size-3.5" aria-hidden="true" />
           </Button>
         )}
+        </div>
       </div>
 
       <div className="mt-6" style={{ minHeight: height }} aria-busy={isLoading}>
@@ -179,7 +198,7 @@ export function VolumeBreakdownSection({
           <EmptyState
             compact
             icon={PieChartIcon}
-            title="No volume in this period"
+            title={hasBoardFilter && selectedBoardIds.length === 0 ? "No boards selected" : "No volume in this period"}
             description={`Nothing was received between ${data?.range.from} and ${data?.range.to}.`}
           />
         ) : (

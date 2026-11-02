@@ -401,4 +401,5 @@ export const COLUMN_TYPE_LABELS: Record<ColumnTypeKey, string> = {
   button: "Button",
   progress: "Progress",
   time_tracking: "Time Tracking",
+  attachment: "Attachment",
 };

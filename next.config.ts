@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
    * imports stay clean: `import { x } from "@/features/boards"`.
    * ──────────────────────────────────────────────────────────── */
   experimental: {
+    serverActions: {
+      bodySizeLimit: "4mb",
+    },
     // Enable for improved static analysis in Next 15
     optimizePackageImports: [
       "lucide-react",

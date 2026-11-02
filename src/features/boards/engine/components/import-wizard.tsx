@@ -704,7 +704,7 @@ export function ImportWizard({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={`w-full ${modalMaxWidth} flex flex-col max-h-[85vh] overflow-hidden`}>
+      <DialogContent className={`w-full ${modalMaxWidth} flex flex-col max-h-[85vh] overflow-hidden`} style={{ backgroundColor: "var(--surface-overlay)", color: "var(--text)", border: "1px solid var(--border)" }}>
         <div className="shrink-0">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -1061,14 +1061,15 @@ function PreviewStep({
           {parsed.headers.length === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="overflow-x-auto rounded-md border border-border">
+      <div className="overflow-x-auto rounded-md" style={{ border: "1px solid var(--border)" }}>
         <table className="min-w-full table-auto text-xs">
-          <thead className="bg-muted/40">
+          <thead style={{ backgroundColor: "var(--surface-raised)" }}>
             <tr>
               {parsed.headers.map((h, i) => (
                 <th
                   key={h + i}
-                  className="border-b border-r border-border px-2 py-1.5 text-left font-medium text-foreground last:border-r-0"
+                  className="px-2 py-1.5 text-left font-medium last:border-r-0"
+                  style={{ borderBottom: "1px solid var(--border)", borderRight: "1px solid var(--border)", color: "var(--text)" }}
                 >
                   {h}
                 </th>
@@ -1077,14 +1078,15 @@ function PreviewStep({
           </thead>
           <tbody>
             {previewRows.map((row, idx) => (
-              <tr key={idx} className="odd:bg-white even:bg-muted/10">
+              <tr key={idx} style={{ backgroundColor: idx % 2 === 0 ? "var(--surface)" : "var(--surface-raised)" }}>
                 {parsed.headers.map((h, i) => (
                   <td
                     key={h + i}
-                    className="border-b border-r border-border px-2 py-1.5 text-foreground/80 last:border-r-0"
+                    className="px-2 py-1.5 last:border-r-0"
+                    style={{ borderBottom: "1px solid var(--border)", borderRight: "1px solid var(--border)", color: "var(--text)" }}
                   >
                     {row[h] === null || row[h] === undefined || row[h] === ""
-                      ? <span className="text-muted-foreground/60">—</span>
+                      ? <span style={{ color: "var(--text-placeholder)" }}>—</span>
                       : String(row[h])}
                   </td>
                 ))}
@@ -1172,13 +1174,14 @@ export function MappingStep(props: MappingStepProps) {
       </div>
 
       {/* Title column + target group selector */}
-      <div className="grid grid-cols-2 gap-3 rounded-md border border-border bg-white p-3 text-xs">
+      <div className="grid grid-cols-2 gap-3 rounded-md p-3 text-xs" style={{ border: "1px solid var(--border)", backgroundColor: "var(--surface)" }}>
         <label className="flex flex-col gap-1">
           <span className="font-medium text-foreground">Title column (optional)</span>
           <select
             value={titleColumnFileHeader ?? ""}
             onChange={(e) => onTitleColumnChange(e.target.value || null)}
-            className="h-7 rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            className="h-7 rounded-md px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            style={{ border: "1px solid var(--border)", backgroundColor: "var(--surface)", color: "var(--text)" }}
           >
             <option value="">None</option>
             {allMappings.map((m, i) => (
@@ -1199,7 +1202,8 @@ export function MappingStep(props: MappingStepProps) {
           <select
             value={targetGroupId ?? ""}
             onChange={(e) => onTargetGroupChange(e.target.value || null)}
-            className="h-7 rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            className="h-7 rounded-md px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            style={{ border: "1px solid var(--border)", backgroundColor: "var(--surface)", color: "var(--text)" }}
           >
             {groups.length === 0 && <option value="">(No groups yet)</option>}
             {groups.map((g) => (
@@ -1280,7 +1284,7 @@ export function MappingStep(props: MappingStepProps) {
             {Object.entries(unmatchedOptions).map(([fileColumn, values]) => {
               const fileMap = optionMappings[fileColumn] ?? {};
               return (
-                <div key={fileColumn} className="rounded border border-amber-200 bg-white p-2">
+                <div key={fileColumn} className="rounded p-2" style={{ border: "1px solid var(--warning-bg)", backgroundColor: "var(--surface)" }}>
                   <div className="mb-1.5 font-medium text-foreground">{fileColumn}</div>
                   <div className="space-y-1">
                     {values.map((v) => {
@@ -1300,28 +1304,29 @@ export function MappingStep(props: MappingStepProps) {
                             {v}
                           </span>
                           <span className="text-muted-foreground">→</span>
-                          <select
-                            value={
-                              current.createNew
-                                ? "__create__"
-                                : (current.targetLabel ?? "")
-                            }
-                            onChange={(e) => {
-                              const val = e.target.value;
-                              if (val === "__create__") {
-                                onSetOptionMapping(fileColumn, v, {
-                                  createNew: true,
-                                  targetLabel: v,
-                                });
-                              } else {
-                                onSetOptionMapping(fileColumn, v, {
-                                  createNew: false,
-                                  targetLabel: val,
-                                });
-                              }
-                            }}
-                            className="h-7 flex-1 rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
-                          >
+                   <select
+                     value={
+                       current.createNew
+                         ? "__create__"
+                         : (current.targetLabel ?? "")
+                     }
+                     onChange={(e) => {
+                       const val = e.target.value;
+                       if (val === "__create__") {
+                         onSetOptionMapping(fileColumn, v, {
+                           createNew: true,
+                           targetLabel: v,
+                         });
+                       } else {
+                         onSetOptionMapping(fileColumn, v, {
+                           createNew: false,
+                           targetLabel: val,
+                         });
+                       }
+                     }}
+                     className="h-7 flex-1 rounded-md px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+                     style={{ border: "1px solid var(--border)", backgroundColor: "var(--surface)", color: "var(--text)" }}
+                   >
                             <option value="__create__">+ Create new option &ldquo;{v}&rdquo;</option>
                             {existingLabels.map((label) => (
                               <option key={label} value={label}>
@@ -1470,7 +1475,8 @@ function MappingRow({
               <select
                 value={createType}
                 onChange={(e) => onSetCreate(e.target.value as ColumnTypeKey, createLabel)}
-                className="h-7 rounded-md border border-input bg-white px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            className="h-7 rounded-md px-2 text-xs outline-none focus:ring-1 focus:ring-ring"
+            style={{ border: "1px solid var(--border)", backgroundColor: "var(--surface)", color: "var(--text)" }}
               >
                 {CREATABLE_IMPORT_TYPES.map((t) => (
                   <option key={t} value={t}>
@@ -1639,12 +1645,12 @@ export function ConfirmStep({
         <label className="flex items-center gap-2 mt-3">
           <input
             type="checkbox"
-            checked={keepUnmappedColumns}
-            onChange={(e) => onKeepUnmappedChange(e.target.checked)}
+            checked={!keepUnmappedColumns}
+            onChange={(e) => onKeepUnmappedChange(!e.target.checked)}
             className="h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
           />
           <span className="text-sm text-amber-900">
-            Keep unmapped columns (don&apos;t remove them)
+            Delete board columns that are not mapped
           </span>
         </label>
         {keepUnmappedColumns && (

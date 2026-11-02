@@ -292,7 +292,7 @@ begin
        and v_raw_value is not null
        and length(v_raw_value) > 0 then
 
-        select opt ->> 'label'
+        select elem ->> 'label'
         into v_resolved
         from jsonb_array_elements(v_settings -> 'options') elem
         where (elem ? 'id'   and elem ->> 'id'   = v_raw_value)

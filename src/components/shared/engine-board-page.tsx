@@ -8,11 +8,11 @@ import { BoardLayout } from "@/components/shared/board-layout";
 import { registerAllCellRenderers } from "@/features/boards/engine";
 import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
 import { toast } from "sonner";
-import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn } from "@/features/boards/engine/lib/primary-column";
+import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn, repairPrimaryColumn } from "@/features/boards/engine/lib/primary-column";
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
-import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey } from "@/features/boards/engine/types";
+import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey, CellChangeMetadata } from "@/features/boards/engine/types";
 import { buildInitialCellValues } from "@/features/boards/engine/lib/record-defaults";
-import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, updateColumnLabels } from "@/features/boards/engine/actions";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, deleteView, updateColumnLabels } from "@/features/boards/engine/actions";
 import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
 import { resolveTitleColumnLabel } from "@/features/boards/engine/lib/title-column";
 import { applyColumnUpdates, buildColumnSettings, mergeColumns, sanitizeLabels } from "@/features/boards/engine/lib/option-lookup";
@@ -89,11 +89,12 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
   useEffect(() => {
     registerAllCellRenderers();
   }, []);
-  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, views, groups: initialGroups } = data;
+  const { board, description, columns: initialColumns, records: initialRecords, cellValues: initialCellValues, cellMetadata: initialCellMetadata, views, groups: initialGroups } = data;
 
-  const [columns, setColumns] = useState<ColumnDefinition[]>(initialColumns);
+  const [columns, setColumns] = useState<ColumnDefinition[]>(repairPrimaryColumn(initialColumns));
   const [records, setRecords] = useState<BoardRecord[]>(initialRecords);
   const [cellValues, setCellValues] = useState<Map<string, ColumnValue>>(cellValuesArrayToMap(initialCellValues));
+  const [cellMetadata, setCellMetadata] = useState<Map<string, CellChangeMetadata>>(new Map(initialCellMetadata ?? []));
   const [boardViews, setBoardViews] = useState<BoardView[]>(views);
   const [activeViewId, setActiveViewId] = useState<string>(views[0]?.id ?? "");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -108,6 +109,18 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
   // Groups live in state so a newly created group appears immediately — the
   // server props are only the initial snapshot.
   const [groups, setGroups] = useState<Group[]>(initialGroups);
+
+  // Re-sync local state when server data changes (Back/Forward navigation, reload)
+  useEffect(() => {
+    setColumns(repairPrimaryColumn(initialColumns));
+    setRecords(initialRecords);
+    setCellValues(cellValuesArrayToMap(initialCellValues));
+    setCellMetadata(new Map(initialCellMetadata ?? []));
+    setBoardViews(views);
+    setActiveViewId(views[0]?.id ?? "");
+    setGroups(initialGroups);
+    setTitleColumnLabel(resolveTitleColumnLabel(board.titleColumnLabel));
+  }, [board.id]);
 
   // The pinned title column header label. Stored on the board itself, never
   // derived from `columns[0]`.
@@ -1074,11 +1087,17 @@ setImporting(true);
         await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, orderedFinalColumns);
 
         if (newRecords.length > 0) {
-          await upsertBoardRecords(board.id, board.organizationId, board.workspaceId, newRecords);
+          const RECORD_BATCH = 200;
+          for (let i = 0; i < newRecords.length; i += RECORD_BATCH) {
+            await upsertBoardRecords(board.id, board.organizationId, board.workspaceId, newRecords.slice(i, i + RECORD_BATCH));
+          }
         }
 
         if (newCellValues.length > 0) {
-          await upsertBoardCellValues(board.id, board.organizationId, board.workspaceId, newCellValues);
+          const CELL_BATCH = 1000;
+          for (let i = 0; i < newCellValues.length; i += CELL_BATCH) {
+            await upsertBoardCellValues(board.id, board.organizationId, board.workspaceId, newCellValues.slice(i, i + CELL_BATCH));
+          }
         }
 
         // (d) Delete the unmapped default columns. Runs ONCE, after the import
@@ -1092,69 +1111,7 @@ setImporting(true);
         // upsert, or a leftover from a previous run) would make the
         // deleteBoardColumns endpoint reject the whole batch with
         // "invalid column id" and leave every unmapped default column behind.
-        if (!importCleanupDoneRef.current) {
-          importCleanupDoneRef.current = true;
-          try {
-            // Log the id AND its type right before each delete call so any
-            // "invalid column id" regression is traceable to a specific id.
-            if (columnsToDelete.length > 0) {
-              console.warn("[EngineBoardPage] import cleanup delete batch", {
-                boardId: board.id,
-                count: columnsToDelete.length,
-                ids: columnsToDelete.map((c) => c.id),
-                idsWithType: columnsToDelete.map((c) => ({ id: c.id, type: typeof c.id, label: c.label })),
-              });
-              await deleteBoardColumns(
-                board.id,
-                columnsToDelete.map((c) => c.id),
-              );
-            }
-
-            // (e) Refetch the board columns from the backend and replace local
-            // state with that result. This guarantees the UI matches the
-            // source of truth (including the new `order` values written above)
-            // rather than trusting the in-memory plan.
-            const freshColumnsResult = await loadBoardColumns(board.id);
-            let freshColumns: ColumnDefinition[] = [];
-            if (freshColumnsResult.error || !freshColumnsResult.data) {
-              throw new Error(freshColumnsResult.error ?? "Failed to load columns");
-            }
-            freshColumns = freshColumnsResult.data;
-
-            // Merge instead of replace: a response that carries no labels (or
-            // that is older than the local copy) must never wipe the labels
-            // the user just saved.
-            setColumns((prev) => mergeColumns(prev, freshColumns));
-            setBoardViews((prevViews) =>
-              prevViews.map((view) => ({
-                ...view,
-                visibleColumnIds: freshColumns.map((c) => c.id),
-                columnWidths: Object.fromEntries(
-                  Object.entries(view.columnWidths ?? {}).filter(([id]) =>
-                    freshColumns.some((c) => c.id === id),
-                  ),
-                ),
-                filters: (view.filters ?? []).filter((f) =>
-                  freshColumns.some((c) => c.id === f.columnId),
-                ),
-                sorting: (view.sorting ?? []).filter((s) =>
-                  freshColumns.some((c) => c.id === s.columnId),
-                ),
-                grouping: (view.grouping ?? []).filter((g) =>
-                  freshColumns.some((c) => c.id === g.columnId),
-                ),
-              })),
-            );
-          } catch (cleanupErr) {
-            // The import itself succeeded; a cleanup failure must not roll it
-            // back or lose the imported data. Surface it and let the user
-            // retry the cleanup from the board UI.
-            console.error("[EngineBoardPage] import cleanup failed:", cleanupErr);
-            toast.error("Import finished, but some unmapped columns could not be removed. You can delete them manually.");
-          }
-        }
-
-        setRecords((prev) => [...prev, ...newRecords]);
+         setRecords((prev) => [...prev, ...newRecords]);
         setCellValues((prev) => {
           const next = new Map(prev);
           newCellValues.forEach(([key, value]) => next.set(key, value));
@@ -1287,13 +1244,14 @@ setImporting(true);
       groups,
       records,
       cellValues,
+      cellMetadata,
       totalRecords: records.length,
       filteredRecordCount: records.length,
       page: 1,
       pageSize: records.length,
       totalPages: 1,
     }),
-    [board, columns, groups, records, cellValues],
+    [board, columns, groups, records, cellValues, cellMetadata],
   );
 
   /**
@@ -1348,9 +1306,34 @@ setImporting(true);
     [],
   );
 
+  const handleDeleteView = useCallback(
+    async (viewId: string) => {
+      const target = boardViews.find((v) => v.id === viewId);
+      if (!target) return;
+      // Keep at least one view
+      if (boardViews.length <= 1) {
+        toast.error("Cannot delete the last view.");
+        return;
+      }
+      // Optimistic update
+      setBoardViews((prev) => prev.filter((v) => v.id !== viewId));
+      if (activeViewId === viewId) {
+        const remaining = boardViews.filter((v) => v.id !== viewId);
+        setActiveViewId(remaining[0]?.id ?? "");
+      }
+      const response = await deleteView(viewId);
+      if (response.error) {
+        // Rollback
+        setBoardViews((prev) => [...prev, target]);
+        toast.error(response.error ?? "Failed to delete the view.");
+      } else {
+        toast.success(`Deleted “${target.name}”.`);
+      }
+    },
+    [boardViews, activeViewId],
+  ); 
   /**
-   * Create a row from a view (the calendar's inline "add item").
-   * Returns the created record so the caller can focus its title.
+   * Create a row from a view
    */
   const handleRecordCreate = useCallback(
     async (payload: { title: string; cellValues: Record<string, ColumnValue>; groupId?: string | null }) => {
@@ -1483,6 +1466,7 @@ setImporting(true);
         activeViewId={activeViewId}
         onViewChange={setActiveViewId}
         onCreateView={handleCreateView}
+        onDeleteView={handleDeleteView}
         columns={columns}
       >
           <ViewEngine

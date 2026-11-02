@@ -11,6 +11,12 @@ export function DateCell({
   onKeyDown,
 }: CellRendererComponentProps) {
   const displayValue = resolveDisplayValue(value);
+  const formattedValue = displayValue
+    ? (() => {
+        const [year, month, day] = displayValue.split("-");
+        return year && month && day ? `${day}-${month}-${year}` : displayValue;
+      })()
+    : "";
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -23,7 +29,7 @@ export function DateCell({
     return (
       <span className="truncate text-sm text-foreground">
         {displayValue ? (
-          <span className="text-sm tabular-nums">{displayValue}</span>
+          <span className="text-sm tabular-nums">{formattedValue}</span>
         ) : (
           <span className="text-muted-foreground italic">No date</span>
         )}

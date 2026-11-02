@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useTheme } from "next-themes";
 import { toast } from "sonner";
 
 import { Label } from "@/components/ui/label";
@@ -19,9 +20,12 @@ export default function AppearanceSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
 
-  const [theme, setTheme] = useState<"light" | "dark" | "system">("system");
+  const { theme, setTheme } = useTheme();
+  const [mounted, setMounted] = useState(false);
 
-  const isDirty = theme !== "system";
+  useEffect(() => setMounted(true), []);
+
+  const isDirty = mounted && theme !== "system";
 
   const handleSave = async () => {
     if (!user || saving) return;
@@ -71,10 +75,11 @@ export default function AppearanceSettingsPage() {
         <section>
           <Label htmlFor="theme">Theme</Label>
           <Select
-            value={theme}
-            onValueChange={(value) =>
-              setTheme(value as "light" | "dark" | "system")
-            }
+            value={mounted ? theme : "system"}
+            onValueChange={(value) => {
+              const nextTheme = value as "light" | "dark" | "system";
+              setTheme(nextTheme);
+            }}
             onOpenChange={setThemeOpen}
           >
             <SelectTrigger id="theme" className="mt-1">

@@ -20,6 +20,36 @@ export type GrantableAccess = "edit" | "view";
 
 export type MemberScope = "workspace" | "board";
 
+export const ACCESS_ROLE_MAPPING: Record<
+  GrantableAccess,
+  {
+    roleName: "Viewer" | "Employee";
+    appRole: "client" | "staff";
+    canView: true;
+    canEdit: boolean;
+    description: string;
+  }
+> = {
+  view: {
+    roleName: "Viewer",
+    appRole: "client",
+    canView: true,
+    canEdit: false,
+    description: "Can see the board but not make changes",
+  },
+  edit: {
+    roleName: "Employee",
+    appRole: "staff",
+    canView: true,
+    canEdit: true,
+    description: "Can add, edit and delete items, columns and groups",
+  },
+};
+
+export function isGrantableAccess(value: unknown): value is GrantableAccess {
+  return value === "view" || value === "edit";
+}
+
 export interface Member {
   user_id: string;
   name: string;
@@ -73,12 +103,12 @@ export const ACCESS_OPTIONS: {
   {
     value: "view",
     label: "View",
-    description: "Can see the board but not make changes",
+    description: ACCESS_ROLE_MAPPING.view.description,
   },
   {
     value: "edit",
     label: "Edit",
-    description: "Can add, edit and delete items, columns and groups",
+    description: ACCESS_ROLE_MAPPING.edit.description,
   },
 ];
 
