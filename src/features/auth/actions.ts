@@ -90,7 +90,16 @@ export async function signInWithEmail(formData: FormData) {
 
   await recordLogin(supabase);
 
-  redirect("/workspace");
+  await supabase.auth.getUser();
+
+  // Resolve the new session's workspaces on the same client instance so
+  // `auth.uid()` (used by get_my_workspaces()) sees the session just created.
+  const { data: wsRows } = await supabase.rpc("get_my_workspaces");
+  const workspaces: Array<{ id: string }> = (wsRows ?? []).map(
+    (w: { id: string }) => ({ id: w.id }),
+  );
+
+  return { workspaces };
 }
 
 /**

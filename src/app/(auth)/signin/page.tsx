@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { AlertTriangle } from "lucide-react";
 
@@ -16,12 +17,27 @@ type FieldErrors = {
   password?: string;
 };
 
+/** Same-origin, path-absolute check mirrored from the auth actions. */
+function isSafeRedirect(next: string): boolean {
+  return next.startsWith("/") && !next.startsWith("//") && !next.startsWith("/\\");
+}
+
 export default function SignInPage() {
+  return (
+    <React.Suspense fallback={null}>
+      <SignInPageContent />
+    </React.Suspense>
+  );
+}
+
+function SignInPageContent() {
   const [isPending, startTransition] = React.useTransition();
   const [error, setError] = React.useState<string | null>(null);
   const [success, setSuccess] = React.useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = React.useState<FieldErrors>({});
   const [rememberMe, setRememberMe] = React.useState(false);
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -65,7 +81,24 @@ export default function SignInPage() {
         if (result.unverified) {
           setError("Please verify your email before signing in");
         }
+        return;
       }
+
+      // Go to the last visited workspace overview, or the first workspace the
+      // user is a member of. With no memberships, send them to the empty-state
+      // page rather than a shell with nothing in it.
+      const workspaces: Array<{ id: string }> = (result?.workspaces ?? []) as Array<{ id: string }>;
+      const next = searchParams.get("next");
+      const recent = localStorage.getItem("workspace-recent");
+      const recentWorkspace = recent ? workspaces.find((w) => w.id === recent) : null;
+
+      const target =
+        (next && isSafeRedirect(next) ? next : null) ||
+        (recentWorkspace ? `/workspaces/${recentWorkspace.id}/overview` : null) ||
+        (workspaces[0] ? `/workspaces/${workspaces[0].id}/overview` : null) ||
+        "/access-required";
+
+      router.push(target);
     });
   };
 

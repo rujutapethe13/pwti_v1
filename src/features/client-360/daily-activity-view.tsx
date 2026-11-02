@@ -220,7 +220,9 @@ export function Client360DailyActivityView({
         }
         if (res.data) {
           setData(res.data);
-          setSelectedDate(res.data.selectedDate);
+          setSelectedDate(res.data.selectedDate ?? date);
+        } else {
+          setData(null);
         }
         if (tasksRes.data) {
           setTasksData(tasksRes.data);
@@ -1246,14 +1248,14 @@ export function Client360DailyActivityView({
                 </ResponsiveContainer>
               </div>
               <p className="text-muted-foreground mt-2 text-center text-[11px]">
-                {formatFullDate(data.start)} → {formatFullDate(data.end)}, all sources
+                {formatFullDate(data?.start ?? selectedDate)} → {formatFullDate(data?.end ?? selectedDate)}, all sources
                 combined
               </p>
             </CardContent>
           </Card>
 
           {/* Unmapped boards notice */}
-          {data.unmapped_boards > 0 && (
+          {data?.unmapped_boards && data.unmapped_boards > 0 && (
             <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
               <span>

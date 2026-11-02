@@ -33,7 +33,18 @@ export async function fetchClient360DailyActivityAction(
     const reason = err instanceof Error ? err.message : String(err);
     console.error("Client 360 daily activity fetch failed:", err);
     return {
-      data: null,
+      data: {
+        selectedDate: options.selectedDate ?? "",
+        start: options.selectedDate ?? "",
+        end: options.selectedDate ?? "",
+        total_jobs: 0,
+        clients_active: 0,
+        boards_touched: 0,
+        busiest_client: null,
+        clients: [],
+        daily_breakdown: [],
+        unmapped_boards: 0,
+      },
       error: `Failed to fetch daily activity data: ${reason}`,
       status: 500,
     };

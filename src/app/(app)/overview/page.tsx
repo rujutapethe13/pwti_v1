@@ -46,6 +46,8 @@ import { useUser } from "@/lib/user-context";
 import { BoardSelector, type OverviewBoard } from "@/features/overview/board-selector";
 import { Skeleton } from "@/components/shared/skeleton";
 
+const ENABLE_OVERVIEW_DRILLDOWN = true;
+
 const iconMap: Record<string, typeof CheckCheck> = {
   CheckCheck,
   ListChecks,
@@ -301,11 +303,6 @@ function OverviewPage() {
         }
       }
       setData(json);
-
-      if (drillRes && drillRes.ok) {
-        const drillJson = (await drillRes.json()) as OverviewDrilldownPayload;
-        setDrilldownData(drillJson);
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {

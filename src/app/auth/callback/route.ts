@@ -25,8 +25,6 @@ export async function GET(request: NextRequest) {
     ? new URLSearchParams(hash).get("token_hash")
     : null;
 
-  const next = isSafeRedirect(nextParam) ? nextParam : "/workspace";
-
   if (!code && !tokenHash) {
     return NextResponse.redirect(
       new URL(
@@ -51,10 +49,21 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  // A session now exists, so stamp last_login_at. `signInWithEmail` does the
-  // same for password sign-in; this is the OAuth / email-confirmation path.
-  // Failures are logged rather than surfaced — a missing timestamp must not
-  // block the redirect into the app.
+  // Default destination after login: the first workspace the user is a member
+  // of, resolved on the same client instance so auth.uid() sees the session
+  // just created. Fall back to the access-required empty state for users with
+  // no memberships.
+  let fallback = "/workspace";
+  try {
+    const { data: wsRows } = await supabase.rpc("get_my_workspaces");
+    const workspaces = wsRows ?? [];
+    fallback =
+      workspaces.length > 0 ? `/workspaces/${workspaces[0].id}/overview` : "/access-required";
+  } catch {
+    // Keep the generic fallback if the workspace lookup fails.
+  }
+
+  // A session now exists, so stamp last_login_at. ...
   const { error: activityError } = await supabase.rpc("touch_user_activity", {
     p_is_login: true,
   });
@@ -62,6 +71,7 @@ export async function GET(request: NextRequest) {
     console.error("[auth/callback] could not record last login:", activityError.message);
   }
 
+  const next = isSafeRedirect(nextParam) ? nextParam : fallback;
   return NextResponse.redirect(new URL(next, request.url));
 }
 
