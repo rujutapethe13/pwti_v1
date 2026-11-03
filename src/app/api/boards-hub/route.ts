@@ -3,7 +3,32 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
-import { isOwnerEmail, canManageWorkspace } from "@/lib/board-access";
+
+interface BoardRow {
+  id: string;
+  name: string;
+  slug: string | null;
+  created_at: string;
+  is_restricted: boolean | null;
+  workspace_id: string;
+}
+
+interface WorkspaceRow {
+  id: string;
+  name: string;
+  owner_id: string | null;
+}
+
+interface MembershipRow {
+  workspace_id: string;
+  role: string | null;
+  can_edit: boolean | null;
+}
+
+interface OverrideRow {
+  board_id: string;
+  access: string | null;
+}
 
 export async function GET(_request: NextRequest) {
   const supabase = await createClient(await cookies());
@@ -19,124 +44,80 @@ export async function GET(_request: NextRequest) {
     );
   }
 
-  const userEmail = user.email ?? "";
-  const ownerView = isOwnerEmail(userEmail);
-
   try {
-    const { data: memberships } = await supabase
-      .from("workspace_members")
-      .select("workspace_id, role_id")
-      .eq("user_id", user.id);
-
-    if (!memberships || memberships.length === 0) {
-      return NextResponse.json([]);
-    }
-
-    const workspaceIds = memberships.map((m) => m.workspace_id);
-
     const svc = await createServiceClient();
 
-    // Pre-compute admin status per workspace (owner has it everywhere)
-    const adminWorkspaces = new Set<string>();
-    if (ownerView) {
-      for (const wsId of workspaceIds) adminWorkspaces.add(wsId);
-    } else {
-      for (const wsId of workspaceIds) {
-        if (await canManageWorkspace(user.id, wsId)) {
-          adminWorkspaces.add(wsId);
-        }
-      }
-    }
-
+    // ── Every workspace in the app, regardless of membership ──────────────
     const { data: workspaces } = await svc
       .from("workspaces")
-      .select("id, name")
-      .in("id", workspaceIds)
+      .select("id, name, owner_id")
       .order("name");
 
-    if (!workspaces) {
-      return NextResponse.json([]);
-    }
+    const workspaceById = new Map(
+      (workspaces ?? []).map((w: WorkspaceRow) => [w.id, w]),
+    );
 
-    const allBoardIds: string[] = [];
-    const workspaceWithBoards: Array<{
-      id: string;
-      name: string;
-      boards: Array<{
-        id: string;
-        name: string;
-        slug: string;
-        created_at: string;
-        is_restricted: boolean;
-      }>;
-    }> = [];
+    // ── The caller's workspace memberships (used for the access state) ────
+    const { data: memberships } = await svc
+      .from("workspace_members")
+      .select("workspace_id, role, can_edit")
+      .eq("user_id", user.id);
 
-    for (const ws of workspaces) {
-      // Archived boards are soft-deleted: they must not appear in
-      // any list. The archive/trash surface is the only place they
-      // are meant to show.
-      const { data: boards } = await svc
-        .from("boards")
-        .select("id, name, slug, created_at, is_restricted")
-        .eq("workspace_id", ws.id)
-        .neq("status", "archived")
-        .order("created_at", { ascending: true });
-
-      if (boards && boards.length > 0) {
-        allBoardIds.push(...boards.map((b) => b.id));
-        workspaceWithBoards.push({ id: ws.id, name: ws.name, boards });
+    const memberWorkspaces = new Set<string>();
+    const adminWorkspaces = new Set<string>();
+    for (const m of (memberships ?? []) as MembershipRow[]) {
+      memberWorkspaces.add(m.workspace_id);
+      if (
+        m.role === "admin" ||
+        m.role === "staff" ||
+        m.can_edit === true
+      ) {
+        adminWorkspaces.add(m.workspace_id);
       }
     }
 
-    // Fetch access overrides for this user across all relevant boards
-    let overrides: Array<{ board_id: string; access: string }> = [];
-    let requests: Array<{ board_id: string; status: string }> = [];
+    // ── Every non-archived board in the app ───────────────────────────────
+    const { data: allBoards } = await svc
+      .from("boards")
+      .select("id, name, slug, created_at, is_restricted, workspace_id")
+      .neq("status", "archived")
+      .order("created_at", { ascending: true });
 
+    // ── Explicit board grants for this caller ─────────────────────────────
+    const allBoardIds = (allBoards ?? []).map((b: BoardRow) => b.id);
+    const grantedBoardIds = new Set<string>();
     if (allBoardIds.length > 0) {
-      const { data: ov } = await svc
+      const { data: overrides } = await svc
         .from("board_access_overrides")
         .select("board_id, access")
         .in("board_id", allBoardIds)
         .eq("user_id", user.id);
-
-      overrides = ov ?? [];
-
-      const { data: req } = await svc
-        .from("board_access_requests")
-        .select("board_id, status")
-        .in("board_id", allBoardIds)
-        .eq("user_id", user.id);
-
-      requests = req ?? [];
+      for (const o of (overrides ?? []) as OverrideRow[]) {
+        if (o.access === "granted") grantedBoardIds.add(o.board_id);
+      }
     }
 
-    const grantedBoardIds = new Set(
-      overrides.filter((o) => o.access === "granted").map((o) => o.board_id),
-    );
-    const requestedBoardIds = new Set(
-      requests
-        .filter((r) => r.status === "pending" || r.status === "approved")
-        .map((r) => r.board_id),
-    );
+    const result = (workspaces ?? []).map((ws: WorkspaceRow) => {
+      const boards = (allBoards ?? [])
+        .filter((b: BoardRow) => b.workspace_id === ws.id)
+        .map((b: BoardRow) => {
+          const restricted = !!b.is_restricted;
+          const isWorkspaceOwner = ws.owner_id === user.id;
+          const isWorkspaceAdmin =
+            isWorkspaceOwner || adminWorkspaces.has(ws.id);
+          const granted = grantedBoardIds.has(b.id);
+          const allowed = !restricted || isWorkspaceAdmin || granted;
 
-    const result = workspaces.map((ws) => {
-      const boards = workspaceWithBoards
-        .find((w) => w.id === ws.id)
-        ?.boards ?? [];
-
-      const isWorkspaceAdmin = adminWorkspaces.has(ws.id);
-
-      return {
-        id: ws.id,
-        name: ws.name,
-        is_admin: isWorkspaceAdmin,
-        boards: boards.map((b) => {
-          const restricted = b.is_restricted ?? false;
-          const isOwner = ownerView || isWorkspaceAdmin;
-
-          // Owner/admins always have access — no lock, no request flow
-          const allowed = isOwner || !restricted || grantedBoardIds.has(b.id);
-          const requested = requestedBoardIds.has(b.id);
+          let accessState: "Open" | "Member" | "Request access" | "Locked";
+          if (!restricted) {
+            accessState = "Open";
+          } else if (allowed) {
+            accessState = "Member";
+          } else if (memberWorkspaces.has(ws.id)) {
+            accessState = "Request access";
+          } else {
+            accessState = "Locked";
+          }
 
           return {
             id: b.id,
@@ -146,10 +127,16 @@ export async function GET(_request: NextRequest) {
             created_by: null,
             is_restricted: restricted,
             allowed,
-            requested,
-            is_admin: isOwner,
+            is_admin: isWorkspaceAdmin,
+            access_state: accessState,
           };
-        }),
+        });
+
+      return {
+        id: ws.id,
+        name: ws.name,
+        is_admin: ws.owner_id === user.id || adminWorkspaces.has(ws.id),
+        boards,
       };
     });
 

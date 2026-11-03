@@ -59,18 +59,25 @@ export function WorkspaceSwitcher({
 
   useEffect(() => {
     let cancelled = false;
-    listUserWorkspaces()
-      .then((list) => {
+
+    const refresh = async () => {
+      if (cancelled) return;
+      try {
+        const list = await listUserWorkspaces();
         if (cancelled) return;
         setWorkspaces(list);
         if (!active && list.length > 0) setActive(list[0]);
-      })
-      .catch((err) => {
+      } catch (err) {
         if (cancelled) return;
         setError(err instanceof Error ? err.message : "Failed to load workspaces");
-      });
+      }
+    };
+
+    refresh();
+    window.addEventListener("pw:workspaces-membership-changed", refresh);
     return () => {
       cancelled = true;
+      window.removeEventListener("pw:workspaces-membership-changed", refresh);
     };
   }, []);
 

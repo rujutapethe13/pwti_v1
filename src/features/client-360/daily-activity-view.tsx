@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useUser } from "@/lib/user-context";
 import {
   CalendarDays,
   ChevronLeft,
@@ -23,9 +24,9 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { toast } from "sonner";
-import { fetchActivityAction, fetchClient360DailyActivityAction } from "./daily-activity-action";
+import { fetchActivityAction, fetchClient360DailyActivityAction, fetchActivityTasksAction } from "./daily-activity-action";
 import { ActivityDrilldownPanel } from "./activity-drilldown-panel";
-import type { ActivityData, ActivityMode, Client360DailyActivity } from "./types";
+import type { ActivityData, ActivityItem, ActivityMode, Client360DailyActivity } from "./types";
 import { formatPeriodLabel, getTodayISO } from "./date-format";
 import {
   LineChart,
@@ -119,6 +120,9 @@ export function Client360DailyActivityView({
   const [data, setData] = useState<Client360DailyActivity | null>(null);
   const [tasksData, setTasksData] = useState<ActivityTasksResponse | null>(null);
   const [daySelectorStartIdx, setDaySelectorStartIdx] = useState(0);
+  const [workspaceFilter, setWorkspaceFilter] = useState<string>("all");
+
+  const { user } = useUser();
 
   // Additive state for Due mode, row-vs-SKU count metric, and inline Day details panel
   const [activityMode, setActivityMode] = useState<ActivityMode>("received");
@@ -349,6 +353,61 @@ export function Client360DailyActivityView({
   const yAxisMax = yAxisTicks[yAxisTicks.length - 1] ?? 4;
 
   const periodLabel = data ? formatPeriodLabel(selectedDate, selectedDate) : "—";
+
+  // ── Workspace filter + today's assigned work ──────────────────────────
+  // `get_activity_tasks` already scopes rows to workspaces/boards the caller
+  // may see, so nothing inaccessible ever reaches this list.
+  const allWorkspaces = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of (tasksData?.items ?? [])) {
+      if (it.workspace_id && it.workspace_name) {
+        map.set(it.workspace_id, it.workspace_name);
+      }
+    }
+    return Array.from(map.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [tasksData]);
+
+  const userName = (user?.fullName ?? "").trim();
+  const userEmail = (user?.email ?? "").trim().toLowerCase();
+  const hasUserIdentity = Boolean(userName || userEmail);
+
+  const todayItems = useMemo(() => {
+    return (tasksData?.items ?? []).filter((it) => {
+      if (workspaceFilter !== "all" && it.workspace_id !== workspaceFilter) {
+        return false;
+      }
+      const isToday =
+        it.received_at === selectedDate ||
+        it.due_date === selectedDate ||
+        it.bucket === "Due today";
+      const isMine =
+        hasUserIdentity &&
+        it.assignee_name &&
+        (it.assignee_name === userName ||
+          it.assignee_name.toLowerCase() === userEmail);
+      return isToday || isMine;
+    });
+  }, [tasksData, workspaceFilter, selectedDate, userName, userEmail, hasUserIdentity]);
+
+  const itemsByWorkspace = useMemo(() => {
+    const byWs = new Map<string, Map<string, ActivityItem[]>>();
+    for (const it of todayItems) {
+      let byBoard = byWs.get(it.workspace_name ?? "Unknown workspace");
+      if (!byBoard) {
+        byBoard = new Map();
+        byWs.set(it.workspace_name ?? "Unknown workspace", byBoard);
+      }
+      let arr = byBoard.get(it.board_name ?? "Untitled board");
+      if (!arr) {
+        arr = [];
+        byBoard.set(it.board_name ?? "Untitled board", arr);
+      }
+      arr.push(it);
+    }
+    return byWs;
+  }, [todayItems]);
   const statAccent = {
     tealText: isDashboard ? "text-[#0073ea] dark:text-blue-400" : "text-[hsl(var(--soft-teal-text))]",
     tealBg: isDashboard ? "bg-[#e6f1fd] dark:bg-blue-500/15" : "bg-[hsl(var(--soft-teal-bg))]",
@@ -722,6 +781,84 @@ export function Client360DailyActivityView({
               </CardContent>
             </Card>
           </div>}
+
+          {/* ── Today's assigned work ─────────────────────────────────── */}
+          {tasksData && (
+            <Card className="overflow-hidden rounded-lg border border-border">
+              <CardContent className="px-4 py-3">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-3">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Assigned today · {selectedDate}
+                  </h3>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground">Workspace</label>
+                    <select
+                      value={workspaceFilter}
+                      onChange={(e) => setWorkspaceFilter(e.target.value)}
+                      className="text-xs border rounded px-2 py-1 bg-background"
+                    >
+                      <option value="all">All workspaces</option>
+                      {allWorkspaces.map((ws) => (
+                        <option key={ws.id} value={ws.id}>
+                          {ws.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                {todayItems.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-4">
+                    No assigned work for this workspace on {selectedDate}.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {Array.from(itemsByWorkspace.entries()).map(([wsName, byBoard]) => (
+                      <section key={wsName} className="space-y-1">
+                        <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider px-2">
+                          {wsName}
+                        </h4>
+                        {Array.from(byBoard.entries()).map(([boardName, items]) => (
+                          <div key={boardName} className="border rounded-md px-3 py-2">
+                            <p className="text-xs font-medium truncate">{boardName}</p>
+                            <ul className="mt-1 space-y-1">
+                              {items.map((it) => (
+                                <li key={it.item_id} className="flex items-center gap-2 text-xs">
+                                  <span className="w-20 truncate">{it.job_name}</span>
+                                  {it.assignee_name && (
+                                    <span className="truncate">{it.assignee_name}</span>
+                                  )}
+                                  <span className="text-muted-foreground">
+                                    {it.status ?? "—"}
+                                  </span>
+                                  {it.due_date && (
+                                    <span
+                                      className={cn(
+                                        "text-xs font-semibold",
+                                        it.bucket === "Overdue"
+                                          ? "text-destructive"
+                                          : it.bucket === "Due today"
+                                            ? "text-amber-600 dark:text-amber-400"
+                                            : "text-muted-foreground",
+                                      )}
+                                    >
+                                      {it.due_date}
+                                    </span>
+                                  )}
+                                  <span className="text-[10px] rounded bg-muted px-1.5 py-0.5">
+                                    {it.bucket}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </section>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {drilldownCard && drilldownData && !drilldownLoading && (
             <ActivityDrilldownPanel

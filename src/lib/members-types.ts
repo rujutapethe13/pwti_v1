@@ -15,21 +15,36 @@
 
 export type AccessRole = "owner" | "edit" | "view";
 
-/** What a member can be granted from the dialog. "owner" is not grantable. */
-export type GrantableAccess = "edit" | "view";
+/** What a member can be granted from the dialog. "owner" is grantable by an
+ * existing owner, and makes the grantee a second (or further) workspace owner. */
+export type GrantableAccess = "owner" | "edit" | "view";
 
 export type MemberScope = "workspace" | "board";
 
 export const ACCESS_ROLE_MAPPING: Record<
   GrantableAccess,
   {
-    roleName: "Viewer" | "Employee";
-    appRole: "client" | "staff";
+    roleName: "Owner" | "Admin" | "Member" | "Viewer";
+    appRole: "client" | "staff" | "admin";
     canView: true;
     canEdit: boolean;
     description: string;
   }
 > = {
+  owner: {
+    roleName: "Owner",
+    appRole: "admin",
+    canView: true,
+    canEdit: true,
+    description: "Full workspace access, including managing members and billing",
+  },
+  edit: {
+    roleName: "Admin",
+    appRole: "staff",
+    canView: true,
+    canEdit: true,
+    description: "Can add, edit and delete items, columns and groups",
+  },
   view: {
     roleName: "Viewer",
     appRole: "client",
@@ -37,17 +52,10 @@ export const ACCESS_ROLE_MAPPING: Record<
     canEdit: false,
     description: "Can see the board but not make changes",
   },
-  edit: {
-    roleName: "Employee",
-    appRole: "staff",
-    canView: true,
-    canEdit: true,
-    description: "Can add, edit and delete items, columns and groups",
-  },
 };
 
 export function isGrantableAccess(value: unknown): value is GrantableAccess {
-  return value === "view" || value === "edit";
+  return value === "owner" || value === "view" || value === "edit";
 }
 
 export interface Member {
@@ -101,14 +109,19 @@ export const ACCESS_OPTIONS: {
   description: string;
 }[] = [
   {
-    value: "view",
-    label: "View",
-    description: ACCESS_ROLE_MAPPING.view.description,
+    value: "owner",
+    label: "Owner",
+    description: ACCESS_ROLE_MAPPING.owner.description,
   },
   {
     value: "edit",
-    label: "Edit",
+    label: "Admin",
     description: ACCESS_ROLE_MAPPING.edit.description,
+  },
+  {
+    value: "view",
+    label: "Viewer",
+    description: ACCESS_ROLE_MAPPING.view.description,
   },
 ];
 

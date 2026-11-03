@@ -49,6 +49,13 @@ const cache = new Map<string, ScopeState>();
 const inFlight = new Map<string, Promise<void>>();
 const listeners = new Map<string, Set<() => void>>();
 
+/** Cross-tab signal that membership changed, so the workspace switcher and any
+ * other mounted shell UI can refresh immediately. */
+export function notifyMembershipChanged() {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent("pw:workspaces-membership-changed"));
+}
+
 function scopeKey(
   scope: MemberScope,
   workspaceId: string | null,
@@ -269,6 +276,7 @@ export async function addMember(input: {
   if (!response.ok) throw new Error(await readError(response, "Could not add that member"));
 
   const payload = (await response.json().catch(() => null)) as { invited?: boolean } | null;
+  notifyMembershipChanged();
   return { invited: payload?.invited === true };
 }
 
@@ -293,6 +301,7 @@ export async function setMemberAccess(input: {
   });
 
   if (!response.ok) throw new Error(await readError(response, "Could not update access"));
+  notifyMembershipChanged();
 }
 
 /** Board scope only: drop the override so the workspace role applies again. */
@@ -314,6 +323,7 @@ export async function clearBoardOverride(input: {
   });
 
   if (!response.ok) throw new Error(await readError(response, "Could not update access"));
+  notifyMembershipChanged();
 }
 
 export async function removeMember(input: {
@@ -334,24 +344,27 @@ export async function removeMember(input: {
   });
 
   if (!response.ok) throw new Error(await readError(response, "Could not remove that member"));
+  notifyMembershipChanged();
 }
 
 export async function resendInvite(workspaceId: string, code: string) {
   const response = await fetch("/api/members", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action: "resend_invite", workspace_id: workspaceId, code }),
-  });
+      body: JSON.stringify({ action: "resend_invite", workspace_id: workspaceId, code }),
+    });
 
   if (!response.ok) throw new Error(await readError(response, "Could not resend that invite"));
+  notifyMembershipChanged();
 }
 
 export async function cancelInvite(workspaceId: string, code: string) {
   const response = await fetch("/api/members", {
     method: "DELETE",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ scope: "workspace", workspace_id: workspaceId, code }),
-  });
+      body: JSON.stringify({ scope: "workspace", workspace_id: workspaceId, code }),
+    });
 
   if (!response.ok) throw new Error(await readError(response, "Could not cancel that invite"));
+  notifyMembershipChanged();
 }

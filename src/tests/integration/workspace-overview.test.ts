@@ -180,6 +180,30 @@ describe("GET /api/workspaces/[workspaceId]/overview", () => {
     expect(json.data.activity[0].title).toBe("Job A");
   });
 
+  it("returns the full overview for a new owner", async () => {
+    rpcResults.set("resolve_workspace_access", { data: "owner", error: null });
+    tableResults.set("workspaces", {
+      data: { id: workspaceId, name: "Acme Co", slug: "acme-co", description: null },
+      error: null,
+    });
+    tableResults.set("boards", {
+      data: [{ id: "b-1", name: "Jobs board", slug: "jobs-board", created_at: "2026-01-01T00:00:00.000Z" }],
+      error: null,
+    });
+    tableResults.set("records", { data: [], error: null });
+    rpcResults.set("list_workspace_members", { data: [], error: null });
+    tableResults.set("activity_logs", { data: [], error: null });
+
+    const response = await GET(createMockRequest(`http://localhost/api/workspaces/${workspaceId}/overview`), {
+      params: Promise.resolve({ workspaceId }),
+    } as { params: Promise<{ workspaceId: string }> });
+    expect(response.status).toBe(200);
+
+    const json = await response.json();
+    expect(json.error).toBeUndefined();
+    expect(json.data.workspace.role).toBe("Owner");
+  });
+
   it("returns 403 for a non-member", async () => {
     rpcResults.set("resolve_workspace_access", { data: null, error: null });
 

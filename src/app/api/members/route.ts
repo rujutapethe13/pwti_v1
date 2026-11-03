@@ -75,6 +75,7 @@ interface WorkspaceMemberRow {
   user_id: string;
   role: string;
   can_edit: boolean;
+  is_owner: boolean;
 }
 
 interface OverrideRow {
@@ -146,23 +147,6 @@ async function resolveUserByEmail(
   return null;
 }
 
-async function resolveRoleIdForAccess(
-  svc: Awaited<ReturnType<typeof createServiceClient>>,
-  access: GrantableAccess,
-): Promise<string | null> {
-  const targetName = access === "edit" ? "Employee" : "Viewer";
-  const { data } = await svc
-    .from("roles")
-    .select("id, name")
-    .ilike("name", targetName)
-    .limit(1);
-
-  if (data && data.length > 0 && data[0].id) {
-    return data[0].id as string;
-  }
-  return null;
-}
-
 /** Workspace members with their resolved display role. */
 async function loadWorkspaceMembers(
   workspaceId: string,
@@ -171,7 +155,7 @@ async function loadWorkspaceMembers(
 
   const { data: rows, error } = await svc
     .from("workspace_members")
-    .select("user_id, role, can_edit")
+    .select("user_id, role, can_edit, is_owner")
     .eq("workspace_id", workspaceId);
 
   if (error) throw new Error(error.message);
@@ -237,9 +221,13 @@ async function loadWorkspaceMembers(
     return {
       user_id: id,
       ...describe(id, "User"),
-      role: (row.role === "admin" || row.role === "staff" || row.can_edit
-        ? "edit"
-        : "view") as AccessRole,
+      role: (
+        row.is_owner
+          ? "owner"
+          : row.role === "admin" || row.role === "staff" || row.can_edit
+            ? "edit"
+            : "view"
+      ) as AccessRole,
       status: "active",
       inherited: true,
       joined_at: joinedAt.get(id) ?? null,
@@ -561,7 +549,7 @@ export async function POST(request: NextRequest) {
 
       const { data: existingMember } = await svc
         .from("workspace_members")
-        .select("id")
+        .select("user_id, is_owner")
         .eq("workspace_id", workspaceId)
         .eq("user_id", existingUser.id)
         .maybeSingle();
@@ -571,16 +559,15 @@ export async function POST(request: NextRequest) {
       }
 
       if (!existingMember) {
-        const roleId = await resolveRoleIdForAccess(svc, access);
         const { error: insertMemberErr } = await svc
           .from("workspace_members")
           .insert({
             user_id: existingUser.id,
             workspace_id: workspaceId,
-            ...(roleId ? { role_id: roleId } : {}),
-            role: access === "edit" ? "staff" : "client",
+            role: access === "owner" ? "admin" : access === "edit" ? "staff" : "client",
             can_view: true,
-            can_edit: access === "edit",
+            can_edit: access !== "view",
+            is_owner: access === "owner",
           });
 
         if (insertMemberErr) throw new Error(insertMemberErr.message);
@@ -592,7 +579,7 @@ export async function POST(request: NextRequest) {
               {
                 organization_id: organizationId,
                 user_id: existingUser.id,
-                role: "member",
+                role: access === "owner" ? "admin" : "member",
               },
               { onConflict: "organization_id,user_id", ignoreDuplicates: true },
             );
@@ -650,8 +637,9 @@ export async function POST(request: NextRequest) {
       const { error: updateInviteErr } = await svc
         .from("workspace_invites")
         .update({
-          role: access === "edit" ? "staff" : "client",
-          can_edit: access === "edit",
+          role: access === "owner" ? "staff" : access === "edit" ? "staff" : "client",
+          can_edit: access !== "view",
+          is_owner: access === "owner",
           created_at: new Date().toISOString(),
           expires_at: nextExpiry,
         })
@@ -666,8 +654,9 @@ export async function POST(request: NextRequest) {
           code,
           workspace_id: workspaceId,
           email,
-          role: access === "edit" ? "staff" : "client",
-          can_edit: access === "edit",
+          role: access === "owner" ? "staff" : access === "edit" ? "staff" : "client",
+          can_edit: access !== "view",
+          is_owner: access === "owner",
           created_by: user.id,
           expires_at: nextExpiry,
         });
@@ -798,18 +787,32 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ success: true, access });
     }
 
-    const roleId = await resolveRoleIdForAccess(svc, access);
+    // Demoting an owner must never leave the workspace without one.
+    if (access !== "owner") {
+      const { data: ownerRows } = await svc
+        .from("workspace_members")
+        .select("user_id")
+        .eq("workspace_id", workspaceId)
+        .eq("is_owner", true);
+      const isDemotingOwner = (ownerRows ?? []).some(
+        (row) => (row as { user_id: string }).user_id === userId,
+      );
+      if (isDemotingOwner && (ownerRows ?? []).length <= 1) {
+        return fail("Cannot demote the last owner", 400);
+      }
+    }
+
     const { data: updatedRows, error } = await svc
       .from("workspace_members")
       .update({
-        ...(roleId ? { role_id: roleId } : {}),
-        role: access === "edit" ? "staff" : "client",
+        role: access === "owner" ? "admin" : access === "edit" ? "staff" : "client",
         can_view: true,
-        can_edit: access === "edit",
+        can_edit: access !== "view",
+        is_owner: access === "owner",
       })
       .eq("workspace_id", workspaceId)
       .eq("user_id", userId)
-      .select("id");
+      .select("user_id");
 
     if (error) throw new Error(error.message);
     if (!updatedRows || updatedRows.length === 0) {
@@ -895,6 +898,19 @@ export async function DELETE(request: NextRequest) {
 
     if (ws?.owner_id === userId) {
       return fail("The workspace owner cannot be removed", 400);
+    }
+
+    // Removing an owner must never leave the workspace without one.
+    const { data: ownerRows } = await svc
+      .from("workspace_members")
+      .select("user_id, is_owner")
+      .eq("workspace_id", resolvedWorkspaceId)
+      .eq("is_owner", true);
+    const isRemovingOwner = (ownerRows ?? []).some(
+      (row) => (row as { user_id: string }).user_id === userId,
+    );
+    if (isRemovingOwner && (ownerRows ?? []).length <= 1) {
+      return fail("Cannot remove the last owner", 400);
     }
 
     const { error } = await svc

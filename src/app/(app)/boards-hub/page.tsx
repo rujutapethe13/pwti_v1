@@ -12,6 +12,7 @@ import {
   Clock,
   Shield,
   ShieldOff,
+  Star,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -34,6 +35,7 @@ interface Board {
   allowed: boolean;
   requested: boolean;
   is_admin: boolean;
+  access_state: "Open" | "Member" | "Request access" | "Locked";
 }
 
 interface WorkspaceGroup {
@@ -207,8 +209,8 @@ export default function BoardsHubPage() {
   }
 
   const renderAccessCell = (board: Board) => {
+    // Workspace admin: restrict/unrestrict toggle (member boards only).
     if (board.is_admin) {
-      // Owner/admin: show restrict/unrestrict toggle
       const restrictError = restrictErrors.get(board.id);
       return (
         <div className="flex items-center gap-2">
@@ -246,17 +248,31 @@ export default function BoardsHubPage() {
       );
     }
 
-    // Non-admin user
-    if (!board.is_restricted) {
-      // Open board — access granted
-      return (
-        <Badge className="bg-green-50 text-green-700 border-green-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800/60">
-          Open access
-        </Badge>
-      );
+    const stateBadge = (label: string, kind: "open" | "member" | "locked") => (
+      <span
+        className={cn(
+          "inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-xs font-semibold",
+          kind === "open"
+            ? "bg-green-50 text-green-700 border-green-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800/60"
+            : kind === "member"
+              ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/50 dark:text-blue-300 dark:border-blue-800/60"
+              : "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/60",
+        )}
+      >
+        {kind === "open" && <Unlock className="size-3" aria-hidden="true" />}
+        {kind !== "open" && <Lock className="size-3" aria-hidden="true" />}
+        {label}
+      </span>
+    );
+
+    if (board.access_state === "Open") {
+      return stateBadge("Open", "open");
     }
 
-    // Restricted board
+    if (board.access_state === "Member") {
+      return stateBadge("Member", "member");
+    }
+
     if (board.requested) {
       return (
         <span className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-0.5 text-xs font-semibold text-muted-foreground">
@@ -266,20 +282,24 @@ export default function BoardsHubPage() {
       );
     }
 
-    return (
-      <Button
-        variant="outline"
-        size="sm"
-        className="h-7 px-2.5 text-xs"
-        disabled={requestPending.current.get(board.id)}
-        onClick={(e) => {
-          e.stopPropagation();
-          handleRequestAccess(board.id);
-        }}
-      >
-        Request access
-      </Button>
-    );
+    if (board.access_state === "Request access") {
+      return (
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-7 px-2.5 text-xs"
+          disabled={requestPending.current.get(board.id)}
+          onClick={(e) => {
+            e.stopPropagation();
+            handleRequestAccess(board.id);
+          }}
+        >
+          Request access
+        </Button>
+      );
+    }
+
+    return stateBadge("Locked", "locked");
   };
 
   return (
@@ -370,15 +390,21 @@ export default function BoardsHubPage() {
                                   </div>
                                 </td>
                                 <td className="px-4 py-3">
-                                  <FavoriteStar
-                                    itemId={board.id}
-                                    itemType="board"
-                                    isFavorited={favoritedBoardIds.has(board.id)}
-                                    variant="default"
-                                    onToggle={(favorited) => {
-                                      toggleBoardFavorite(board.id, favorited);
-                                    }}
-                                  />
+                                  {board.allowed ? (
+                                    <FavoriteStar
+                                      itemId={board.id}
+                                      itemType="board"
+                                      isFavorited={favoritedBoardIds.has(board.id)}
+                                      variant="default"
+                                      onToggle={(favorited) => {
+                                        toggleBoardFavorite(board.id, favorited);
+                                      }}
+                                    />
+                                  ) : (
+                                    <span className="text-muted-foreground" aria-hidden="true">
+                                      <Star className="size-4" />
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-muted-foreground">
                                   <div className="flex items-center gap-1.5">
