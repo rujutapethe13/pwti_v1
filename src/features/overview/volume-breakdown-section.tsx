@@ -477,12 +477,12 @@ export function VolumeBreakdownSection({
           {breakdown.grouping.available ? (
             <>
               <p className="text-muted-foreground text-[11px] leading-snug">
-                Shares are of the {formatVolume(breakdown.totalVolume)} volume received
-                between {data?.range.from} and {data?.range.to}.
-                {breakdown.rolledUp
-                  ? ` Smaller job types are grouped under ${OTHER_LABEL}.`
-                  : ""}
-              </p>
+                 Shares are of the {formatVolume(breakdown.totalVolume)} volume received
+                 between {data?.range.from} and {data?.range.to}.
+                 {breakdown.categoryCount > 0
+                   ? ` ${breakdown.categoryCount} job type${breakdown.categoryCount === 1 ? "" : "s"} shown.`
+                   : ""}
+               </p>
               {unclassified ? (
                 <p className="text-muted-foreground text-[11px] leading-snug">
                   {formatVolume(unclassified.volume)} volume across{" "}

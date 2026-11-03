@@ -202,27 +202,25 @@ function OverviewPage() {
     [activeWorkspace],
   );
   const [selectedBoardIds, setSelectedBoardIds] = useState<string[]>([]);
-  const [breakdownBoardIds, setBreakdownBoardIds] = useState<string[]>([]);
   useEffect(() => {
     const all = boards.map((board) => board.id);
     const read = (key: string) => {
       try {
         const saved = JSON.parse(localStorage.getItem(key) ?? "null");
-        return Array.isArray(saved) ? saved.filter((id) => all.includes(id)) : all;
+        if (!Array.isArray(saved)) return all;
+        // Treat saved list as explicit selection; drop stale IDs, include new boards.
+        const savedSet = new Set(saved);
+        return all.filter((id) => savedSet.has(id) || saved.length === 0);
       } catch {
         return all;
       }
     };
-    setSelectedBoardIds(read(`overview-workload-boards-${activeWorkspace?.id ?? ""}`));
-    setBreakdownBoardIds(read(`overview-breakdown-boards-${activeWorkspace?.id ?? ""}`));
+    const saved = read(`overview-boards-${activeWorkspace?.id ?? ""}`);
+    setSelectedBoardIds(saved.length ? saved : all);
   }, [boards, activeWorkspace?.id]);
-  const updateWorkloadBoards = (ids: string[]) => {
+  const updateBoards = (ids: string[]) => {
     setSelectedBoardIds(ids);
-    localStorage.setItem(`overview-workload-boards-${activeWorkspace?.id ?? ""}`, JSON.stringify(ids));
-  };
-  const updateBreakdownBoards = (ids: string[]) => {
-    setBreakdownBoardIds(ids);
-    localStorage.setItem(`overview-breakdown-boards-${activeWorkspace?.id ?? ""}`, JSON.stringify(ids));
+    localStorage.setItem(`overview-boards-${activeWorkspace?.id ?? ""}`, JSON.stringify(ids));
   };
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -289,8 +287,8 @@ function OverviewPage() {
     setError(null);
     try {
       const boardQuery = selectedBoardIds.length ? `&boards=${selectedBoardIds.join(",")}` : "&boards=";
-      const drilldownBoardQuery = breakdownBoardIds.length
-        ? `&boards=${breakdownBoardIds.join(",")}`
+      const drilldownBoardQuery = selectedBoardIds.length
+        ? `&boards=${selectedBoardIds.join(",")}`
         : "&boards=";
       const [res, drilldownRes] = await Promise.all([
         fetch(`/api/overview?${rangeQuery}&range=${rangeId}${boardQuery}`, { cache: "no-store" }),
@@ -323,7 +321,7 @@ function OverviewPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [rangeQuery, rangeId, selectedBoardIds, breakdownBoardIds]);
+  }, [rangeQuery, rangeId, selectedBoardIds]);
 
   useEffect(() => {
     loadData();
@@ -488,8 +486,8 @@ function OverviewPage() {
         rangeId={rangeId}
         customRange={effectiveCustomRange}
         boards={boards}
-        selectedBoardIds={breakdownBoardIds}
-        onBoardChange={updateBreakdownBoards}
+        selectedBoardIds={selectedBoardIds}
+        onBoardChange={updateBoards}
         drilldownItems={drilldownData?.periodItems}
         boardCount={drilldownData?.resolvedSummary.boardsTouched}
         onRefresh={loadData}
@@ -615,7 +613,7 @@ function OverviewPage() {
           <Card className="border-border/60 flex-1 p-6 shadow-none">
             <div className="flex items-start justify-between gap-3">
               <h2 className="text-foreground text-base font-medium tracking-tight">Workload by board</h2>
-              <BoardSelector boards={boards} selectedIds={selectedBoardIds} onChange={updateWorkloadBoards} />
+              <BoardSelector boards={boards} selectedIds={selectedBoardIds} onChange={updateBoards} />
             </div>
             <p className="text-muted-foreground mt-1 text-xs">
               {selectedBoardIds.length} boards · distribution in selected range

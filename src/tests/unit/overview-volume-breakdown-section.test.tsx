@@ -104,9 +104,9 @@ describe("VolumeBreakdownSection", () => {
       ),
     ).toBeInTheDocument();
     expect(legendRows()).toEqual([
-      "Retouching60%60",
-      "Delivery30%30",
-      "Color Grade10%10",
+      "Retouching60.0%60",
+      "Delivery30.0%30",
+      "Color Grade10.0%10",
     ]);
   });
 
@@ -135,7 +135,7 @@ describe("VolumeBreakdownSection", () => {
 
     const rows = await screen.findAllByRole("listitem");
     expect(rows[1]).toHaveTextContent("Unclassified");
-    expect(rows[1]).toHaveTextContent("25%");
+    expect(rows[1]).toHaveTextContent("25.0%");
     expect(
       screen.getByText(/2 jobs has no job type recorded/),
     ).toBeInTheDocument();
@@ -159,7 +159,7 @@ describe("VolumeBreakdownSection", () => {
     expect(screen.getByText("40 volume · 0 job types · last 7 days")).toBeInTheDocument();
   });
 
-  it("discloses that the smallest job types were rolled into Other", async () => {
+  it("shows every job type as its own legend row", async () => {
     respondWith(
       payload({
         total: { volume: 100, jobs: 10 },
@@ -175,9 +175,9 @@ describe("VolumeBreakdownSection", () => {
 
     render(<VolumeBreakdownSection rangeId="7d" />);
 
-    expect(
-      await screen.findByText(/Smaller job types are grouped under Other\./),
-    ).toBeInTheDocument();
+    await screen.findByRole("list");
+    expect(legendRows()).toHaveLength(5);
+    expect(screen.queryByText(/Smaller job types are grouped under Other\./)).not.toBeInTheDocument();
   });
 
   it("uses the singular job type for a single category", async () => {
