@@ -45,18 +45,13 @@ export async function createClient(cookieStore?: ReadonlyRequestCookies) {
   );
 }
 
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+
 export async function createServiceClient() {
-  return createServerClient(
+  return createSupabaseClient(
     clientEnv.NEXT_PUBLIC_SUPABASE_URL,
     serverEnv.SUPABASE_SERVICE_ROLE_KEY,
-    {
-      cookies: {
-        getAll() {
-          return [];
-        },
-        setAll() {},
-      },
-    },
+    { auth: { autoRefreshToken: false, persistSession: false } },
   );
 }
 

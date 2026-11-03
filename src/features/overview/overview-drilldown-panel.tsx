@@ -508,7 +508,9 @@ export function OverviewDrilldownPanel({
                       </thead>
                       <tbody className="divide-border/50 divide-y">
                         {rows.map((row) => {
-                          const daysBadge = formatDaysAwayBadgeText(row.days_from_today);
+                          const daysBadge = row.completed_date
+                            ? formatDaysAwayBadgeText(row.days_from_today)
+                            : { text: "Not uploaded", tone: "neutral" as const };
                           const openHref = `/${row.board_slug ?? row.board_id}?record=${row.item_id}`;
                           return (
                             <tr
@@ -545,7 +547,7 @@ export function OverviewDrilldownPanel({
                               <td className="px-3 py-2.5">
                                 <span
                                   className={cn(
-                                    "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium",
+                                    "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
                                     row.is_finished
                                       ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
                                       : "bg-amber-500/15 text-amber-700 dark:text-amber-300",
@@ -556,7 +558,7 @@ export function OverviewDrilldownPanel({
                                   ) : (
                                     <Clock className="size-3" />
                                   )}
-                                  {row.status ?? "In Progress"}
+                                  {row.status ?? (row.is_finished ? "Done" : "In Progress")}
                                 </span>
                               </td>
                               <td className="px-3 py-2.5 tabular-nums">
@@ -565,9 +567,7 @@ export function OverviewDrilldownPanel({
                               <td className="px-3 py-2.5 tabular-nums">
                                 {row.completed_date
                                   ? `Uploaded ${row.completed_date}`
-                                  : row.due_date
-                                    ? `Due ${row.due_date}`
-                                    : "—"}
+                                  : "Not uploaded"}
                               </td>
                               <td className="px-3 py-2.5">
                                 {row.turnaround_days !== null ? (

@@ -29,6 +29,7 @@ import {
   OTHER_LABEL,
   toBreakdownSlices,
   UNCLASSIFIED_LABEL,
+  normalizeJobType,
   type BreakdownPayload,
   type BreakdownSlice,
 } from "@/features/overview/volume-breakdown";
@@ -38,6 +39,8 @@ import { BoardSelector, type OverviewBoard } from "@/features/overview/board-sel
 
 const NUMBER_FORMAT = new Intl.NumberFormat("en-US");
 const EMPTY_BOARD_IDS: string[] = [];
+/** Auto-refresh the breakdown every few minutes so new jobs appear without a manual click. */
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 function formatVolume(value: number): string {
   return NUMBER_FORMAT.format(value);
@@ -76,6 +79,8 @@ interface VolumeBreakdownSectionProps {
   selectedBoardIds?: string[];
   onBoardChange?: (ids: string[]) => void;
   drilldownItems?: OverviewDrilldownItem[];
+  onRefresh?: () => Promise<void>;
+  boardCount?: number;
 }
 
 /**
@@ -91,6 +96,8 @@ export function VolumeBreakdownSection({
   selectedBoardIds: selectedBoardIdsProp,
   onBoardChange: onBoardChangeProp,
   drilldownItems,
+  onRefresh,
+  boardCount,
 }: VolumeBreakdownSectionProps) {
   const selectedBoardIds = selectedBoardIdsProp ?? EMPTY_BOARD_IDS;
   const onBoardChange = onBoardChangeProp ?? (() => undefined);
@@ -126,6 +133,14 @@ export function VolumeBreakdownSection({
     }
   }, [rangeQuery, rangeId, selectedBoardIds]);
 
+  const refresh = useCallback(async () => {
+    if (onRefresh) {
+      await onRefresh();
+      return;
+    }
+    await load();
+  }, [load, onRefresh]);
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -138,22 +153,18 @@ export function VolumeBreakdownSection({
     return drilldownItems;
   }, [drilldownItems, hasBoardFilter, selectedBoardIds]);
 
-  // Enrich payload when snapshot lacked job_type mappings on boards with "Type of Job" columns
+  // The drilldown list is the canonical filtered job list. Build the chart
+  // payload from it whenever available so counts, legend and rows cannot drift.
   const effectivePayload = useMemo<BreakdownPayload | null>(() => {
     if (!data) return null;
-    const onlyUnclassified =
-      !data.grouping.available || data.items.every((item) => !item.key.trim());
-    if (!onlyUnclassified || scopedDrilldownItems.length === 0) {
+    if (drilldownItems === undefined) {
       return data;
     }
     const counts = new Map<string, number>();
-    let hasRealType = false;
     for (const item of scopedDrilldownItems) {
-      const key = item.job_type?.trim() ?? "";
-      if (key) hasRealType = true;
+      const key = normalizeJobType(item.job_type ?? "");
       counts.set(key, (counts.get(key) ?? 0) + 1);
     }
-    if (!hasRealType) return data;
 
     const enrichedItems = Array.from(counts.entries())
       .sort((a, b) => b[1] - a[1])
@@ -175,31 +186,65 @@ export function VolumeBreakdownSection({
       },
       items: enrichedItems,
     };
-  }, [data, scopedDrilldownItems]);
+  }, [data, drilldownItems, scopedDrilldownItems]);
 
   const breakdown = useMemo(
     () => (effectivePayload ? toBreakdownSlices(effectivePayload) : null),
     [effectivePayload],
   );
 
+  const toggleSlice = useCallback((label: string) => {
+    setSelectedSliceLabel((current) => (current === label ? null : label));
+  }, []);
+
   const selectedSliceItems = useMemo(() => {
     if (!selectedSliceLabel || scopedDrilldownItems.length === 0) return [];
+    // Normalize each item's job type so the drill-down matches the normalized
+    // slices produced by `toBreakdownSlices`.
+    if (selectedSliceLabel === OTHER_LABEL) {
+      // "Other" lists every normalized type that was rolled up. We derive that
+      // set from the breakdown result: any real slice not in the head and not
+      // unclassified belongs to Other.
+      const headLabels = new Set(
+        (breakdown?.slices ?? [])
+          .filter((s) => !s.isOther && !s.isUnclassified)
+          .map((s) => s.label),
+      );
+      return scopedDrilldownItems.filter((item) => {
+        const label = normalizeJobType(item.job_type?.trim() ?? "");
+        return label.length > 0 && !headLabels.has(label);
+      });
+    }
+    if (selectedSliceLabel === UNCLASSIFIED_LABEL) {
+      return scopedDrilldownItems.filter(
+        (item) => !normalizeJobType(item.job_type?.trim() ?? ""),
+      );
+    }
     return scopedDrilldownItems.filter((item) => {
-      const label = item.job_type?.trim() || UNCLASSIFIED_LABEL;
+      const label = normalizeJobType(item.job_type?.trim() ?? "");
       return label === selectedSliceLabel;
     });
-  }, [scopedDrilldownItems, selectedSliceLabel]);
+  }, [scopedDrilldownItems, selectedSliceLabel, breakdown]);
 
   const rangeLabel = data?.range.label.toLowerCase() ?? "the selected period";
   const unclassified = breakdown?.slices.find((s) => s.isUnclassified) ?? null;
+
+  // Auto-refresh every few minutes so new jobs appear without a manual click.
+  useEffect(() => {
+    if (isLoading) return;
+    const t = setInterval(() => {
+      void refresh();
+    }, AUTO_REFRESH_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, [refresh, isLoading]);
 
   const summary =
     isLoading || !breakdown
       ? `Loading type of job breakdown · ${rangeLabel}`
       : `${formatVolume(breakdown.totalVolume)} volume · ${breakdown.categoryCount} ${
           breakdown.categoryCount === 1 ? "job type" : "job types"
-        }${selectedBoardIds.length > 0
-          ? ` · ${selectedBoardIds.length} board${selectedBoardIds.length === 1 ? "" : "s"}`
+        }${boardCount !== undefined
+      ? ` · ${boardCount} board${boardCount === 1 ? "" : "s"}`
           : ""} · ${rangeLabel}`;
 
   return (
@@ -227,7 +272,7 @@ export function VolumeBreakdownSection({
             className="text-muted-foreground size-7"
             aria-label="Refresh"
             title="Refresh"
-            onClick={() => void load()}
+            onClick={() => void refresh()}
           >
             <RefreshCw className="size-3.5" aria-hidden="true" />
           </Button>
@@ -267,7 +312,7 @@ export function VolumeBreakdownSection({
                     stroke="hsl(var(--card))"
                     strokeWidth={2}
                     isAnimationActive={false}
-                    onClick={(sliceData: { label?: string; name?: string }) => {
+                    onClick={(sliceData: { label?: string; name?: string | number }) => {
                       const lbl = sliceData?.label ?? sliceData?.name;
                       if (lbl) {
                         toggleSlice(String(lbl));
@@ -404,6 +449,14 @@ export function VolumeBreakdownSection({
                     <Badge variant="outline" className="text-[10px]">
                       {item.status ?? "In Progress"}
                     </Badge>
+                    {!((item.status || "").toLowerCase() === "done" || (item.status || "").toLowerCase() === "completed" || item.is_finished) && (
+                      <button
+                        type="button"
+                        className="border-border bg-background hover:bg-accent inline-flex h-6 items-center gap-1 rounded border px-2 text-[11px] font-medium"
+                      >
+                        Mark done
+                      </button>
+                    )}
                     <Link
                       href={`/${item.board_slug ?? item.board_id}?record=${item.item_id}`}
                       className="border-border bg-background hover:bg-accent inline-flex h-6 items-center gap-1 rounded border px-2 text-[11px] font-medium"

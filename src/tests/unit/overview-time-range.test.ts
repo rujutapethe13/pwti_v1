@@ -204,7 +204,7 @@ describe("parseTimeRangeQuery", () => {
   it("falls back to the default preset when bounds are missing", () => {
     const range = parseTimeRangeQuery(params(""));
     expect(range.id).toBe(DEFAULT_TIME_RANGE_ID);
-    expect(range.days).toBe(7);
+    expect(range.days).toBe(30);
   });
 
   it("rejects malformed or inverted bounds instead of widening the scan", () => {
@@ -216,7 +216,7 @@ describe("parseTimeRangeQuery", () => {
       "from=2026-09-07&to=2026-09-01",
     ]) {
       const range = parseTimeRangeQuery(params(query));
-      expect(range.days).toBe(7);
+      expect(range.days).toBe(30);
       expect(range.to).toBe(fallback.to);
     }
   });

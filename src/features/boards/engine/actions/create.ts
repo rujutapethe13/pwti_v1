@@ -172,7 +172,7 @@ export async function createBoardWithDefaults(
       organizationId,
       workspaceId,
       boardId,
-      name: "Group Title",
+      name: "Main Group",
       color: "#94a3b8",
       collapsed: false,
       order: 0,

@@ -123,6 +123,11 @@ export function formatCount(value: number): string {
   return value.toLocaleString("en-US");
 }
 
+export function normalizeClientName(value: string | null | undefined): string | null {
+  const name = String(value ?? "").trim().replace(/\s+/g, " ");
+  return name ? name.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()) : null;
+}
+
 function formatDays(value: number): string {
   return `${value.toFixed(1)}d`;
 }

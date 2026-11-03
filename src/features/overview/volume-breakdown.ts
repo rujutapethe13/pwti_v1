@@ -38,11 +38,38 @@ export const UNCLASSIFIED_LABEL = "Unclassified";
 export const OTHER_LABEL = "Other";
 
 /**
- * Named slices drawn individually before the rest roll into "Other". Four keeps
- * the donut readable while still naming the whole real distribution when a
- * board has only a handful of job types.
+ * Maximum number of named slices drawn individually before the rest roll into
+ * "Other". The rollup only happens when there are MORE than this many distinct
+ * types AND at least one of them is below the share threshold — see
+ * `toBreakdownSlices`. Six keeps the donut readable while still naming the
+ * whole real distribution when a board has only a handful of job types.
  */
-export const MAX_NAMED_SLICES = 4;
+export const MAX_NAMED_SLICES = 6;
+
+/**
+ * Share threshold below which a type is considered too small to name on its own.
+ * A type whose share is under this value only rolls into "Other" when there are
+ * more than `MAX_NAMED_SLICES` distinct types; otherwise it stays named.
+ */
+export const OTHER_SHARE_THRESHOLD = 5;
+
+/**
+ * Normalises a raw job-type string so the donut, legend and header all agree.
+ * Trims, case-folds and maps known aliases to canonical names. Unknown types
+ * keep their own name.
+ */
+export function normalizeJobType(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  const aliasMap: Record<string, string> = {
+    "genie backpack": "Backpack",
+    "apperals": "Apparel",
+    "apparels": "Apparel",
+    "apparel": "Apparel",
+  };
+  const key = trimmed.toLowerCase();
+  return aliasMap[key] ?? trimmed;
+}
 
 /**
  * Slice colors, taken as a single-hue ramp from the `--highlight` accent rather
@@ -57,6 +84,10 @@ const SLICE_COLORS = [
   "hsl(var(--highlight) / 0.72)",
   "hsl(var(--highlight) / 0.52)",
   "hsl(var(--highlight) / 0.36)",
+  "hsl(var(--highlight) / 0.24)",
+  "hsl(var(--highlight) / 0.16)",
+  "hsl(var(--highlight) / 0.1)",
+  "hsl(var(--highlight) / 0.06)",
 ] as const;
 
 /** Rollups and unclassified rows use a muted neutral so they read as summaries. */
@@ -121,6 +152,25 @@ export interface BreakdownResult {
   range: ResolvedTimeRange;
 }
 
+export function isWithinInclusiveDateWindow(
+  date: string | null,
+  from: string,
+  to: string,
+): boolean {
+  return date !== null && date >= from && date <= to;
+}
+
+export function turnaroundDays(
+  received: string | null,
+  uploaded: string | null,
+): number | null {
+  if (!received || !uploaded) return null;
+  const start = Date.parse(`${received}T00:00:00Z`);
+  const end = Date.parse(`${uploaded}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return Math.round((end - start) / 86400000);
+}
+
 function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.min(100, Math.max(0, value));
@@ -167,15 +217,37 @@ function allocateShares(volumes: number[]): number[] {
  * Percentages are computed against the sum of the slices that survive rollup,
  * so the legend percentages always sum to 100% of what the donut draws. A
  * payload with no volume yields an empty slice list rather than NaN shares.
+ *
+ * Job-type normalization is applied here so the chart, legend and header counts
+ * all derive from the same normalized view. The "Other" bucket is only created
+ * when there are MORE than `MAX_NAMED_SLICES` distinct normalized types AND at
+ * least one of them is below `OTHER_SHARE_THRESHOLD` — otherwise every type is
+ * named. The header "N job types" equals the number of distinct normalized
+ * types (before rollup), so it can never disagree with the chart.
  */
 export function toBreakdownSlices(payload: BreakdownPayload): BreakdownResult {
-  const named = payload.items
+  // Normalize every item's key so aliases roll up before any counting happens.
+  const normalized = payload.items
     .map((item) => ({
       ...item,
-      volume: Number.isFinite(item.volume) && item.volume > 0 ? item.volume : 0,
-      jobs: Number.isFinite(item.jobs) && item.jobs > 0 ? item.jobs : 0,
+      key: normalizeJobType(item.key),
     }))
-    .filter((item) => item.volume > 0)
+    .filter((item) => item.volume > 0);
+
+  // Merge duplicate normalized keys (e.g. "Genie Backpack" + "backpack").
+  const merged = new Map<string, { volume: number; jobs: number }>();
+  for (const item of normalized) {
+    const existing = merged.get(item.key);
+    if (existing) {
+      existing.volume += item.volume;
+      existing.jobs += item.jobs;
+    } else {
+      merged.set(item.key, { volume: item.volume, jobs: item.jobs });
+    }
+  }
+
+  const named = Array.from(merged.entries())
+    .map(([key, counts]) => ({ key, volume: counts.volume, jobs: counts.jobs }))
     .sort((a, b) => b.volume - a.volume || a.key.localeCompare(b.key));
 
   // Unclassified rows are held out of the rollup: a record with no job type is
@@ -184,8 +256,25 @@ export function toBreakdownSlices(payload: BreakdownPayload): BreakdownResult {
   const unclassified = named.filter((item) => isUnclassified(item.key));
   const real = named.filter((item) => !isUnclassified(item.key));
 
-  const head = real.slice(0, MAX_NAMED_SLICES);
-  const tail = real.slice(MAX_NAMED_SLICES);
+  // Decide whether the tail rolls into "Other". The rule is:
+  //   - more than MAX_NAMED_SLICES distinct types, AND
+  //   - at least one type's share is below OTHER_SHARE_THRESHOLD.
+  // Otherwise every type is named — the header count matches the chart.
+  const totalRealVolume = real.reduce((sum, item) => sum + item.volume, 0);
+  const hasSmallType = real.some(
+    (item) => totalRealVolume > 0 && (item.volume / totalRealVolume) * 100 < OTHER_SHARE_THRESHOLD,
+  );
+  const shouldRollUp = real.length > MAX_NAMED_SLICES && hasSmallType;
+  const head = shouldRollUp
+    ? real.filter(
+        (item) => (item.volume / totalRealVolume) * 100 >= OTHER_SHARE_THRESHOLD,
+      )
+    : real;
+  const tail = shouldRollUp
+    ? real.filter(
+        (item) => (item.volume / totalRealVolume) * 100 < OTHER_SHARE_THRESHOLD,
+      )
+    : [];
 
   // The tail and the untyped records are drawn as their own slices, so every
   // displayed segment is named before the shares are allocated across the set.

@@ -7,6 +7,7 @@ import {
   type PeriodAggregate,
   type PeriodComparison,
   type StatCardsResult,
+  normalizeClientName,
 } from "@/features/overview/stat-cards";
 import { priorPeriod, resolveTimeRange } from "@/features/overview/time-range";
 
@@ -57,6 +58,10 @@ function card(result: StatCardsResult, id: string) {
 }
 
 describe("prior period", () => {
+  it("normalizes client names for distinct counts", () => {
+    expect(normalizeClientName(" lotto ")).toBe("Lotto");
+    expect(normalizeClientName("LOTTO")).toBe("Lotto");
+  });
   it("is the equal-length window immediately before the selection", () => {
     expect(priorPeriod({ from: "2026-09-18", days: 7 })).toEqual({
       from: "2026-09-11",

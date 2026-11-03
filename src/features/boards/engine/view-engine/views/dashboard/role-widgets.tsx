@@ -21,6 +21,21 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { PillToggle, StretchCheckbox } from "./dashboard-shared";
+
+/**
+ * Normalises raw job-type strings so the Jobs Table shows a consistent label.
+ * Known aliases are mapped to canonical names; everything else is returned
+ * trimmed and as-is.
+ */
+const normalizeJobType = (raw: string): string => {
+  const trimmed = raw.trim().toLowerCase();
+  const aliasMap: Record<string, string> = {
+    "genie backpack": "Backpack",
+    "apperals": "Apparel",
+    "apparels": "Apparel",
+  };
+  return aliasMap[trimmed] ?? raw.trim();
+};
 import type { ColumnDefinition, ColumnValue } from "../../../types";
 import { findOptionForValue, getColumnOptions, isOptionColumnType } from "../../../lib/option-lookup";
 import {
@@ -480,6 +495,9 @@ export const JobsTableContent = memo(function JobsTableContent(props: RoleWidget
       }
       return String(raw);
     }
+    // Job-type role – apply normalisation so aliases like "Genie Backpack"
+    // display as "Backpack" instead of the raw string.
+    if (role === "jobType") return normalizeJobType(String(raw));
     return normalizeText(raw) || "—";
   };
 
@@ -496,6 +514,20 @@ export const JobsTableContent = memo(function JobsTableContent(props: RoleWidget
       default:
         return "Not started";
     }
+  };
+
+  /**
+   * Placeholder for marking a job as Done. Replace with a call to your
+   * status-update RPC / API route, e.g.:
+   *
+   *   await fetch(`/api/records/${recordId}/status`, {
+   *     method: "POST",
+   *     headers: { "Content-Type": "application/json" },
+   *     body: JSON.stringify({ status: "Done" }),
+   *   });
+   */
+  const handleMarkDone = async (recordId: string) => {
+    console.log("Mark Done clicked for", recordId);
   };
 
   if (rows.length === 0) {
@@ -519,6 +551,7 @@ export const JobsTableContent = memo(function JobsTableContent(props: RoleWidget
               </th>
             ))}
             <th className="py-1.5 font-medium">Status</th>
+            <th className="py-1.5 font-medium">Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -534,6 +567,17 @@ export const JobsTableContent = memo(function JobsTableContent(props: RoleWidget
                 </td>
               ))}
               <td className="py-1.5">{statusLabel(r)}</td>
+              <td className="py-1.5">
+                {statusLabel(r) !== "Done" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => void handleMarkDone(r.id)}
+                  >
+                    Mark Done
+                  </Button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

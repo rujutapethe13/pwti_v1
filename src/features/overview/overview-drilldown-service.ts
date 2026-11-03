@@ -12,6 +12,8 @@ import {
   priorPeriod,
   type ResolvedTimeRange,
 } from "@/features/overview/time-range";
+import { normalizeJobType } from "@/features/overview/volume-breakdown";
+import { normalizeClientName } from "@/features/overview/stat-cards";
 
 export interface OverviewDrilldownItem {
   item_id: string;
@@ -66,6 +68,13 @@ export interface OverviewDrilldownPayload {
     busiestClient: { name: string; count: number; priorCount: number } | null;
     turnaroundAvgDays: number | null;
     turnaroundSample: number;
+    turnaroundExcluded: number;
+    completedWithUpload: number;
+    priorJobsReceived: number;
+    priorJobsCompleted: number;
+    priorBoardsTouched: number;
+    priorTurnaroundAvgDays: number | null;
+    priorTurnaroundSample: number;
     jobTypeSlices: Array<{
       key: string;
       label: string;
@@ -105,6 +114,8 @@ const RECEIVED_COL_NAMES = new Set([
 ]);
 
 const COMPLETED_COL_NAMES = new Set([
+  "uploaded",
+  "uploaded date",
   "date of upload",
   "upload date",
   "completed date",
@@ -211,6 +222,43 @@ function cleanDisplayLabel(label: string | null | undefined): string {
   return String(label ?? "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/**
+ * A group name is a real structural label, not a template placeholder. Default
+ * groups created by the engine ship with the literal text "Group Title" (and
+ * some boards have a month appended, e.g. "October (Group Title)"). Those are
+ * not real names and must never render in the dashboard.
+ */
+function isPlaceholderGroupName(name: string | null | undefined): boolean {
+  if (!name) return true;
+  const trimmed = name.trim();
+  if (!trimmed) return true;
+  if (/^group title$/i.test(trimmed)) return true;
+  // Matches patterns like "October (Group Title)" or "October(Group Title)"
+  if (/\(.*group title.*\)/i.test(trimmed)) return true;
+  return false;
+}
+
+/**
+ * Extracts the real group/month name from a potentially templated group name.
+ * If it's a placeholder like "October (Group Title)", returns "October".
+ * If it's empty/placeholder, returns null.
+ */
+function extractRealGroupName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  if (/^group title$/i.test(trimmed)) return null;
+  // If it contains "(Group Title)", extract the part before it
+  const match = trimmed.match(/^(.+?)\s*\(.*group title.*\)$/i);
+  if (match && match[1]) {
+    const extracted = match[1].trim();
+    if (extracted) return extracted;
+    return null;
+  }
+  if (/\(.*group title.*\)/i.test(trimmed)) return null;
+  return trimmed;
 }
 
 function extractCellText(
@@ -418,6 +466,13 @@ export async function fetchOverviewDrilldown(
         busiestClient: null,
         turnaroundAvgDays: null,
         turnaroundSample: 0,
+        turnaroundExcluded: 0,
+        completedWithUpload: 0,
+        priorJobsReceived: 0,
+        priorJobsCompleted: 0,
+        priorBoardsTouched: 0,
+        priorTurnaroundAvgDays: null,
+        priorTurnaroundSample: 0,
         jobTypeSlices: [],
       },
     };
@@ -698,10 +753,10 @@ export async function fetchOverviewDrilldown(
 
     // Prefer genuine Client / Item Name cell values over a single-character test placeholder
     const resolvedClient =
+      snapClient ??
       (rawClient && rawClient.length > 1 ? rawClient : null) ??
       rawItemName ??
       rawClient ??
-      snapClient ??
       null;
 
     const jobType =
@@ -731,9 +786,7 @@ export async function fetchOverviewDrilldown(
     let turnaroundDays: number | null = null;
     if (receivedAt && completedDate) {
       const diff = diffCalendarDays(completedDate, receivedAt);
-      if (diff >= 0) {
-        turnaroundDays = diff;
-      }
+      if (diff >= 0) turnaroundDays = diff;
     }
 
     const dueDate =
@@ -769,14 +822,14 @@ export async function fetchOverviewDrilldown(
     allItems.push({
       item_id: recId,
       job_name: jobName,
-      client: resolvedClient,
+      client: normalizeClientName(resolvedClient),
       workspace_id: String(rec.workspace_id),
       workspace_name: wsMap.get(String(rec.workspace_id)) ?? "Workspace",
       board_id: bId,
       board_slug: (board.slug as string | null) ?? null,
       board_name: String(board.name),
-      group_name: rec.group_id ? groupMap.get(String(rec.group_id)) ?? null : null,
-      job_type: jobType,
+      group_name: extractRealGroupName(groupMap.get(String(rec.group_id)) ?? null),
+      job_type: normalizeJobType(jobType ?? "") || null,
       status: status ?? (completedDate ? "Uploaded" : "In Progress"),
       assignee_name: assigneeName,
       received_at: receivedAt,
@@ -845,19 +898,33 @@ export async function fetchOverviewDrilldown(
   let turnaroundSum = 0;
   let turnaroundSample = 0;
   let jobsCompletedCount = 0;
+  const priorJobsCompleted = priorItems.filter(
+    (item) => (item.status ?? "").trim().toLowerCase() === "done",
+  ).length;
+  const priorClients = new Set(
+    priorItems.map((item) => item.client).filter((value): value is string => Boolean(value)),
+  );
+  const priorBoards = new Set(priorItems.map((item) => item.board_id));
+  const priorTurnarounds = priorItems
+    .map((item) => item.turnaround_days)
+    .filter((value): value is number => value !== null);
+  const completedWithUpload = periodItems.filter(
+    (item) => (item.status ?? "").trim().toLowerCase() === "done" && item.completed_date,
+  ).length;
 
   for (const item of periodItems) {
     boardSet.add(item.board_id);
     if (item.client) {
       clientCounts.set(item.client, (clientCounts.get(item.client) ?? 0) + 1);
     }
-    if (item.is_finished) {
+    if ((item.status ?? "").trim().toLowerCase() === "done") {
       jobsCompletedCount++;
     }
     if (item.turnaround_days !== null) {
       turnaroundSum += item.turnaround_days;
       turnaroundSample++;
     }
+
     const typeKey = item.job_type?.trim() || "Unclassified";
     typeCounts.set(typeKey, (typeCounts.get(typeKey) ?? 0) + 1);
   }
@@ -907,7 +974,6 @@ export async function fetchOverviewDrilldown(
       jobsReceived: totalPeriodJobs,
       jobsCompleted: jobsCompletedCount,
       clientsActive: clientCounts.size,
-      priorClientsActive: priorClientCounts.size,
       boardsTouched: boardSet.size,
       busiestClient,
       turnaroundAvgDays:
@@ -915,6 +981,17 @@ export async function fetchOverviewDrilldown(
           ? Number((turnaroundSum / turnaroundSample).toFixed(1))
           : null,
       turnaroundSample,
+      turnaroundExcluded: periodItems.length - turnaroundSample,
+      completedWithUpload,
+      priorJobsReceived: priorItems.length,
+      priorJobsCompleted,
+      priorClientsActive: priorClients.size,
+      priorBoardsTouched: priorBoards.size,
+      priorTurnaroundAvgDays:
+        priorTurnarounds.length > 0
+          ? Number((priorTurnarounds.reduce((sum, value) => sum + value, 0) / priorTurnarounds.length).toFixed(1))
+          : null,
+      priorTurnaroundSample: priorTurnarounds.length,
       jobTypeSlices,
     },
   };

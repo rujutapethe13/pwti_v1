@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import type { ResolvedTimeRange } from "@/features/overview/time-range";
 import {
   formatPercent,
-  MAX_NAMED_SLICES,
+  normalizeJobType,
+  isWithinInclusiveDateWindow,
+  turnaroundDays,
   toBreakdownSlices,
   type BreakdownItem,
   type BreakdownPayload,
@@ -34,6 +36,35 @@ function payload(
 }
 
 describe("toBreakdownSlices", () => {
+  it("normalizes aliases before counting", () => {
+    expect(normalizeJobType("  Genie Backpack ")).toBe("Backpack");
+    expect(normalizeJobType("APPERALS")).toBe("Apparel");
+    expect(normalizeJobType("  Socks ")).toBe("Socks");
+  });
+
+  it("keeps header, chart and table totals consistent", () => {
+    const result = toBreakdownSlices(
+      payload([
+        { key: "Backpack", volume: 2, jobs: 2 },
+        { key: "Genie Backpack", volume: 1, jobs: 1 },
+        { key: "Socks", volume: 1, jobs: 1 },
+      ]),
+    );
+    expect(result.categoryCount).toBe(2);
+    expect(result.totalJobs).toBe(4);
+    expect(result.slices.reduce((sum, slice) => sum + slice.jobs, 0)).toBe(4);
+  });
+
+  it("uses an inclusive 30-day window", () => {
+    expect(isWithinInclusiveDateWindow("2026-09-01", "2026-09-01", "2026-09-30")).toBe(true);
+    expect(isWithinInclusiveDateWindow("2026-09-30", "2026-09-01", "2026-09-30")).toBe(true);
+    expect(isWithinInclusiveDateWindow("2026-08-31", "2026-09-01", "2026-09-30")).toBe(false);
+  });
+
+  it("excludes missing uploaded dates from turnaround", () => {
+    expect(turnaroundDays("2026-09-01", null)).toBeNull();
+    expect(turnaroundDays("2026-09-01", "2026-09-03")).toBe(2);
+  });
   it("computes each share from the real counts in the range", () => {
     const result = toBreakdownSlices(
       payload([
@@ -142,7 +173,7 @@ describe("toBreakdownSlices", () => {
     expect(result.categoryCount).toBe(1);
   });
 
-  it("folds the tail into Other without disturbing the named shares", () => {
+  it("shows every type when there are six or fewer types", () => {
     const items: BreakdownItem[] = [
       { key: "Retouching", volume: 50, jobs: 5 },
       { key: "Delivery", volume: 20, jobs: 2 },
@@ -152,42 +183,39 @@ describe("toBreakdownSlices", () => {
     ];
     const result = toBreakdownSlices(payload(items));
 
-    expect(result.rolledUp).toBe(true);
+    expect(result.rolledUp).toBe(false);
     expect(result.categoryCount).toBe(items.length);
-    expect(result.slices).toHaveLength(MAX_NAMED_SLICES + 1);
+    expect(result.slices).toHaveLength(items.length);
     expect(result.slices.map((s) => s.label)).toEqual([
       "Retouching",
       "Delivery",
       "Compositing",
       "Color Grade",
-      "Other",
+      "Proofing",
     ]);
 
-    // Only the smallest category is folded in — it is the sole tail entry.
-    const other = result.slices.find((s) => s.isOther);
-    expect(other?.volume).toBe(5);
-    expect(other?.percentage).toBe(5);
-    // Shares stay of the real total — the rollup does not renormalize.
+    // Shares stay of the real total.
     expect(result.slices.find((s) => s.label === "Retouching")?.percentage).toBe(50);
   });
 
-  it("folds several tail categories into one Other slice", () => {
+  it("rolls only sub-five-percent types into Other when there are more than six", () => {
     const result = toBreakdownSlices(
       payload([
         { key: "Retouching", volume: 60, jobs: 6 },
         { key: "Delivery", volume: 20, jobs: 2 },
         { key: "Compositing", volume: 10, jobs: 1 },
-        { key: "Color Grade", volume: 6, jobs: 1 },
+        { key: "Color Grade", volume: 5, jobs: 1 },
         { key: "Proofing", volume: 3, jobs: 1 },
         { key: "Retain", volume: 1, jobs: 1 },
+        { key: "Extra", volume: 1, jobs: 1 },
       ]),
     );
 
-    // Four named slices; the two smallest become Other.
+    // The 5% type remains visible; smaller types are rolled up.
     const other = result.slices.find((s) => s.isOther);
-    expect(other?.volume).toBe(4);
-    expect(other?.jobs).toBe(2);
-    expect(other?.percentage).toBe(4);
+    expect(other?.volume).toBe(5);
+    expect(other?.jobs).toBe(3);
+    expect(other?.percentage).toBe(5);
     expect(result.totalVolume).toBe(100);
   });
 

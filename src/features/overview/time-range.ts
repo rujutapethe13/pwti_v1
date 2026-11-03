@@ -37,7 +37,7 @@ export interface TimeRangePreset {
   resolve: (to: Date) => { from: Date; to: Date };
 }
 
-export const DEFAULT_TIME_RANGE_ID: TimeRangeId = "7d";
+export const DEFAULT_TIME_RANGE_ID: TimeRangeId = "30d";
 
 export const ALL_TIME_LABEL = "All time";
 export const CUSTOM_LABEL = "Custom range";
@@ -51,6 +51,21 @@ export const CUSTOM_LABEL = "Custom range";
  * `overview_data_bounds` before the window is used.
  */
 export const ALL_TIME_SENTINEL_FROM = "1900-01-01";
+
+function todayInTimeZone(timeZone: string): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(new Date());
+  const values = Object.fromEntries(
+    parts
+      .filter((part) => part.type !== "literal")
+      .map((part) => [part.type, Number(part.value)]),
+  );
+  return new Date(values.year, values.month - 1, values.day);
+}
 
 function subtractDays(date: Date, days: number): Date {
   const next = new Date(date);
@@ -158,7 +173,7 @@ export function toDateKey(date: Date): string {
 
 export function resolveTimeRange(
   id: TimeRangeId,
-  today: Date = new Date(),
+  today: Date = todayInTimeZone("Asia/Kolkata"),
 ): ResolvedTimeRange {
   const preset = getTimeRangePreset(id);
   const { from, to } = preset.resolve(today);

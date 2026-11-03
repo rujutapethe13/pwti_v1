@@ -47,6 +47,8 @@ import { BoardSelector, type OverviewBoard } from "@/features/overview/board-sel
 import { Skeleton } from "@/components/shared/skeleton";
 
 const ENABLE_OVERVIEW_DRILLDOWN = true;
+  /** Auto-refresh the whole overview every few minutes so new jobs appear without a manual refresh. */
+  const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 const iconMap: Record<string, typeof CheckCheck> = {
   CheckCheck,
@@ -287,12 +289,22 @@ function OverviewPage() {
     setError(null);
     try {
       const boardQuery = selectedBoardIds.length ? `&boards=${selectedBoardIds.join(",")}` : "&boards=";
-      const res = await fetch(`/api/overview?${rangeQuery}&range=${rangeId}${boardQuery}`, {
-        cache: "no-store",
-      });
+      const drilldownBoardQuery = breakdownBoardIds.length
+        ? `&boards=${breakdownBoardIds.join(",")}`
+        : "&boards=";
+      const [res, drilldownRes] = await Promise.all([
+        fetch(`/api/overview?${rangeQuery}&range=${rangeId}${boardQuery}`, { cache: "no-store" }),
+        fetch(`/api/overview/drilldown?${rangeQuery}&range=${rangeId}${drilldownBoardQuery}`, {
+          cache: "no-store",
+        }),
+      ]);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to fetch overview data");
+      }
+      if (!drilldownRes.ok) {
+        const err = await drilldownRes.json().catch(() => ({}));
+        throw new Error(err.error || "Failed to fetch overview jobs");
       }
       const json = await res.json();
       if (json.userName) {
@@ -303,16 +315,30 @@ function OverviewPage() {
         }
       }
       setData(json);
+      if (drilldownRes.ok) {
+        setDrilldownData((await drilldownRes.json()) as OverviewDrilldownPayload);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load data");
     } finally {
       setIsLoading(false);
     }
-  }, [rangeQuery, rangeId, selectedBoardIds]);
+  }, [rangeQuery, rangeId, selectedBoardIds, breakdownBoardIds]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Auto-refresh the whole overview every few minutes so new jobs appear
+  // without a manual refresh. The interval is long enough to avoid hammering
+  // the API but short enough that a recently-created job shows up quickly.
+  useEffect(() => {
+    if (isLoading) return;
+    const t = setInterval(() => {
+      void loadData();
+    }, AUTO_REFRESH_INTERVAL_MS);
+    return () => clearInterval(t);
+  }, [loadData, isLoading]);
 
   const handleSelectStatCard = (cardId: StatCardId) => {
     if (!ENABLE_OVERVIEW_DRILLDOWN) return;
@@ -428,17 +454,23 @@ function OverviewPage() {
       />
 
       {/* ── Inline Drilldown Panel (opens below the 6 KPI cards, pushing Volume trend down) ── */}
-      {ENABLE_OVERVIEW_DRILLDOWN && activeTarget && drilldownData && (
-        <OverviewDrilldownPanel
-          data={drilldownData}
-          activeTarget={activeTarget}
-          selectedDateFilter={selectedDateFilter}
-          onClearDateFilter={() => setSelectedDateFilter(null)}
-          onClose={() => {
-            setActiveTarget(null);
-            setSelectedDateFilter(null);
-          }}
-        />
+      {ENABLE_OVERVIEW_DRILLDOWN && activeTarget && (
+        drilldownData ? (
+          <OverviewDrilldownPanel
+            data={drilldownData}
+            activeTarget={activeTarget}
+            selectedDateFilter={selectedDateFilter}
+            onClearDateFilter={() => setSelectedDateFilter(null)}
+            onClose={() => {
+              setActiveTarget(null);
+              setSelectedDateFilter(null);
+            }}
+          />
+        ) : (
+          <Card className="border-border/60 p-6 shadow-none" aria-busy="true">
+            {isLoading ? "Loading details…" : error ?? "No jobs in this period"}
+          </Card>
+        )
       )}
 
       {/* ── Volume trend (own loading / empty / error states) ── */}
@@ -458,6 +490,9 @@ function OverviewPage() {
         boards={boards}
         selectedBoardIds={breakdownBoardIds}
         onBoardChange={updateBreakdownBoards}
+        drilldownItems={drilldownData?.periodItems}
+        boardCount={drilldownData?.resolvedSummary.boardsTouched}
+        onRefresh={loadData}
       />
 
       {/* ── Today's jobs / Overdue / Upcoming ────────────────────────── */}

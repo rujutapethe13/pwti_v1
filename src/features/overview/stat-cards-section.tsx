@@ -239,10 +239,9 @@ export function StatCardsSection({
     if (!resolvedSummary) return data.cards;
 
     return data.cards.map((card) => {
-      const currentNum = Number(String(card.value).replace(/,/g, "")) || 0;
       const days = data.range.days;
 
-      if (card.id === "clientsActive" && resolvedSummary.clientsActive > currentNum) {
+      if (card.id === "clientsActive") {
         return {
           ...card,
           unavailable: false,
@@ -255,58 +254,59 @@ export function StatCardsSection({
         };
       }
       if (card.id === "busiestClient" && resolvedSummary.busiestClient) {
-        const currentDetail = (card.detail ?? "").trim();
-        const shouldUseResolved =
-          card.unavailable ||
-          resolvedSummary.busiestClient.count > currentNum ||
-          !currentDetail ||
-          currentDetail.length <= 1;
-
-        if (shouldUseResolved) {
-          return {
-            ...card,
-            unavailable: false,
-            value: formatCount(resolvedSummary.busiestClient.count),
-            detail: resolvedSummary.busiestClient.name,
-            caption: `Most jobs received by one client · ${resolvedSummary.busiestClient.name}`,
-            trend: buildCountTrend(
-              resolvedSummary.busiestClient.count,
-              resolvedSummary.busiestClient.priorCount,
-              { days },
-            ),
-          };
-        }
+        return {
+          ...card,
+          unavailable: false,
+          value: formatCount(resolvedSummary.busiestClient.count),
+          detail: resolvedSummary.busiestClient.name,
+          caption: `Most jobs received by one client · ${resolvedSummary.busiestClient.name}`,
+          trend: buildCountTrend(
+            resolvedSummary.busiestClient.count,
+            resolvedSummary.busiestClient.priorCount,
+            { days },
+          ),
+        };
       }
-      if (
-        card.id === "avgTurnaround" &&
-        card.unavailable &&
-        resolvedSummary.turnaroundAvgDays !== null
-      ) {
+      if (card.id === "avgTurnaround" && resolvedSummary.turnaroundAvgDays !== null) {
         return {
           ...card,
           unavailable: false,
           value: `${resolvedSummary.turnaroundAvgDays.toFixed(1)}d`,
           detail: `Across ${resolvedSummary.turnaroundSample} ${
             resolvedSummary.turnaroundSample === 1 ? "job" : "jobs"
-          } with Date of Upload`,
+          } with Uploaded date (${resolvedSummary.turnaroundExcluded} excluded)`,
           trend: {
-            ...card.trend,
-            label: `${resolvedSummary.turnaroundSample} ${
-              resolvedSummary.turnaroundSample === 1 ? "job has" : "jobs have"
-            } both Receive Date and Upload Date`,
+            ...buildCountTrend(
+              resolvedSummary.turnaroundAvgDays,
+              resolvedSummary.priorTurnaroundAvgDays,
+              { days, lowerIsBetter: true },
+            ),
           },
-          caption: "Mean days from Receive Date Post Production to Date of Upload",
+          caption: "Mean days from Received to Uploaded",
         };
       }
-      if (
-        card.id === "jobsCompleted" &&
-        card.value === "0" &&
-        resolvedSummary.jobsCompleted > 0
-      ) {
+      if (card.id === "jobsCompleted") {
         return {
           ...card,
+          unavailable: false,
           value: formatCount(resolvedSummary.jobsCompleted),
-          detail: `${resolvedSummary.jobsReceived - resolvedSummary.jobsCompleted} still in progress`,
+          detail: `${resolvedSummary.completedWithUpload} with Uploaded date`,
+          caption: "Jobs with status Done",
+          trend: buildCountTrend(resolvedSummary.jobsCompleted, resolvedSummary.priorJobsCompleted, { days }),
+        };
+      }
+      if (card.id === "jobsReceived") {
+        return {
+          ...card,
+          value: formatCount(resolvedSummary.jobsReceived),
+          trend: buildCountTrend(resolvedSummary.jobsReceived, resolvedSummary.priorJobsReceived, { days }),
+        };
+      }
+      if (card.id === "boardsTouched") {
+        return {
+          ...card,
+          value: formatCount(resolvedSummary.boardsTouched),
+          trend: buildCountTrend(resolvedSummary.boardsTouched, resolvedSummary.priorBoardsTouched, { days }),
         };
       }
       return card;

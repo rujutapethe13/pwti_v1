@@ -179,7 +179,7 @@ const ACTION_TYPE_OPTIONS: Array<{ type: ActionType; label: string }> = [
 const GROUP_OPTIONS = [
   "Completed",
   "Active Production",
-  "October (Group Title)",
+  "October",
   "Client Review",
   "Backlog",
   "Archive",

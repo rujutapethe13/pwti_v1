@@ -1565,7 +1565,7 @@ setImporting(true);
         formData.set("organizationId", board.organizationId);
         formData.set("workspaceId", board.workspaceId);
         formData.set("boardId", board.id);
-        formData.set("name", "Group Title");
+        formData.set("name", "Main Group");
         formData.set("columnMode", "shared");
         const groupResponse = await createGroup(formData);
         if (groupResponse.error || !groupResponse.data) {
