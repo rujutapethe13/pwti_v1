@@ -1,45 +1,45 @@
-"use server";
-
 import { Resend } from "resend";
+import { getEmailProvider } from "@/features/email-notifications/providers";
 
-/**
- * Server-only email helper powered by Resend.
- * Never throws into the caller: catches and logs errors so a failed email
- * can never break a save, a trigger run, or any user action.
- */
-export async function sendEmail(params: {
+export type SendEmailInput = {
   to: string | string[];
   cc?: string | string[];
   subject: string;
   html: string;
-  text?: string;
-}): Promise<{ ok: boolean; error?: string; id?: string }> {
+};
+
+export async function sendEmail(input: SendEmailInput): Promise<{ ok: boolean; error?: string }> {
+  const provider = (process.env.EMAIL_PROVIDER || "gmail").toLowerCase();
   try {
-    const apiKey = process.env.RESEND_API_KEY;
-    if (!apiKey || apiKey === "replace_me_with_resend_api_key") {
-      throw new Error("RESEND_API_KEY not configured");
+    if (provider === "resend") {
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) return { ok: false, error: "RESEND_API_KEY missing" };
+      const resend = new Resend(apiKey);
+      await resend.emails.send({
+        from: process.env.NOTIFY_EMAIL ?? "noreply@example.com",
+        to: input.to,
+        cc: input.cc,
+        subject: input.subject,
+        html: input.html,
+      });
+      return { ok: true };
     }
-
-    const resend = new Resend(apiKey);
-    const from = process.env.NOTIFY_EMAIL || "onboarding@resend.dev";
-
-    const result = await resend.emails.send({
-      from,
-      to: Array.isArray(params.to) ? params.to : [params.to],
-      cc: params.cc ? (Array.isArray(params.cc) ? params.cc : [params.cc]) : undefined,
-      subject: params.subject,
-      html: params.html,
-      text: params.text,
-    });
-
-    if (result.error) {
-      console.error("[notify] Resend error:", result.error);
-      return { ok: false, error: String(result.error.message || result.error) };
-    }
-
-    return { ok: true, id: (result.data as { id?: string })?.id };
-  } catch (error: any) {
-    console.error("[notify] sendEmail failed:", error.message || error);
-    return { ok: false, error: error.message || String(error) };
+    const p = getEmailProvider(provider);
+    const r = await p.sendMail(input.to, input.subject, input.html);
+    if (!r.success) return { ok: false, error: r.error };
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[notify] send failed:", msg);
+    return { ok: false, error: msg };
   }
+}
+
+export function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
