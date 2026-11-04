@@ -47,14 +47,14 @@ export interface UserContextValue {
 const UserContext = React.createContext<UserContextValue | null>(null);
 
 let cache: MeResponse | null = null;
-let inflight: Promise<MeResponse> | null = null;
+let inflight: Promise<MeResponse | null> | null = null;
 const subscribers = new Set<(snapshot: MeResponse) => void>();
 
 function publish(snapshot: MeResponse) {
   subscribers.forEach((listener) => listener(snapshot));
 }
 
-async function fetchMe(): Promise<MeResponse> {
+async function fetchMe(): Promise<MeResponse | null> {
   if (cache) return cache;
   if (inflight) return inflight;
 
@@ -72,6 +72,14 @@ async function fetchMe(): Promise<MeResponse> {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        // Unauthenticated contexts (sign-in, sign-up, ...) legitimately have
+        // no /api/me payload. Treat as "no snapshot" instead of throwing so
+        // the console stays clean and providers don't retry.
+        cache = null;
+        inflight = null;
+        return null;
+      }
       let message = "Could not load your account";
       try {
         const payload = (await response.json()) as { error?: string };
