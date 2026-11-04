@@ -48,6 +48,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ConfirmDialog } from "@/features/boards/engine/components/confirm-dialog";
+import { RenameBoardDialog } from "@/components/shared/rename-board-dialog";
 import { toast } from "sonner";
 
 const NAV_ITEMS = [
@@ -226,6 +227,8 @@ export function GlobalSidebar({
   const [isCreatingWorkspace, setIsCreatingWorkspace] = useState(false);
   const [agentsOpen, setAgentsOpen] = useState(false);
   const [contentOpen, setContentOpen] = useState(true);
+  const [renameTarget, setRenameTarget] = useState<ContentItem | null>(null);
+  const [renameDialogOpen, setRenameDialogOpen] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -276,9 +279,9 @@ export function GlobalSidebar({
     }
   };
 
-  const handleRenameItem = async (item: ContentItem) => {
-    setRenamingId(item.id);
-    setRenameValue(item.name);
+  const handleRenameItem = (item: ContentItem) => {
+    setRenameTarget(item);
+    setRenameDialogOpen(true);
   };
 
   const handleRenameCommit = async () => {
@@ -554,7 +557,7 @@ export function GlobalSidebar({
                 ) : (
                   <ChevronRight className="size-4 text-sidebar-muted-foreground" />
                 )}
-                <span className="flex-1 truncate">Content</span>
+                <span className="flex-1 truncate">Content TEST</span>
               </button>
 
               {contentOpen && (
@@ -570,7 +573,6 @@ export function GlobalSidebar({
                   {/* Content items */}
                   {currentContent.map((item) => {
                     const Icon = item.icon ? (ITEM_ICON_MAP[item.icon] ?? LayoutTemplate) : LayoutTemplate;
-                    const isRenaming = renamingId === item.id;
                     const isBoardActive = item.type === "board" && item.slug && (pathname === `/${item.slug}` || pathname.startsWith(`/${item.slug}/`));
 
                     return (
@@ -596,48 +598,30 @@ export function GlobalSidebar({
                             : "hover:bg-sidebar-accent",
                         )}
                       >
-                          {isRenaming ? (
-                            <input
-                              ref={renameInputRef}
-                              value={renameValue}
-                              onChange={(e) => setRenameValue(e.target.value)}
-                              onBlur={handleRenameCommit}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter") handleRenameCommit();
-                                if (e.key === "Escape") {
-                                  setRenamingId(null);
-                                  setRenameValue("");
-                                }
-                              }}
-                              className="flex-1 rounded border border-border bg-background px-1.5 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring"
-                              onClick={(e) => e.stopPropagation()}
+                          <>
+                            <Icon className={cn("size-4 shrink-0", isBoardActive ? "text-sidebar-accent-foreground" : "text-sidebar-muted-foreground")} />
+                            <span className="flex-1 truncate">{item.name}</span>
+                            {item.type === "board" && (
+                              <FavoriteStar
+                                itemId={item.id}
+                                itemType="board"
+                                isFavorited={favoritedBoardIds.has(item.id) || item.isFavorite}
+                                variant="sidebar"
+                                onToggle={(favorited) => {
+                                  toggleBoardFavorite(item.id, favorited);
+                                  updateBoardFavorite(item.id, favorited);
+                                }}
+                              />
+                            )}
+                            <ContentItemMenu
+                              item={item}
+                              onRename={handleRenameItem}
+                              onDelete={handleDeleteItem}
+                              onDuplicate={handleDuplicateItem}
+                              onArchive={handleArchiveItem}
+                              onToggleFavorite={handleToggleFavorite}
                             />
-                          ) : (
-                            <>
-                             <Icon className={cn("size-4 shrink-0", isBoardActive ? "text-sidebar-accent-foreground" : "text-sidebar-muted-foreground")} />
-                               <span className="flex-1 truncate">{item.name}</span>
-                               {item.type === "board" && (
-                                 <FavoriteStar
-                                   itemId={item.id}
-                                   itemType="board"
-                                   isFavorited={favoritedBoardIds.has(item.id) || item.isFavorite}
-                                   variant="sidebar"
-                                   onToggle={(favorited) => {
-                                     toggleBoardFavorite(item.id, favorited);
-                                     updateBoardFavorite(item.id, favorited);
-                                   }}
-                                 />
-                               )}
-                               <ContentItemMenu
-                                 item={item}
-                                 onRename={handleRenameItem}
-                                 onDelete={handleDeleteItem}
-                                 onDuplicate={handleDuplicateItem}
-                                 onArchive={handleArchiveItem}
-                                 onToggleFavorite={handleToggleFavorite}
-                               />
-                            </>
-                          )}
+                          </>
                         </div>
                       </li>
                     );
@@ -704,6 +688,17 @@ export function GlobalSidebar({
         variant="destructive"
         onConfirm={handleConfirmDelete}
         loading={isDeleting}
+      />
+      <RenameBoardDialog
+        open={renameDialogOpen}
+        onOpenChange={setRenameDialogOpen}
+        initialName={renameTarget?.name ?? ""}
+        onSave={async (name) => {
+          if (!renameTarget) return;
+          console.log("[rename] payload", { boardId: renameTarget.id, name });
+          await renameBoard(renameTarget.id, name);
+          console.log("[rename] done", name);
+        }}
       />
     </TooltipProvider>
   );

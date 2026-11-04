@@ -47,6 +47,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ConfirmDialog } from "@/features/boards/engine/components/confirm-dialog";
+import { renameBoard } from "@/features/boards/engine/actions/board-actions";
+import { BoardItemMenu } from "@/components/shared/board-item-menu";
 import { toast } from "sonner";
 import { AddNewMenu } from "@/components/shared/add-new-menu";
 import { MembersAccessModal } from "@/components/shared/members-access-modal";
@@ -149,7 +151,7 @@ export function WorkspacePanel() {
   const [contentOpen, setContentOpen] = useState(true);
   const [folderOpen, setFolderOpen] = useState<Record<string, boolean>>({});
   const [renamingId, setRenamingId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
+  const [renameEnteredAt, setRenameEnteredAt] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [workspaceToDelete, setWorkspaceToDelete] = useState<{ id: string; name: string } | null>(null);
@@ -211,17 +213,39 @@ export function WorkspacePanel() {
   };
 
   const handleCommitRename = async () => {
-    if (!renamingId || !renameValue.trim()) return;
-    await renameWorkspace(renamingId, renameValue.trim());
+    if (!renamingId || !renameWsValue.trim()) return;
+    const item = currentContent.find((i) => i.id === renamingId);
+    if (item?.type === "board") {
+      const fd = new FormData();
+      fd.set("boardId", renamingId);
+      fd.set("name", renameWsValue.trim());
+      fd.set("updateSlug", "false");
+      await renameBoard(fd);
+      router.refresh();
+    } else {
+      await renameWorkspace(renamingId, renameWsValue.trim());
+    }
     setRenamingId(null);
-    setRenameValue("");
+    setRenameWsValue("");
   };
 
   const handleCommitFolderRename = async () => {
-    if (!renamingId || !renameValue.trim()) return;
-    await renameFolder(renamingId, renameValue.trim());
+    if (!renamingId || !renameWsValue.trim()) return;
+    await renameFolder(renamingId, renameWsValue.trim());
     setRenamingId(null);
-    setRenameValue("");
+    setRenameWsValue("");
+  };
+
+  const handleCommitBoardRename = async (boardId: string) => {
+    if (!renamingId) return;
+    const trimmed = renameWsValue.trim();
+    setRenamingId(null);
+    if (!trimmed) { setRenameWsValue(""); return; }
+    const fd = new FormData();
+    fd.set("boardId", boardId);
+    fd.set("name", trimmed);
+    try { await renameBoard(fd); router.refresh(); } catch (e) { console.error(e); }
+    setRenameWsValue("");
   };
 
   const handleWorkspaceRename = () => {
@@ -558,7 +582,7 @@ export function WorkspacePanel() {
                       isActive={isActive}
                       onRename={(workspace) => {
                         setRenamingId(workspace.id);
-                        setRenameValue(workspace.name);
+                        setRenameWsValue(workspace.name);
                         setShowDropdown(false);
                       }}
                       onDelete={(workspace) => {
@@ -796,51 +820,23 @@ export function WorkspacePanel() {
                     {isRenaming ? (
                       <input
                         autoFocus
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onBlur={handleCommitFolderRename}
+                        value={renameWsValue}
+                        onChange={(e) => setRenameWsValue(e.target.value)}
+                        onBlur={async () => { if (Date.now() - renameEnteredAt < 150) return; await handleCommitBoardRename(item.id); }}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") handleCommitFolderRename();
-                          if (e.key === "Escape") {
-                            setRenamingId(null);
-                            setRenameValue("");
-                          }
+                          if (e.key === "Enter") handleCommitBoardRename(item.id);
+                          if (e.key === "Escape") { setRenamingId(null); setRenameWsValue(""); }
                         }}
-                        className="flex-1 rounded border px-1 py-0.5 text-xs outline-none focus:ring-1 focus:ring-ring"
                         onClick={(e) => e.stopPropagation()}
+                        onFocus={(e) => e.target.select()}
+                        className="flex-1 text-sm bg-transparent outline-none border-b-2 border-accent"
                       />
                     ) : (
                       <>
                         <ItemIcon item={item} className={isBoardActive ? "text-accent-foreground" : undefined} />
                         <span className="flex-1 truncate">{item.name}</span>
                         {item.type === "board" && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const newFav = !item.isFavorite;
-                              updateBoardFavorite(item.id, newFav);
-                            }}
-                            className={cn(
-                              "flex size-5 items-center justify-center rounded hover:bg-accent opacity-0 group-hover:opacity-100",
-                              item.isFavorite ? "text-yellow-500" : "text-muted-foreground",
-                            )}
-                            aria-label={item.isFavorite ? "Unfavorite" : "Favorite"}
-                          >
-                            <Star className={cn("size-3.5", item.isFavorite && "fill-current")} aria-hidden="true" />
-                          </button>
-                        )}
-                        {isFolder && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setRenamingId(item.id);
-                              setRenameValue(item.name);
-                            }}
-                            className="flex size-5 items-center justify-center rounded hover:bg-accent opacity-0 group-hover:opacity-100"
-                            aria-label="Rename folder"
-                          >
-                            <Pencil className="size-3.5" aria-hidden="true" />
-                          </button>
+                          <BoardItemMenu boardId={item.id} boardName={item.name} onRename={() => { setRenamingId(item.id); setRenameWsValue(item.name); setRenameEnteredAt(Date.now()); }} />
                         )}
                       </>
                     )}
@@ -890,6 +886,9 @@ export function WorkspacePanel() {
                                   <Star className={cn("size-3.5", child.isFavorite && "fill-current")} aria-hidden="true" />
                                 </button>
                               )}
+{child.type === "board" && (
+                                <BoardItemMenu boardId={child.id} boardName={child.name} onRename={() => { setRenamingId(child.id); setRenameWsValue(child.name); setRenameEnteredAt(Date.now()); }} />
+                              )}
                             </div>
                           </li>
                         );
@@ -914,24 +913,24 @@ export function WorkspacePanel() {
       {renamingId && currentContent.find((i) => i.id === renamingId)?.type !== "folder" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="w-full max-w-sm rounded-lg border bg-background p-4 shadow-lg">
-            <h3 className="text-sm font-semibold">Rename workspace</h3>
+            <h3 className="text-sm font-semibold">{currentContent.find((i) => i.id === renamingId)?.type === "board" ? "Rename board" : "Rename workspace"}</h3>
             <input
               autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
+              value={renameWsValue}
+              onChange={(e) => setRenameWsValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCommitRename()}
               className="mt-2 w-full rounded-md border px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
             />
             <div className="mt-3 flex justify-end gap-2">
               <button
-                onClick={() => { setRenamingId(null); setRenameValue(""); }}
+                onClick={() => { setRenamingId(null); setRenameWsValue(""); }}
                 className="rounded-md px-3 py-1.5 text-xs hover:bg-accent"
               >
                 Cancel
               </button>
               <button
                 onClick={handleCommitRename}
-                disabled={!renameValue.trim()}
+                disabled={!renameWsValue.trim()}
                 className="rounded-md bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
               >
                 Save

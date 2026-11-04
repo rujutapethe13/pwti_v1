@@ -729,6 +729,7 @@ try {
 
   const renameBoard = useCallback(
     async (boardId: string, name: string) => {
+      console.log("[renameBoard] args", { boardId, name });
       let prevWorkspaces: WorkspaceEntry[] | null = null;
       setWorkspaces((prev) => {
         prevWorkspaces = prev;
@@ -745,11 +746,12 @@ try {
         fd.set("boardId", boardId);
         fd.set("name", name);
         fd.set("updateSlug", "false");
-        const response = await renameBoardAction(fd);
-        if (response.error && prevWorkspaces) {
-          setWorkspaces(prevWorkspaces);
-          toast.error(response.error);
-        }
+          const response = await renameBoardAction(fd);
+          console.log("[renameBoard] response", response);
+          if (response.error && prevWorkspaces) {
+            setWorkspaces(prevWorkspaces);
+            toast.error(response.error);
+          }
       } catch {
         if (prevWorkspaces) setWorkspaces(prevWorkspaces);
         toast.error("Failed to rename board.");
