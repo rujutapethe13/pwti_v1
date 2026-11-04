@@ -140,6 +140,7 @@ export function WorkspacePanel() {
     sidebarCollapsed,
     toggleSidebar,
     hasHydrated,
+    renameBoardInState,
   } = useWorkspace();
 
   const [showDropdown, setShowDropdown] = useState(false);
@@ -215,18 +216,27 @@ export function WorkspacePanel() {
   const handleCommitRename = async () => {
     if (!renamingId || !renameWsValue.trim()) return;
     const item = currentContent.find((i) => i.id === renamingId);
+    const oldName = item?.name ?? "";
+    const newName = renameWsValue.trim();
     if (item?.type === "board") {
+      setRenamingId(null);
+      setRenameWsValue("");
+      renameBoardInState(renamingId, newName);
       const fd = new FormData();
       fd.set("boardId", renamingId);
-      fd.set("name", renameWsValue.trim());
+      fd.set("name", newName);
       fd.set("updateSlug", "false");
-      await renameBoard(fd);
-      router.refresh();
+      try {
+        await renameBoard(fd);
+      } catch (e) {
+        renameBoardInState(renamingId, oldName);
+        toast.error(e instanceof Error ? e.message : "Failed to rename");
+      }
     } else {
-      await renameWorkspace(renamingId, renameWsValue.trim());
+      await renameWorkspace(renamingId, newName);
+      setRenamingId(null);
+      setRenameWsValue("");
     }
-    setRenamingId(null);
-    setRenameWsValue("");
   };
 
   const handleCommitFolderRename = async () => {

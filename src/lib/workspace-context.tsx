@@ -78,6 +78,7 @@ export interface WorkspaceContextValue {
   switchWorkspace: (id: string) => void;
   createWorkspace: (name: string) => Promise<WorkspaceEntry>;
   renameWorkspace: (id: string, name: string) => void;
+  renameBoardInState: (boardKey: string, newName: string) => void;
   deleteWorkspace: (id: string) => void;
   updateBoardFavorite: (boardId: string, favorite: boolean) => void;
   toggleBoardFavorite: (boardId: string, favorited: boolean) => void;
@@ -565,6 +566,23 @@ try {
     }
   }, []);
 
+  const renameBoardInState = useCallback((boardKey: string, newName: string) => {
+    setWorkspaces((prev) =>
+      prev.map((ws) => ({
+        ...ws,
+        content: ws.content.map((item) => {
+          if (item.slug === boardKey || item.id === boardKey) {
+            return { ...item, name: newName };
+          }
+          if (item.children) {
+            return { ...item, children: item.children.map((c) => (c.slug === boardKey || c.id === boardKey ? { ...c, name: newName } : c)) };
+          }
+          return item;
+        }),
+      }))
+    );
+  }, []);
+
   const deleteWorkspace = useCallback(async (id: string) => {
     // No optimistic removal: the workspace stays in the sidebar
     // until the database confirms the delete. A delete the server
@@ -1029,6 +1047,7 @@ try {
       switchWorkspace,
       createWorkspace,
       renameWorkspace,
+      renameBoardInState,
       deleteWorkspace,
       updateBoardFavorite,
       toggleBoardFavorite,
@@ -1065,6 +1084,7 @@ try {
       switchWorkspace,
       createWorkspace,
       renameWorkspace,
+      renameBoardInState,
       deleteWorkspace,
       updateBoardFavorite,
       toggleBoardFavorite,
