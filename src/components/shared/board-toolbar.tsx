@@ -36,6 +36,7 @@ import { useScopeAccess } from "@/lib/members-client";
 import { MembersAccessModal } from "@/components/shared/members-access-modal";
 import { BoardSettingsDialog } from "@/components/shared/board-settings-dialog";
 import { AutomationCenterModal } from "@/features/automations/automation-center-modal";
+import { ManualTriggerButtons } from "@/components/triggers/manual-trigger-button";
 import type { BoardDefinition, ColumnDefinition } from "@/features/boards/engine/types";
 
 interface BoardToolbarProps {
@@ -162,6 +163,8 @@ export function BoardToolbar({ board, onNewItem, onImport, onExport, importing, 
       </DropdownMenu>
 
       <div className="flex-1" />
+
+      {!readOnly && <ManualTriggerButtons boardId={board.id} />}
 
             {!readOnly && members && members.length > 0 && (
         <DropdownMenu>

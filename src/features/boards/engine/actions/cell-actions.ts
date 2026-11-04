@@ -2,6 +2,7 @@
 
 import { updateCellSchema, bulkUpdateCellsSchema, clearCellSchema } from "../schemas/cell-schemas";
 import { CellService } from "../services/cell-service";
+import { checkChangeTriggers } from "@/features/triggers/engine";
 import type { ApiResponse } from "@/types";
 import type { ColumnValue } from "../types";
 
@@ -26,7 +27,27 @@ export async function updateCell(
     return { data: null, error: "Invalid input", status: 400 };
   }
 
-  return CellService.update(parsed.data, "system");
+  const result = await CellService.update(parsed.data, "system");
+
+  // Change-based triggers run after the save, fire-and-forget: never awaited
+  // by the user-facing path, and never able to fail the save.
+  void (async () => {
+    try {
+      await checkChangeTriggers({
+        boardId,
+        recordId,
+        boardName: boardId,
+        columnId,
+        oldValue: undefined,
+        newValue: value,
+        startedBy: "system",
+      });
+    } catch {
+      // Swallowed: trigger checks must never break a cell save.
+    }
+  })();
+
+  return result;
 }
 
 export async function bulkUpdateCells(

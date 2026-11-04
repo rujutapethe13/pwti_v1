@@ -54,6 +54,7 @@ export async function middleware(request: NextRequest) {
   const isAuthRoute = pathname.startsWith("/signin") || pathname.startsWith("/signup");
   const isPublicRoute =
     pathname === "/auth/callback" ||
+    pathname === "/api/boot-id" ||
     pathname.startsWith("/forgot-password") ||
     pathname.startsWith("/reset-password");
   const isApiRoute = pathname.startsWith("/api");
