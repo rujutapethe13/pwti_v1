@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname } from "next/navigation";
 
 import { DEFAULT_USER_SETTINGS, initialsFromName, type MeResponse } from "@/lib/account-types";
 import { getDeviceId, getDeviceLabel } from "@/lib/device-session";
@@ -105,11 +106,23 @@ async function fetchMe(): Promise<MeResponse | null> {
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const isPublicRoute =
+    pathname?.startsWith("/signin") ||
+    pathname?.startsWith("/signup") ||
+    pathname === "/auth/callback" ||
+    pathname?.startsWith("/forgot-password") ||
+    pathname?.startsWith("/reset-password") ||
+    false;
   const [snapshot, setSnapshot] = React.useState<MeResponse | null>(cache);
   const [loading, setLoading] = React.useState(cache === null);
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
+    if (isPublicRoute) {
+      setLoading(false);
+      return;
+    }
     setError(null);
     try {
       setSnapshot(await fetchMe());
@@ -118,12 +131,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [isPublicRoute]);
 
   React.useEffect(() => {
     if (cache) return;
+    if (isPublicRoute) {
+      setLoading(false);
+      return;
+    }
     void load();
-  }, [load]);
+  }, [load, isPublicRoute]);
 
   // A save in a settings tab calls applySnapshot, which is how the avatar in the
   // top bar updates without the tab having to know anything about the shell.
