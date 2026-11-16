@@ -37,8 +37,21 @@ export interface EmailNotificationPayload {
   time: string;
 }
 
-export type EmailProviderType = "gmail" | "outlook";
+export type EmailProviderType = "resend";
 
 export interface EmailProvider {
-  sendMail(to: string | string[], subject: string, html: string, text?: string): Promise<{ success: boolean; id?: string; error?: string }>;
+  send(input: {
+    to: string | string[];
+    cc?: string | string[];
+    bcc?: string | string[];
+    subject: string;
+    html: string;
+    text?: string;
+    replyTo?: string | string[];
+    attachments?: Array<{
+      filename: string;
+      content: string | Buffer;
+      contentType?: string;
+    }>;
+  }): Promise<{ ok: boolean; id?: string; error?: string; retries?: number }>;
 }

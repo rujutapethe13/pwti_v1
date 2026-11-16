@@ -5,6 +5,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isOwner, canManageWorkspace, OWNER_EMAIL } from "@/lib/board-access";
 import { resolveUserByEmail } from "@/lib/board-access";
 import { sendEmail } from "@/lib/email";
+import { resolveRecipients } from "@/lib/email/routing";
+import { accessDecisionTemplate } from "@/lib/email/templates";
 
 /**
  * Deny a pending board access request.
@@ -81,14 +83,22 @@ export async function GET(request: NextRequest) {
   if (result.success) {
     const userEmail = req.requester_email;
     if (userEmail) {
+      const { html, text, subject } = accessDecisionTemplate({
+        decision: "declined",
+        boardId: req.board_id,
+        requesterEmail: userEmail,
+      });
+      const recipients = resolveRecipients("access-declined", {
+        requesterEmail: userEmail,
+      });
       await sendEmail({
-        to: userEmail,
-        subject: "Access request declined",
-        html: `
-          <p>Your access request for board <strong>${req.board_id}</strong> has been declined.</p>
-          <p>If you need access, please contact a workspace administrator.</p>
-        `,
-        text: `Your access request for board ${req.board_id} has been declined.`,
+        to: recipients.to,
+        subject,
+        html,
+        text,
+        eventType: "access-declined",
+        identifier: `access:${req.board_id}`,
+        idempotencyKey: `access-declined|${userEmail.toLowerCase()}|${req.id}`,
       });
     }
   }

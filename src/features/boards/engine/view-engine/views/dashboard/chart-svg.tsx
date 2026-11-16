@@ -137,50 +137,58 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
   });
 
   const data = Array.from(byLabel.entries()).map(([label, d]) => ({ label, ...d }));
-  const total = data.reduce((s, d) => s + d.value, 0) || 1;
-
-  // Side-by-side only when the card is wide enough for both to stay legible;
-  // otherwise the legend wraps under the chart.
+  // Guard against non-finite totals so a NaN cell can't poison every slice.
+  const total = data.reduce((s, d) => s + (Number.isFinite(d.value) ? d.value : 0), 0) || 1;
+  // Default: hide zero-count categories so the legend matches real data only.
+  // "No value" is kept when it has real items (value > 0) like any other category.
+  const displayData = data.filter((d) => Number.isFinite(d.value) && d.value > 0);
+  const legendItems = displayData;
   const legendCols = width >= 420 ? 2 : 1;
-  const sideBySide = showLegend && width >= 320;
-  const legendW = sideBySide ? Math.min(220, Math.max(120, width * 0.45)) : 0;
-  const pieW = sideBySide ? width - legendW : width;
-  const legendRows = Math.ceil(data.length / Math.max(1, legendCols));
-  const pieH = sideBySide
-    ? height
-    : Math.max(60, Math.min(height * 0.6, height - 16 * legendRows));
-  const cx = pieW / 2;
-  const cy = pieH / 2;
-  const radius = Math.max(8, Math.min(cx, cy) - 16);
-  const innerRadius = type === "donut" ? radius * 0.5 : 0;
 
-  // Cumulative: convert each value into its running share of the total,
-  // so slice angles accumulate in the order the user sees them.
+  const TAU = 2 * Math.PI;
+  const EPS = 1e-4;
+
   let cumulative = -Math.PI / 2;
-  const slices = data.map((d) => {
-    const sliceValue = showCumulative
-      ? Math.max(0, total - d.value + d.value) // placeholder; we recompute below
-      : d.value;
-    const angle = ((showCumulative ? d.value : sliceValue) / total) * 2 * Math.PI;
+  const slices = displayData.map((d) => {
+    const angle = Math.min((d.value / total) * TAU, TAU);
     const start = cumulative;
     cumulative += angle;
     return { ...d, start, end: cumulative };
   });
 
-  // Recompute cumulative angles so each slice's arc represents its share
-  // of the running total in order (Pareto).
-  if (showCumulative) {
-    let running = -Math.PI / 2;
-    let accumulated = 0;
-    slices.forEach((s) => {
-      accumulated += s.value;
-      const a1 = running;
-      const a2 = -Math.PI / 2 + (accumulated / total) * 2 * Math.PI;
-      s.start = a1;
-      s.end = a2;
-      running = a2;
-    });
-  }
+  // One donut ring arc (outer arc + inner closing line) for a start/end pair.
+  const ringArc = (start: number, end: number): string => {
+    const sweep = end - start;
+    const largeArc = sweep > Math.PI ? 1 : 0;
+    const x1 = cx + radius * Math.cos(start);
+    const y1 = cy + radius * Math.sin(start);
+    const x2 = cx + radius * Math.cos(end);
+    const y2 = cy + radius * Math.sin(end);
+    const x3 = cx + innerRadius * Math.cos(start);
+    const y3 = cy + innerRadius * Math.sin(start);
+    const x4 = cx + innerRadius * Math.cos(end);
+    const y4 = cy + innerRadius * Math.sin(end);
+    return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} L ${x4} ${y4} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x3} ${y3} Z`;
+  };
+
+  // One pie slice (filled wedge from the centre).
+  const pieArc = (start: number, end: number): string => {
+    const largeArc = end - start > Math.PI ? 1 : 0;
+    const x1 = cx + radius * Math.cos(start);
+    const y1 = cy + radius * Math.sin(start);
+    const x2 = cx + radius * Math.cos(end);
+    const y2 = cy + radius * Math.sin(end);
+    return `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+  };
+  const sideBySide = showLegend && width >= 340;
+  const legendW = sideBySide ? Math.min(230, Math.max(130, width * 0.46)) : 0;
+  const pieW = sideBySide ? width - legendW : width;
+  const legendRows = Math.ceil(legendItems.length / Math.max(1, legendCols));
+  const pieH = sideBySide ? height : Math.max(90, Math.min(height * 0.62, height - 18 * legendRows - 8));
+  const cx = pieW / 2;
+  const cy = pieH / 2;
+  const radius = Math.max(10, Math.min(cx, cy) - 14);
+  const innerRadius = type === "donut" ? radius * 0.5 : 0;
 
   return (
     <div
@@ -198,27 +206,32 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
       >
         <g>
           {slices.map((s, i) => {
-            const x1 = cx + radius * Math.cos(s.start);
-            const y1 = cy + radius * Math.sin(s.start);
-            const x2 = cx + radius * Math.cos(s.end);
-            const y2 = cy + radius * Math.sin(s.end);
-            const x3 = cx + innerRadius * Math.cos(s.start);
-            const y3 = cy + innerRadius * Math.sin(s.start);
-            const x4 = cx + innerRadius * Math.cos(s.end);
-            const y4 = cy + innerRadius * Math.sin(s.end);
-            const largeArc = s.value / total > 0.5 ? 1 : 0;
-            const path =
-              type === "donut"
-                ? `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} L ${x4} ${y4} A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${x3} ${y3} Z`
-                : `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+            const sweep = s.end - s.start;
+            const fullRing = sweep >= TAU - EPS;
+            const percent = (s.value / total) * 100;
+            const pctNum = Number.isFinite(percent) ? percent : 0;
+            const onSliceText = showValueAs === "value" ? String(s.value) : `${pctNum.toFixed(pctNum >= 10 ? 0 : 1)}%`;
             const midAngle = (s.start + s.end) / 2;
             const labelR = radius * (type === "donut" ? 0.75 : 0.65);
             const lx = cx + labelR * Math.cos(midAngle);
             const ly = cy + labelR * Math.sin(midAngle);
 
-            const percent = ((s.value / total) * 100);
-            const pctNum = percent;
-            const onSliceText = showValueAs === "value" ? String(s.value) : `${pctNum.toFixed(pctNum >= 10 ? 0 : 1)}%`;
+            // A single 100% slice: start == end collapses an SVG arc to
+            // nothing, so draw a full ring instead. Two half arcs keep the
+            // donut hole empty without a degenerate path; a pie is a circle.
+            const isFullCircle = fullRing && type !== "donut";
+            const pathStr = isFullCircle
+              ? undefined
+              : type === "donut"
+                ? fullRing
+                  ? `${ringArc(s.start, s.start + Math.PI)} ${ringArc(s.start + Math.PI, s.end)}`
+                  : ringArc(s.start, s.end)
+                : pieArc(s.start, s.end);
+            const shape = isFullCircle ? (
+              <circle key={i} cx={cx} cy={cy} r={radius} fill={s.color} />
+            ) : (
+              <path key={i} d={pathStr!} fill={s.color} />
+            );
             return (
               <g key={`${s.label}-${i}`} onMouseMove={(e) => {
                   const rect = (e.currentTarget.ownerSVGElement?.getBoundingClientRect?.()) ?? null;
@@ -237,7 +250,7 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
                 onClick={onLabelClick ? () => onLabelClick(s.label) : undefined}
                 style={{ cursor: onLabelClick ? "pointer" : "default" }}
               >
-                <path d={path} fill={s.color} />
+                {shape}
                 {showLabels && pctNum > 8 && (
                   <text x={lx} y={ly} textAnchor="middle" className="fill-background text-[9px] font-medium pointer-events-none">
                     {onSliceText}
@@ -262,7 +275,7 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
         </div>
       )}
       </div>
-      {showLegend && (
+      {showLegend && legendItems.length > 0 && (
         <div
           className="grid min-w-0 gap-x-3 gap-y-1 overflow-hidden text-[10px]"
           style={{
@@ -273,7 +286,7 @@ function PieChart({ type, series, showLegend, showLabels, width, height, showVal
             gridTemplateColumns: `repeat(${sideBySide ? legendCols : Math.max(1, Math.floor(width / 140))}, minmax(0, 1fr))`,
           }}
         >
-          {data.map((d) => {
+          {legendItems.map((d) => {
             const pct = (d.value / total) * 100;
             const legendValue =
               showValueAs === "value" ? String(d.value) : `${pct.toFixed(pct >= 10 ? 0 : 1)}%`;

@@ -248,7 +248,7 @@ export function ImportWizardModal({
       const title =
         typeof titleVal === "string" && titleVal.length > 0
           ? titleVal
-          : `Imported row ${rowIdx + 1}`;
+          : "";
       return { id: `rec-${rowIdx}`, title, cells };
     });
 
@@ -677,7 +677,7 @@ function Step2FirstColumn({
       <div className="text-xs text-muted-foreground">
         {titleColumnIndex
           ? `Column "${titleColumnIndex}" will be used as the item name.`
-          : "Titles will be auto-generated (e.g., \"Imported row 1\")."}
+          : "No title column selected — item names will be left blank."}
       </div>
     </div>
   );

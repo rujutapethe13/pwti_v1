@@ -27,7 +27,22 @@ export function formatRelativeIST(iso?: string | null): string {
   } catch { return formatDateTimeIST(iso); }
 }
 
-export function getUserLabel(name?: string | null): string {
-  if (!name || name.trim() === '') return 'Former member';
+export function getUserLabel(name?: string | null, members?: Array<{ user_id: string; id?: string; name?: string; full_name?: string; email?: string }>): string {
+  if (!name || (typeof name === 'string' && name.trim() === '')) { return 'Former member'; }
+  if (members && members.length > 0 && typeof name === 'string') {
+    const member = members.find(m => m.user_id === name || m.id === name);
+      if (member) {
+        const displayName = member.name || (member as any).full_name || member.email;
+        if (displayName && displayName.trim()) { return displayName; }
+        return 'Former member';
+      }
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) {
+        return 'Former member';
+      }
+  } else if (typeof name === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(name)) {
+    console.log('DEBUG_GUL_LOADING', name, members?.length);
+    return '';
+  }
+  console.log('DEBUG_GUL_FALLBACK', name);
   return name;
 }

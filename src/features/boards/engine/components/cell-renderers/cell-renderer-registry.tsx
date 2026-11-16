@@ -17,6 +17,7 @@
  */
 
 import type { ColumnTypeKey, ColumnValue, ColumnDefinition, DropdownOption } from "../../types";
+import { cellText } from "../../lib/cell-value";
 import type { ComponentType } from "react";
 
 export interface CellRendererComponentProps {
@@ -77,8 +78,5 @@ export function DefaultCellRenderer({ value }: CellRendererComponentProps) {
 }
 
 export function resolveDisplayValue(value: ColumnValue): string {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return JSON.stringify(value);
+  return cellText(value);
 }

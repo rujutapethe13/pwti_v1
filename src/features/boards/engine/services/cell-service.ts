@@ -16,11 +16,20 @@ import type { DomainEventPayload } from "../events/event-types";
 import type { ApiResponse } from "@/types";
 import type { ColumnValue, ColumnDefinition } from "../types";
 import type { UpdateCellInput, BulkUpdateCellsInput, ClearCellInput } from "../schemas/cell-schemas";
+import { isEmptyDateValue, normalizeDateToYmd } from "@/features/automations/date-utils";
+import { toValueText } from "../lib/cell-value";
 
 initializeActivityLogging();
 
 const cellRepo = new CellRepository();
 const columnRepo = new ColumnRepository();
+
+function normalizeDateCell(column: ColumnDefinition | undefined, value: unknown): ColumnValue {
+  if (!column || (column.type !== "date" && column.type !== "timeline")) return value as ColumnValue;
+  if (isEmptyDateValue(value)) return null;
+  const ymd = normalizeDateToYmd(value);
+  return ymd !== null ? ymd : null;
+}
 
 export const CellService = {
   /**
@@ -36,9 +45,10 @@ export const CellService = {
       return { data: null, error: "Column not found", status: 404 };
     }
 
-    const valueText = typeof input.value === "string"
-      ? input.value
-      : JSON.stringify(input.value);
+    const column = columnResult.data;
+    const normalizedValue = normalizeDateCell(column, input.value);
+
+    const valueText = toValueText(normalizedValue);
 
     const result = await cellRepo.upsert({
       id: cellId,
@@ -47,7 +57,7 @@ export const CellService = {
       boardId: input.boardId,
       recordId: input.recordId,
       columnId: input.columnId,
-      value: input.value,
+      value: normalizedValue,
       valueText,
       version: 1,
     } as Parameters<typeof cellRepo.upsert>[0]);
@@ -71,12 +81,12 @@ export const CellService = {
         actorUserId,
         scope,
         before: null,
-        after: { value: input.value } as unknown as Record<string, unknown>,
+        after: { value: normalizedValue } as unknown as Record<string, unknown>,
         metadata: { recordId: input.recordId, columnId: input.columnId },
       });
     }
 
-    return { data: { id: cellId, value: input.value as ColumnValue }, error: null, status: 200 };
+    return { data: { id: cellId, value: normalizedValue as ColumnValue }, error: null, status: 200 };
   },
 
   /**
@@ -100,12 +110,15 @@ export const CellService = {
       metadata: { count: input.updates.length },
     });
 
+    const columnsResult = await columnRepo.findByBoard(input.boardId);
+    const colMap = new Map<string, ColumnDefinition>();
+    for (const c of columnsResult.data || []) colMap.set(c.id, c);
+
     await cellRepo.upsertMany(
       input.updates.map((update) => {
         const cellId = `${input.boardId}:${update.recordId}:${update.columnId}`;
-        const valueText = typeof update.value === "string"
-          ? update.value
-          : JSON.stringify(update.value);
+        const normalizedValue = normalizeDateCell(colMap.get(update.columnId), update.value);
+        const valueText = toValueText(normalizedValue);
         return {
           id: cellId,
           organization_id: input.organizationId,
@@ -113,7 +126,7 @@ export const CellService = {
           board_id: input.boardId,
           record_id: update.recordId,
           column_id: update.columnId,
-          value: update.value,
+          value: normalizedValue,
           value_text: valueText,
           version: 1,
         };

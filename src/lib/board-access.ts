@@ -20,10 +20,12 @@ import { createServiceClient } from "@/lib/supabase/server";
  * The workspace owner / admin who always has full access to every board
  * and is the only one (besides other admins) who can manage restrictions.
  *
- * To extend admin rights to additional people, insert rows into
- * `board_admins` with role = 'admin' (or 'owner' to transfer ownership).
+ * Configured via the OWNER_EMAIL environment variable (defaults to the
+ * original value for backward compatibility). To extend admin rights to
+ * additional people, insert rows into `board_admins` with role = 'admin'
+ * (or 'owner' to transfer ownership).
  */
-export const OWNER_EMAIL = "rujutapethe@gmail.com";
+export const OWNER_EMAIL = (process.env.OWNER_EMAIL || "rujutapethe@gmail.com").toLowerCase();
 
 /**
  * Resolve a user's email to their Supabase auth user_id.

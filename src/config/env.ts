@@ -36,13 +36,21 @@ const clientEnvSchema = z.object({
 });
 
 const serverEnvSchema = z.object({
-  SUPABASE_SERVICE_ROLE_KEY: z
-    .string()
-    .min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1, "SUPABASE_SERVICE_ROLE_KEY is required"),
   OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
-  RESEND_API_KEY: z
-    .string()
-    .min(1, "RESEND_API_KEY is required for access-request email notifications"),
+  RESEND_API_KEY: z.string().min(1, "RESEND_API_KEY is required for access-request email notifications"),
+  // Email provider: "resend" (default) or "gmail".
+  EMAIL_PROVIDER: z.enum(["resend", "gmail"]).default("resend").optional(),
+  // Per-event provider override, e.g. EMAIL_PROVIDER_AUTH=resend keeps
+  // password-reset/changed emails on Resend while other events use Gmail.
+  EMAIL_PROVIDER_AUTH: z.enum(["resend", "gmail"]).optional(),
+  // Gmail API (personal Gmail) — optional; only required when EMAIL_PROVIDER=gmail.
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GMAIL_SENDER: z.string().optional(),
+  // 32-byte base64 AES-256-GCM key for encrypting the stored refresh token.
+  EMAIL_ENCRYPTION_KEY: z.string().optional(),
+  ADMIN_SETUP_SECRET: z.string().optional(),
 });
 
 function createEnvProxy<T extends object>(
@@ -77,6 +85,13 @@ const serverEnvRaw = {
   SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   RESEND_API_KEY: process.env.RESEND_API_KEY,
+  EMAIL_PROVIDER: process.env.EMAIL_PROVIDER,
+  EMAIL_PROVIDER_AUTH: process.env.EMAIL_PROVIDER_AUTH,
+  GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+  GMAIL_SENDER: process.env.GMAIL_SENDER,
+  EMAIL_ENCRYPTION_KEY: process.env.EMAIL_ENCRYPTION_KEY,
+  ADMIN_SETUP_SECRET: process.env.ADMIN_SETUP_SECRET,
 };
 
 const clientParsed = clientEnvSchema.safeParse(clientEnvRaw);

@@ -35,6 +35,9 @@ export function ViewEngine({
   onCellChange,
   onRecordCreate,
   onRecordTitleChange,
+  onBulkRecordTitleChange,
+  onBulkCellChange,
+  onBulkNewItem,
   onNewItem,
   columnOps,
   groupOps,
@@ -84,6 +87,9 @@ export function ViewEngine({
       onCellChange,
       onRecordCreate,
       onRecordTitleChange,
+      onBulkRecordTitleChange,
+      onBulkCellChange,
+      onBulkNewItem,
       onNewItem,
       columnOps,
       groupOps,
@@ -100,7 +106,7 @@ export function ViewEngine({
       bulkArchiveLoading,
       bulkDeleteLoading,
     }),
-    [board, view, columns, records, cellValues, boardData.cellMetadata, groups, settings, onCellChange, onRecordCreate, onRecordTitleChange, onNewItem, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
+    [board, view, columns, records, cellValues, boardData.cellMetadata, groups, settings, onCellChange, onRecordCreate, onRecordTitleChange, onBulkRecordTitleChange, onBulkCellChange, onBulkNewItem, onNewItem, columnOps, groupOps, onUpdateView, onBulkArchive, onBulkDelete, onRowDelete, onRowDuplicate, onMoveToGroup, onMoveToStatus, bulkArchiveLoading, bulkDeleteLoading],
   );
 
   if (!viewPlugin || viewPlugin.placeholder) {

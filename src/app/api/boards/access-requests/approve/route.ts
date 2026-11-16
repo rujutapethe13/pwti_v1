@@ -5,6 +5,8 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { isOwner, canManageWorkspace, OWNER_EMAIL } from "@/lib/board-access";
 import { resolveUserByEmail } from "@/lib/board-access";
 import { sendEmail, buildApproveUrl, buildDenyUrl } from "@/lib/email";
+import { resolveRecipients } from "@/lib/email/routing";
+import { accessDecisionTemplate } from "@/lib/email/templates";
 
 /**
  * Approve a pending board access request.
@@ -87,14 +89,22 @@ export async function GET(request: NextRequest) {
     // Notify the requester via email
     const userEmail = req.requester_email;
     if (userEmail) {
+      const { html, text, subject } = accessDecisionTemplate({
+        decision: "approved",
+        boardId: req.board_id,
+        requesterEmail: userEmail,
+      });
+      const recipients = resolveRecipients("access-approved", {
+        requesterEmail: userEmail,
+      });
       await sendEmail({
-        to: userEmail,
-        subject: "Access request approved",
-        html: `
-          <p>Your access request for board <strong>${req.board_id}</strong> has been approved.</p>
-          <p>You can now open the board in Powerweave Studio OS.</p>
-        `,
-        text: `Your access request for board ${req.board_id} has been approved.`,
+        to: recipients.to,
+        subject,
+        html,
+        text,
+        eventType: "access-approved",
+        identifier: `access:${req.board_id}`,
+        idempotencyKey: `access-approved|${userEmail.toLowerCase()}|${req.id}`,
       });
     }
   }

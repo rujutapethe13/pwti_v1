@@ -5,6 +5,9 @@ import { cookies } from "next/headers";
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { isBoardRestricted, OWNER_EMAIL } from "@/lib/board-access";
 import { sendEmail, buildApproveUrl, buildDenyUrl } from "@/lib/email";
+import { resolveRecipients } from "@/lib/email/routing";
+import { accessRequestTemplate } from "@/lib/email/templates";
+import { createHash } from "node:crypto";
 
 export async function POST(
   request: NextRequest,
@@ -100,39 +103,29 @@ export async function POST(
     const approveUrl = buildApproveUrl(responseToken);
     const denyUrl = buildDenyUrl(responseToken);
 
+    const { html, text, subject } = accessRequestTemplate({
+      requesterName: userName,
+      requesterEmail: userEmail,
+      boardName,
+      approveUrl,
+      denyUrl,
+      requestId: newRequest.id,
+    });
+
+    const recipients = resolveRecipients("access-request");
+
+    const idempotencyKey = createHash("sha256")
+      .update(`access-request|${OWNER_EMAIL.toLowerCase()}|${newRequest.id}`)
+      .digest("hex");
+
     await sendEmail({
-      to: OWNER_EMAIL,
-      subject: `Access request: "${boardName}" board`,
-      html: `
-        <h2>Board access request</h2>
-        <p><strong>${userName}</strong> (${userEmail}) is requesting access to the board <strong>${boardName}</strong>.</p>
-        <table cellpadding="8" style="margin: 16px 0;">
-          <tr>
-            <td><strong>Board:</strong></td>
-            <td>${boardName}</td>
-          </tr>
-          <tr>
-            <td><strong>Requested by:</strong></td>
-            <td>${userName} (${userEmail})</td>
-          </tr>
-          <tr>
-            <td><strong>Request ID:</strong></td>
-            <td>${newRequest.id}</td>
-          </tr>
-        </table>
-        <p style="margin: 20px 0;">
-          <a href="${approveUrl}" style="background:#10b981;color:white;padding:10px 20px;border-radius:6px;text-decoration:none;margin-right:12px;">Approve</a>
-          <a href="${denyUrl}" style="background:#ef4444;color:white;padding:10px 20px;border-radius:6px;text-decoration:none;">Deny</a>
-        </p>
-      `,
-      text: `
-Board access request
-
-${userName} (${userEmail}) is requesting access to the board "${boardName}".
-
-Approve: ${approveUrl}
-Deny:   ${denyUrl}
-      `,
+      to: recipients.to,
+      subject,
+      html,
+      text,
+      eventType: "access-request",
+      identifier: "request-access",
+      idempotencyKey,
     });
 
     return NextResponse.json(

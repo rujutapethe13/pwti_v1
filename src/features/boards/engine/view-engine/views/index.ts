@@ -88,6 +88,7 @@ function TableViewRenderer(props: ViewRendererProps) {
     onColumnToggleFrozen: ops.onColumnToggleFrozen,
     onColumnChangeType: ops.onColumnChangeType,
     onColumnDelete: ops.onColumnDelete,
+    canEditColumns: ops.canEditColumns,
     deletingColumnId: ops.deletingColumnId,
     onColumnAdd: ops.onColumnAdd,
     onColumnResize: ops.onColumnResize,
@@ -101,6 +102,7 @@ function TableViewRenderer(props: ViewRendererProps) {
     onColumnToggleRestrictView: ops.onColumnToggleRestrictView,
     onColumnManageAccess: ops.onColumnManageAccess,
     members: ops.members,
+    membersLoading: (ops as any).membersLoading,
     onColumnToggleWrapText: ops.onColumnToggleWrapText,
     sortColumnId: ops.sortColumnId,
     sortDirection: ops.sortDirection,
@@ -118,12 +120,15 @@ function TableViewRenderer(props: ViewRendererProps) {
     onUpdateGroupColumnMode: groupOps.onUpdateGroupColumnMode,
     onBulkArchive: props.onBulkArchive,
     onBulkDelete: props.onBulkDelete,
+    onBulkCellChange: props.onBulkCellChange,
+    onBulkRecordTitleChange: props.onBulkRecordTitleChange,
     onRowDelete: props.onRowDelete,
     onRowDuplicate: props.onRowDuplicate,
     onMoveToGroup: props.onMoveToGroup,
     onMoveToStatus: props.onMoveToStatus,
     bulkArchiveLoading: props.bulkArchiveLoading,
     bulkDeleteLoading: props.bulkDeleteLoading,
+    onBulkNewItem: props.onBulkNewItem,
   });
 }
 

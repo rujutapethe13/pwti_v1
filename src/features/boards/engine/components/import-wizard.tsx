@@ -791,7 +791,7 @@ export function ImportWizard({
               createsNewGroup={createsNewGroup}
               titleColumnLabel={effectiveTitleColumnLabel}
               previewRows={parsed.rows.slice(0, 3).map((row, index) => ({
-                title: titleColumnFileHeader ? String(row[titleColumnFileHeader] ?? `Imported row ${index + 1}`) : `Imported row ${index + 1}`,
+                title: titleColumnFileHeader ? String(row[titleColumnFileHeader] ?? "") : "",
                 date: (() => {
                   const dateMapping = mappableMappings.find((m) => {
                     const action = m.action;

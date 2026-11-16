@@ -134,7 +134,7 @@ const STATUS_VALUES_BY_COLUMN: Record<string, string[]> = {
 const DATE_COLUMNS = ["Date of Upload", "Receive Date", "Inward Date", "Due Date", "Payment Due Date"];
 
 const DATE_TIMING_OPTIONS = [
-  { value: "is_inputted", label: "is inputted in the data" },
+  { value: "is_inputted", label: "changes from empty to a valid date" },
   { value: "on_date", label: "On the date" },
   { value: "1_day_before", label: "1 day before" },
   { value: "2_days_before", label: "2 days before" },
@@ -405,7 +405,7 @@ export function AutomationCenterModal({
     },
   ]);
   const [isTitleManual, setIsTitleManual] = React.useState(false);
-  const [builderRuleName, setBuilderRuleName] = React.useState("When Date of Upload is inputted in the data, change Status to Done");
+  const [builderRuleName, setBuilderRuleName] = React.useState("When Date of Upload changes from empty to a valid date, change Status to Done");
   const [builderDryRun, setBuilderDryRun] = React.useState(false);
 
   // Auto-sync builder title with recipe whenever tokens change, unless user typed a custom title
@@ -413,7 +413,7 @@ export function AutomationCenterModal({
     if (!isTitleManual) {
       let whenPart = "";
       if (builderTriggerTiming === "is_inputted" || builderTriggerType === "date_inputted") {
-        whenPart = `When ${builderTriggerColumn} is inputted in the data`;
+        whenPart = `When ${builderTriggerColumn} changes from empty to a valid date`;
       } else if (builderTriggerType === "date_arrives") {
         const timingLabel = DATE_TIMING_OPTIONS.find((t) => t.value === builderTriggerTiming)?.label ?? "On the date";
         whenPart = `When ${builderTriggerColumn} arrives (${timingLabel})`;
@@ -648,7 +648,7 @@ export function AutomationCenterModal({
       whenText = `When ${builderTriggerColumn} changes to ${builderTriggerValue}`;
     } else if (builderTriggerType === "date_arrives" || builderTriggerType === "date_inputted") {
       if (builderTriggerTiming === "is_inputted" || builderTriggerType === "date_inputted") {
-        whenText = `When ${builderTriggerColumn} is inputted in the data`;
+        whenText = `When ${builderTriggerColumn} changes from empty to a valid date`;
       } else {
         const timingLabel = DATE_TIMING_OPTIONS.find((t) => t.value === builderTriggerTiming)?.label ?? "On the date";
         whenText = `When ${builderTriggerColumn} arrives (${timingLabel})`;
@@ -931,8 +931,8 @@ export function AutomationCenterModal({
           targetValue: "Done",
         },
       ]);
-      setBuilderRuleName("When Date of Upload is inputted in the data, change Status to Done");
-      toast.info("Loaded recipe: Date of Upload inputted → Status Done");
+      setBuilderRuleName("When Date of Upload changes from empty to a valid date, change Status to Done");
+      toast.info("Loaded recipe: Date of Upload empty → valid date → Status Done");
     } else if (preset === "status_done_move") {
       setBuilderTriggerType("status_change");
       setBuilderTriggerLabel("Status changes to");
@@ -1571,7 +1571,7 @@ export function AutomationCenterModal({
                         >
                           <Zap className="size-3.5" />
                           {builderTriggerTiming === "is_inputted" || builderTriggerType === "date_inputted"
-                            ? "Date is inputted"
+                            ? "Date changes from empty to a valid date"
                             : builderTriggerLabel}
                           <ChevronDown className="size-3.5 opacity-60 ml-1" />
                         </Button>
@@ -1581,13 +1581,13 @@ export function AutomationCenterModal({
                         <DropdownMenuItem
                           onClick={() => {
                             setBuilderTriggerType("date_arrives");
-                            setBuilderTriggerLabel("Date is inputted");
+                            setBuilderTriggerLabel("Date changes from empty to a valid date");
                             setBuilderTriggerColumn("Date of Upload");
                             setBuilderTriggerTiming("is_inputted");
                           }}
                         >
                           <Calendar className="size-3.5 mr-2 text-blue-500" />
-                          Date is inputted in the data
+                          Date changes from empty to a valid date
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
@@ -1715,7 +1715,7 @@ export function AutomationCenterModal({
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="outline" className="h-9 px-3 gap-1 font-semibold border-indigo-500/30 bg-indigo-500/10 text-indigo-700 dark:text-indigo-300">
-                              {DATE_TIMING_OPTIONS.find((t) => t.value === builderTriggerTiming)?.label ?? "is inputted in the data"}
+                              {DATE_TIMING_OPTIONS.find((t) => t.value === builderTriggerTiming)?.label ?? "changes from empty to a valid date"}
                               <ChevronDown className="size-3.5 ml-1 opacity-70" />
                             </Button>
                           </DropdownMenuTrigger>

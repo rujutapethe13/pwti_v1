@@ -10,6 +10,7 @@ import {
   recordItemAlert,
   createTriggerLog,
 } from "./storage";
+import { isEmptyDateValue, isValidDateString } from "@/features/automations/date-utils";
 import type {
   Trigger,
   TriggerCondition,
@@ -330,7 +331,7 @@ export async function runTrigger(
         recordId: r.id,
         boardId: r.board_id,
         boardName: board.name,
-        title: r.title || "Untitled",
+        title: r.title ?? "",
         cells,
         updatedAt: r.updated_at,
       };
@@ -493,7 +494,7 @@ function groupChangeMatches(trigger: Trigger, input: CheckChangeTriggerInput): b
     if (!sameColumn) return false;
     if (c.operator === "equals" && newVal !== "" && newVal !== oldVal && newVal === asStr(c.value).toLowerCase().trim()) return true;
     if (c.operator === "not_equals" && oldVal === asStr(c.value).toLowerCase().trim() && newVal !== oldVal) return true;
-    if (c.operator === "is_not_empty" && newVal !== "" && oldVal === "") return true;
+    if (c.operator === "is_not_empty" && !isEmptyDateValue(input.newValue) && isEmptyDateValue(input.oldValue) && isValidDateString(input.newValue)) return true;
     return false;
   });
 }

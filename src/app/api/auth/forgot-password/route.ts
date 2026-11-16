@@ -15,6 +15,8 @@ import {
   recordSecurityEvent,
 } from "@/lib/account-security";
 import { clientEnv } from "@/config/env";
+import { resolveRecipients } from "@/lib/email/routing";
+import { passwordResetTemplate } from "@/lib/email/templates";
 
 export const runtime = "nodejs";
 
@@ -148,26 +150,17 @@ async function issueResetToken(
 
   const resetUrl = `${clientEnv.NEXT_PUBLIC_APP_URL}/reset-password?token=${encodeURIComponent(token)}`;
 
+  const { html, text, subject } = passwordResetTemplate({ resetUrl });
+  const recipients = resolveRecipients("password-reset", { userEmail: email });
+
   const result = await sendEmail({
-    to: email,
-    subject: "Reset your password",
-    html: `
-      <p>We received a request to reset your password.</p>
-      <p>
-        <a href="${resetUrl}"
-           style="background:#4f46e5;color:white;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">
-          Reset password
-        </a>
-      </p>
-      <p>This link can be used once and expires in 30 minutes.</p>
-      <p>If you did not request this, you can ignore this email — your password will not change.</p>
-    `,
-    text:
-      "We received a request to reset your password.\n\n" +
-      "Reset password: " +
-      resetUrl +
-      "\n\nThis link can be used once and expires in 30 minutes.\n" +
-      "If you did not request this, you can ignore this email — your password will not change.",
+    to: recipients.to,
+    subject,
+    html,
+    text,
+    eventType: "password-reset",
+    identifier: `forgot-password:${email}`,
+    idempotencyKey: `password-reset|${email.toLowerCase().trim()}`,
   });
 
   if (!result.success) {

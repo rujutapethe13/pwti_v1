@@ -398,7 +398,7 @@ describe("buildRecordFromRow", () => {
     expect(built.recordTitle).toBe("Acme");
     expect(built.cellValues).toEqual({ "col-status": "opt-done" });
   });
-  it("falls back to a generated title when no title column is mapped", () => {
+  it("leaves the title blank when no title column is mapped", () => {
     const built = buildRecordFromRow(
       { Client: "Acme" },
       4,
@@ -407,7 +407,7 @@ describe("buildRecordFromRow", () => {
       null,
       {},
     );
-    expect(built.recordTitle).toBe("Imported row 5");
+    expect(built.recordTitle).toBe("");
   });
   it("coerces checkbox values from common string forms", () => {
     const col = makeColumn("col-check", "Done", "checkbox", 0);

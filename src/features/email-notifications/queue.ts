@@ -71,8 +71,8 @@ export class EmailQueue {
           time: item.time,
         });
 
-        if (result.success) {
-          await updateNotificationLog(log.id, { status: 'sent', sentAt: new Date().toISOString(), retryCount });
+        if (result.ok) {
+          await updateNotificationLog(log.id, { status: 'sent', sentAt: new Date().toISOString(), retryCount: result.retries ?? retryCount });
         } else {
           throw new Error(result.error || 'Send failed');
         }

@@ -3,6 +3,7 @@
 import { toast } from "sonner";
 import type { AutomationRule, AutomationAuditLog } from "./types";
 import { getBoardAutomations, saveBoardAutomations, recordAutomationLog } from "./automation-storage";
+import { isEmptyDateValue, isValidDateString } from "./date-utils";
 import type { ColumnDefinition, Group as GroupDefinition, BoardRecord as RecordItem, ColumnValue } from "@/features/boards/engine/types";
 import { getColumnOptions } from "@/features/boards/engine/lib/option-lookup";
 
@@ -37,6 +38,7 @@ export async function executeBoardCellAutomations(
   recordId: string,
   columnId: string,
   newValue: ColumnValue,
+  oldValue: unknown,
   ctx: BoardAutomationContext,
   options?: { silent?: boolean }
 ): Promise<boolean> {
@@ -81,9 +83,12 @@ export async function executeBoardCellAutomations(
           : colLabel === targetColName ||
             (editedCol.key || "").trim().toLowerCase() === targetColName);
 
-      const hasValue = newValue !== null && newValue !== undefined && String(newValue).trim() !== "";
+      // Fire ONLY on empty -> valid date transition, and only on an actual change.
+      const oldEmpty = isEmptyDateValue(oldValue);
+      const newValid = isValidDateString(newValue);
+      const changed = oldValue !== newValue;
 
-      if (colMatches && hasValue) {
+      if (colMatches && oldEmpty && newValid && changed) {
         matches = true;
         matchReason = `Date inputted into "${editedCol.label}"`;
       }
@@ -100,8 +105,8 @@ export async function executeBoardCellAutomations(
 
       if (isStatusCol) {
         // Resolve option label for newValue if options exist
-        const options = getColumnOptions(editedCol);
-        const opt = options.find((o) => o.id === newValue || o.label.toLowerCase() === String(newValue).toLowerCase());
+const columnOptions = getColumnOptions(editedCol);
+          const opt = columnOptions.find((o) => o.id === newValue || o.label.toLowerCase() === String(newValue).toLowerCase());
         const resolvedVal = opt?.label || String(newValue);
 
         const targetToVal = (rule.trigger.toValue || "Done").toLowerCase();
@@ -120,7 +125,6 @@ export async function executeBoardCellAutomations(
     // 3. TRIGGER: Generic column change or cell change
     if (
       rule.trigger.type === "column_change" ||
-      rule.trigger.type === "cell_change" ||
       rule.trigger.type === "value_change"
     ) {
       const targetColName = (rule.trigger.columnName || "").trim().toLowerCase();
@@ -180,9 +184,9 @@ export async function executeBoardCellAutomations(
           const currentStatus = cellValues.get(statusKey);
 
           // Find option ID for target value (e.g. opt-done for "Done")
-          const options = getColumnOptions(statusCol);
+          const statusOptions = getColumnOptions(statusCol);
           const targetValStr = action.targetValue || "Done";
-          const matchingOpt = options.find(
+          const matchingOpt = statusOptions.find(
             (o) =>
               o.label?.toLowerCase() === targetValStr.toLowerCase() ||
               o.id?.toLowerCase() === targetValStr.toLowerCase()
@@ -217,7 +221,7 @@ export async function executeBoardCellAutomations(
 
             // Cascading check: trigger next rule in sequence if appropriate
             setTimeout(() => {
-              void executeBoardCellAutomations(recordId, statusCol.id, valToSet, ctx, options);
+              void executeBoardCellAutomations(recordId, statusCol.id, valToSet, undefined, ctx, options);
             }, 50);
           }
         }
@@ -306,7 +310,7 @@ export async function executeBoardCellAutomations(
 export async function runAllActiveBoardAutomations(
   ctx: BoardAutomationContext,
   options?: { silent?: boolean; targetRuleId?: string }
-): Promise<{ appliedCount: number; summaries: string[] }> {
+): Promise<{ appliedCount: number; skippedCount: number; summaries: string[] }> {
   const { board, columns, records, cellValues } = ctx;
   const rawRules = getBoardAutomations(board.id);
   const activeRules = rawRules.filter(
@@ -317,31 +321,83 @@ export async function runAllActiveBoardAutomations(
     if (!options?.silent) {
       toast.info("No active automations on this board. Enable a rule first.");
     }
-    return { appliedCount: 0, summaries: [] };
+    return { appliedCount: 0, skippedCount: 0, summaries: [] };
   }
 
-  let totalApplied = 0;
-  const allSummaries: string[] = [];
-
-  for (const record of records) {
-    for (const col of columns) {
-      const val = cellValues.get(`${record.id}:${col.id}`);
-      if (val !== undefined && val !== null && String(val).trim() !== "") {
-        const applied = await executeBoardCellAutomations(record.id, col.id, val, ctx, {
-          silent: options?.silent,
-        });
-        if (applied) {
-          totalApplied++;
+  // Resolve date-trigger columns so "Run now" can evaluate each record once.
+  const dateTriggerRules = activeRules.filter(
+    (r) =>
+      r.trigger.type === "date_inputted" ||
+      r.trigger.type === "date_arrives" ||
+      r.trigger.timing === "is_inputted"
+  );
+  const dateColIds = new Set<string>();
+  for (const r of dateTriggerRules) {
+    if (r.trigger.columnId) dateColIds.add(r.trigger.columnId);
+    else {
+      const target = (r.trigger.columnName || "Date of Upload").trim().toLowerCase();
+      for (const c of columns) {
+        if (
+          (c.label || "").trim().toLowerCase() === target ||
+          (c.key || "").trim().toLowerCase() === target
+        ) {
+          dateColIds.add(c.id);
         }
       }
     }
   }
 
-  if (totalApplied > 0) {
-    toast.success(`⚡ Automations evaluated on all items! Applied to ${totalApplied} item updates.`);
-  } else if (!options?.silent) {
-    toast.info("All board items are already up to date with active automations.");
+  let totalApplied = 0;
+  let totalSkipped = 0;
+  const allSummaries: string[] = [];
+
+  for (const record of records) {
+    let recordApplied = false;
+    let recordSkipped = false;
+
+    // Evaluate the date trigger per record: valid non-empty date → matched,
+    // otherwise → skipped. Non-date cells are not re-evaluated here.
+    for (const col of columns) {
+      const val = cellValues.get(`${record.id}:${col.id}`);
+      const applied = await executeBoardCellAutomations(
+        record.id,
+        col.id,
+        val as ColumnValue,
+        undefined,
+        ctx,
+        { silent: true }
+      );
+      if (applied) {
+        recordApplied = true;
+        totalApplied++;
+      }
+    }
+
+    if (!dateColIds.size) {
+      // No date trigger configured: nothing to skip.
+      continue;
+    }
+    const hasDateCell = dateColIds.size > 0 && [...dateColIds].some((cid: string) => cellValues.has(`${record.id}:${cid}`));
+    const dateCellVal = hasDateCell
+      ? [...dateColIds].map((cid) => cellValues.get(`${record.id}:${cid}`)).find((v) => v !== undefined && v !== null && String(v).trim() !== "")
+      : undefined;
+    const dateValid = dateCellVal !== undefined && isValidDateString(dateCellVal);
+
+    if (!recordApplied && hasDateCell && !dateValid) {
+      recordSkipped = true;
+      totalSkipped++;
+    } else if (!recordApplied && !hasDateCell) {
+      totalSkipped++;
+    }
   }
 
-  return { appliedCount: totalApplied, summaries: allSummaries };
+  if (!options?.silent) {
+    if (totalApplied > 0) {
+      toast.success(`⚡ Automations evaluated: ${totalApplied} matched, ${totalSkipped} skipped.`);
+    } else {
+      toast.info(`Automations evaluated: 0 matched, ${totalSkipped} skipped.`);
+    }
+  }
+
+  return { appliedCount: totalApplied, skippedCount: totalSkipped, summaries: allSummaries };
 }

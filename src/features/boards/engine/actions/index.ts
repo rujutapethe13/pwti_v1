@@ -85,6 +85,7 @@ export {
 export {
   updateCell,
   bulkUpdateCells,
+  bulkUpdateRecordTitles,
   clearCell,
 } from "./cell-actions";
 

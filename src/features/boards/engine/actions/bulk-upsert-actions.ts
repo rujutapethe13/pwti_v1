@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { createServiceClient } from "@/lib/supabase/server";
 import type { ApiResponse } from "@/types";
 import type { BoardDefinition, BoardRecord, ColumnDefinition, ColumnValue } from "../types";
+import { toValueText } from "../lib/cell-value";
 
 export async function upsertBoardColumns(
   boardId: string,
@@ -107,7 +108,7 @@ export async function upsertBoardCellValues(
         record_id: recordId,
         column_id: columnId,
         value,
-        value_text: typeof value === "string" ? value : JSON.stringify(value),
+        value_text: toValueText(value),
         updated_at: new Date().toISOString(),
       };
     });

@@ -1,17 +1,36 @@
-﻿# Email Notification Automation
+﻿# Email Notification Automation (Resend)
+
+Sending is powered by the official Resend SDK. Inbound email is handled by
+the Resend webhook at `POST /api/webhooks/resend`.
 
 ## Setup Steps
 
-### Gmail OAuth2 Setup
-1. Go to Google Cloud Console - APIs & Services - Enable Gmail API
-2. Create OAuth 2.0 credentials (Web application)
-3. Add redirect URI (e.g., https://developers.google.com/oauthplayground)
-4. Use OAuth Playground to get refresh token with scope https://mail.google.com/
-5. Set env vars: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN, GMAIL_USER
+1. Add a verified domain in Resend and confirm "Receiving" is enabled for it.
+2. Set env vars (see `.env.example`):
+   - `RESEND_API_KEY` — Resend API key (server-only).
+   - `RESEND_WEBHOOK_SECRET` — signing secret from Resend dashboard > Webhooks.
+   - `EMAIL_FROM` — verified sender, e.g. `"Power Weave Studio <hello@yourdomain.com>"`.
+3. In the Resend dashboard, create a webhook pointing to
+   `https://<your-domain>/api/webhooks/resend`, subscribed to `email.received`.
+4. Apply `supabase/migrations/20261116000000_inbound_emails.sql` to create the
+   `inbound_emails` table (idempotent storage of received messages).
 
-### Outlook/Microsoft 365 OAuth2 Setup
-1. Register app in Azure AD (Microsoft Entra)
-2. Add API permissions: Mail.Send (delegated)
-3. Create client secret
-4. Get refresh token via OAuth2 flow with tenant
-5. Set env vars: OUTLOOK_CLIENT_ID, OUTLOOK_CLIENT_SECRET, OUTLOOK_REFRESH_TOKEN, OUTLOOK_TENANT_ID, OUTLOOK_USER
+## Service layer
+
+`src/features/email-notifications/resend.ts` exports `ResendEmailProvider`:
+
+- `send(input)` — to/cc/bcc, reply_to, HTML + plain text, attachments, retries
+  on 429/5xx with exponential backoff, logs failures, never throws.
+- `handleInbound(event)` — verifies the `Resend-Signature` HMAC, fetches the
+  full message via `emails.receiving.get`, stores it idempotently.
+
+`emailService.sendPendingNotification(to, payload)` is the queue's send entry
+point; the old nodemailer Gmail/Outlook providers and their dependencies were
+removed.
+
+## Webhook
+
+`POST /api/webhooks/resend` verifies the `resend-signature` header
+(`t=timestamp,v1=hmac` over `${timestamp}.${rawBody}`), ignores duplicate
+deliveries via the `inbound_emails.message_id` uniqueness, and returns 200
+quickly even if downstream storage fails.

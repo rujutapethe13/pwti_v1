@@ -210,9 +210,6 @@ export const ColumnService = {
     }
 
     const column = existing.data;
-    if (column.isPrimary) {
-      return { data: null, error: "Choose another primary column first", status: 409 };
-    }
 
     await eventBus.publish(createEvent("column.delete:before", actorUserId, column, column as unknown as Record<string, unknown>, null));
 
@@ -491,7 +488,13 @@ export const ColumnService = {
       metadata: { boardId: input.boardId },
     });
 
-    const result = await columnRepo.batchSoftDelete(input.columnIds);
+    for (const columnId of input.columnIds) {
+      const result = await ColumnService.delete(
+        { columnId, cascade: true, permanent: true },
+        actorUserId,
+      );
+      if (result.error) return result;
+    }
 
     metadataCache.invalidate("column", firstColResult.data.boardId);
 
@@ -506,6 +509,6 @@ export const ColumnService = {
       metadata: { boardId: input.boardId },
     });
 
-    return result;
+    return { data: null, error: null, status: 200 };
   },
 };

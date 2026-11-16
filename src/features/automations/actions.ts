@@ -3,6 +3,7 @@
 import { createServiceClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import type { AutomationRule, AutomationAction } from "./types";
+import { isValidDateString } from "./date-utils";
 
 export interface ApplyAutomationResult {
   success: boolean;
@@ -81,6 +82,7 @@ export async function applyAutomationToBoard({
 
   // 3b. Determine which records qualify for this rule's trigger
   let eligibleRecords = records;
+  let runSummary = "";
   const isDateTrigger =
     rule.trigger.type === "date_inputted" ||
     rule.trigger.type === "date_arrives" ||
@@ -101,12 +103,19 @@ export async function applyAutomationToBoard({
         .eq("board_id", realBoardId)
         .eq("column_id", dateCol.id);
 
+      const dateCellsByRecord = new Map(
+        (dateCells || []).map((c) => [c.record_id, c])
+      );
       const validRecordIds = new Set(
         (dateCells || [])
-          .filter((c) => c.value !== null && c.value !== undefined && String(c.value).trim() !== "")
+          .filter((c) => isValidDateString(c.value))
           .map((c) => c.record_id)
       );
       eligibleRecords = records.filter((r) => validRecordIds.has(r.id));
+
+      const matched = eligibleRecords.length;
+      const skipped = records.filter((r) => dateCellsByRecord.has(r.id) && !validRecordIds.has(r.id)).length;
+      runSummary = `${matched} matched, ${skipped} skipped`;
     }
   }
 
@@ -282,7 +291,7 @@ export async function applyAutomationToBoard({
 
   return {
     success: true,
-    message: `Automation applied to ${affectedCount} board item(s): ${updatedFields.join(", ")}`,
+    message: `Automation applied to ${affectedCount} board item(s): ${updatedFields.join(", ")}${runSummary ? ` (${runSummary})` : ""}`,
     affectedRecordsCount: affectedCount,
     updatedFields,
     appliedCellUpdates,

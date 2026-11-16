@@ -70,6 +70,9 @@ interface ColumnContextMenuProps {
   onSetPrimary?: (columnId: string) => void;
   onChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onDelete?: (columnId: string) => void;
+  selectedColumnIds?: string[];
+  onDeleteColumns?: (columnIds: string[]) => void;
+  canEdit?: boolean;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
   onConfigureMirror?: (column: ColumnDefinition) => void;
@@ -289,6 +292,9 @@ export function ColumnContextMenu({
   onSetPrimary,
   onChangeType,
   onDelete,
+  selectedColumnIds,
+  onDeleteColumns,
+  canEdit = true,
   onAddColumn,
   onFilter,
   onSort,
@@ -436,6 +442,7 @@ export function ColumnContextMenu({
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
+            data-column-menu
             variant="ghost"
             size="icon"
             className="ml-auto size-6 shrink-0 opacity-0 group-hover:opacity-100"
@@ -690,17 +697,29 @@ export function ColumnContextMenu({
             Rename
           </DropdownMenuItem>
 
-          {/* ── Delete column ─────────────────────────────── */}
-          {onDelete && (
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={() => setDeleteConfirmOpen(true)}
-              disabled={deleteLoading}
-            >
-              <Trash2 className="mr-2 size-3.5" />
-              Delete column
-            </DropdownMenuItem>
-          )}
+           {/* ── Delete column ─────────────────────────────── */}
+           {canEdit && onDelete && (
+             <DropdownMenuItem
+               className="text-destructive focus:text-destructive"
+               onSelect={() => setDeleteConfirmOpen(true)}
+               disabled={deleteLoading}
+             >
+               <Trash2 className="mr-2 size-3.5" />
+               Delete column
+             </DropdownMenuItem>
+           )}
+
+           {/* ── Delete selected columns ───────────────────── */}
+           {canEdit && onDeleteColumns && (selectedColumnIds?.length ?? 0) > 1 && (
+             <DropdownMenuItem
+               className="text-destructive focus:text-destructive"
+               onSelect={() => onDeleteColumns?.(selectedColumnIds ?? [])}
+               disabled={deleteLoading}
+             >
+               <Trash2 className="mr-2 size-3.5" />
+               {`Delete ${selectedColumnIds?.length} columns`}
+             </DropdownMenuItem>
+           )}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -859,13 +878,17 @@ export function ColumnContextMenu({
         open={deleteConfirmOpen}
         onOpenChange={setDeleteConfirmOpen}
         title="Delete column"
-        description={`Are you sure you want to delete "${column.label}"? This will permanently remove the column and all its values across all records.`}
+        description={`Are you sure you want to delete "${column.label}"? This will permanently remove the column and all its values across all records.${column.isPrimary ? " This removes the item title column." : ""}`}
         confirmLabel="Delete"
         variant="destructive"
         loading={deleteLoading}
         onConfirm={() => {
           setDeleteConfirmOpen(false);
-          onDelete?.(column.id);
+          if ((selectedColumnIds?.length ?? 0) > 1) {
+            onDeleteColumns?.(selectedColumnIds ?? []);
+          } else {
+            onDelete?.(column.id);
+          }
         }}
       />
 

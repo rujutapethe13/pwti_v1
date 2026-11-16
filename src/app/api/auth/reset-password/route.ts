@@ -13,6 +13,8 @@ import {
   revokeAllSessions,
 } from "@/lib/account-security";
 import { assertHashable, hashPassword, matchesAnyHash } from "@/lib/password-hash";
+import { resolveRecipients } from "@/lib/email/routing";
+import { passwordChangedTemplate } from "@/lib/email/templates";
 import { passwordErrorMessage, validatePassword } from "@/lib/password-policy";
 
 export const runtime = "nodejs";
@@ -167,20 +169,19 @@ export async function POST(request: NextRequest) {
 async function sendPasswordResetConfirmation(email: string): Promise<void> {
   if (!email) return;
 
+  const resetUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/forgot-password`;
+
+  const { html, text, subject } = passwordChangedTemplate({ resetUrl });
+  const recipients = resolveRecipients("password-changed", { userEmail: email });
+
   const result = await sendEmail({
-    to: email,
-    subject: "Your password was changed",
-    html: `
-      <p>Your password was changed.</p>
-      <p>If this wasn't you, reset it immediately:
-        <a href="${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/forgot-password">reset your password</a>.
-      </p>
-      <p>All sessions have been signed out.</p>
-    `,
-    text:
-      "Your password was changed.\n\n" +
-      "If this wasn't you, reset it immediately: /forgot-password\n\n" +
-      "All sessions have been signed out.",
+    to: recipients.to,
+    subject,
+    html,
+    text,
+    eventType: "password-changed",
+    identifier: `reset-password:${email}`,
+    idempotencyKey: `password-changed|${email.toLowerCase().trim()}`,
   });
 
   if (!result.success) {

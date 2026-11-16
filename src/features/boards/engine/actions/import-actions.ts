@@ -21,6 +21,7 @@ import { ColumnRepository } from "../repository/column-repository";
 import { ViewRepository } from "../repository/view-repository";
 import { metadataCache } from "../cache/metadata-cache";
 import { eventBus } from "../events/event-bus";
+import { toValueText } from "../lib/cell-value";
 import type { DomainEventPayload } from "../events/event-types";
 
 const columnRepo = new ColumnRepository();
@@ -338,7 +339,7 @@ export async function importWithColumnCleanup(
               record_id: record.id,
               column_id: targetColumnId,
               value,
-              value_text: typeof value === "string" ? value : JSON.stringify(value),
+              value_text: toValueText(value),
               version: 1,
               updated_at: new Date().toISOString(),
             });

@@ -3,24 +3,13 @@
 import type { ChangeEvent } from "react";
 
 import { columnTypeRegistry } from "../column-registry";
+import { cellText } from "../lib/cell-value";
 import type { CellRendererProps, ColumnDefinition, ColumnValue } from "../types";
 import { cn } from "@/lib/utils";
 import { getCellRenderer } from "./cell-renderers/cell-renderer-registry";
 
 function readValue(value: ColumnValue): string {
-  if (value === null || value === undefined) {
-    return "";
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  if (typeof value === "number" || typeof value === "boolean") {
-    return String(value);
-  }
-
-  return JSON.stringify(value);
+  return cellText(value);
 }
 
 export function CellRenderer({ board, record, column, value, readOnly, onChange, onUpdateColumnLabels, onConfigureMirror }: CellRendererProps & { onConfigureMirror?: (column: ColumnDefinition) => void }) {

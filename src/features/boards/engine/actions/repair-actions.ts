@@ -9,6 +9,7 @@ import {
 } from "../lib/import-export";
 import type { ApiResponse } from "@/types";
 import type { DropdownOption } from "../types";
+import { toValueText } from "../lib/cell-value";
 
 const columnRepo = new ColumnRepository();
 const cellRepo = new CellRepository();
@@ -74,8 +75,7 @@ export async function repairDropdownColumnValues(
           record_id: recordId,
           column_id: column.id,
           value,
-          value_text:
-            typeof value === "string" ? value : JSON.stringify(value),
+          value_text: toValueText(value),
         }),
       );
       const upsertResult = await cellRepo.upsertMany(payload);

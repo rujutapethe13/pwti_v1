@@ -12,7 +12,7 @@ import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn, repairPrima
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
 import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey, CellChangeMetadata } from "@/features/boards/engine/types";
 import { buildInitialCellValues } from "@/features/boards/engine/lib/record-defaults";
-import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkDeleteRecords, bulkUpdateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, deleteView, updateColumnLabels } from "@/features/boards/engine/actions";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkUpdateCells, bulkUpdateRecordTitles, bulkDeleteRecords, bulkUpdateRecords, bulkCreateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, deleteView, updateColumnLabels } from "@/features/boards/engine/actions";
 import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
 import { resolveTitleColumnLabel } from "@/features/boards/engine/lib/title-column";
 import { applyColumnUpdates, buildColumnSettings, mergeColumns, sanitizeLabels } from "@/features/boards/engine/lib/option-lookup";
@@ -107,11 +107,13 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
   const [importWizardOpen, setImportWizardOpen] = useState(false);
   const [importing, setImporting] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [pasteProgress, setPasteProgress] = useState<{ active: boolean; total: number } | null>(null);
    const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false);
    const [bulkArchiveLoading, setBulkArchiveLoading] = useState(false);
    const [deletingColumnId, setDeletingColumnId] = useState<string | null>(null);
    const [mirrorColumnId, setMirrorColumnId] = useState<string | null>(null);
   const { members, access, isOwner } = useScopeAccess("board", board.workspaceId ?? null, board.id);
+  const { members: workspaceMembers, loading: workspaceMembersLoading } = useScopeAccess("workspace", board.workspaceId ?? null);
   const { user } = useUser();
   const [accessModalColumn, setAccessModalColumn] = useState<ColumnDefinition | null>(null);
   const [previewAsUserId, setPreviewAsUserId] = useState<string | null>(null);
@@ -140,6 +142,9 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
 
   const columnMapRef = useRef(new Map(columns.map((c) => [c.id, c])));
   const recordMapRef = useRef(new Map(records.map((r) => [r.id, r])));
+  // Keeps the latest columns available to async column creation so an upsert
+  // never writes a stale subset (e.g. multi-column paste).
+  const columnsRef = useRef(columns);
   // Guards the import cleanup so it runs exactly once per import, even if the
   // component re-renders or StrictMode double-invokes effects while the
   // import is in flight. Reset when the wizard closes.
@@ -147,6 +152,10 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
 
   useEffect(() => {
     columnMapRef.current = new Map(columns.map((c) => [c.id, c]));
+  }, [columns]);
+
+  useEffect(() => {
+    columnsRef.current = columns;
   }, [columns]);
 
   useEffect(() => {
@@ -256,7 +265,7 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
           const ctx = automationCtxRef.current;
           const updatedCellMap = new Map(ctx.cellValues);
           updatedCellMap.set(key, value);
-          void executeBoardCellAutomations(recordId, columnId, value, {
+          void executeBoardCellAutomations(recordId, columnId, value, prevValue, {
             board: ctx.board,
             columns: ctx.columns,
             groups: ctx.groups,
@@ -285,6 +294,103 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
       }
     },
     [board, cellValues, columns, records],
+  );
+
+  /** Batched cell update for paste: one optimistic state update, one server write. */
+  const handleBulkCellChange = useCallback(
+    async (updates: Array<{ recordId: string; columnId: string; value: ColumnValue }>) => {
+      if (!updates.length) return;
+      setPasteProgress({ active: true, total: updates.length });
+
+      const prevCellValues = new Map(cellValues);
+      const prevRecords = records.map((r) => ({ ...r }));
+      const touchedRecordIds = new Set<string>();
+
+      setCellValues((prev) => {
+        const next = new Map(prev);
+        for (const { recordId, columnId, value } of updates) {
+          next.set(`${recordId}:${columnId}`, value);
+          touchedRecordIds.add(recordId);
+        }
+        return next;
+      });
+      setRecords((prev) =>
+        prev.map((r) => (touchedRecordIds.has(r.id) ? { ...r, updatedAt: new Date().toISOString() } : r)),
+      );
+
+      try {
+        const response = await bulkUpdateCells(board.organizationId, board.workspaceId, board.id, updates);
+        if (response.error) {
+          setCellValues(prevCellValues);
+          setRecords(prevRecords);
+          toast.error(response.error);
+        } else {
+          setPasteProgress(null);
+          const ctx = automationCtxRef.current;
+          for (const { recordId, columnId, value } of updates) {
+            const key = `${recordId}:${columnId}`;
+            const prevValue = prevCellValues.get(key);
+            const updatedCellMap = new Map(ctx.cellValues);
+            updatedCellMap.set(key, value);
+            void executeBoardCellAutomations(recordId, columnId, value, prevValue, {
+              board: ctx.board,
+              columns: ctx.columns,
+              groups: ctx.groups,
+              records: ctx.records,
+              cellValues: updatedCellMap,
+              setCellValues,
+              setRecords,
+              updateCellFn: updateCell,
+              moveRecordToGroupFn: (recId: string, grpId: string) => ctx.handleMoveToGroup([recId], grpId),
+            });
+          }
+        }
+      } catch {
+        setCellValues(prevCellValues);
+        setRecords(prevRecords);
+        setPasteProgress(null);
+        toast.error("Failed to save pasted cells.");
+      }
+    },
+    [board, cellValues, records, updateCell],
+  );
+
+  /** Batched title update for paste: one optimistic state update, one server write. */
+  const handleBulkRecordTitleChange = useCallback(
+    async (updates: Array<{ recordId: string; title: string }>) => {
+      if (!updates.length) return;
+      setPasteProgress({ active: true, total: updates.length });
+
+      const prevRecords = records.map((r) => ({ ...r }));
+      const updatesById = new Map(updates.map((u) => [u.recordId, u.title]));
+
+      setRecords((prev) =>
+        prev.map((r) => {
+          const title = updatesById.get(r.id);
+          return title !== undefined ? { ...r, title, updatedAt: new Date().toISOString() } : r;
+        }),
+      );
+
+      try {
+        const response = await bulkUpdateRecordTitles(
+          board.organizationId,
+          board.workspaceId,
+          board.id,
+          updates,
+        );
+        if (response.error) {
+          setRecords(prevRecords);
+          toast.error(response.error);
+        } else {
+          setPasteProgress(null);
+        }
+      } catch {
+        setRecords(prevRecords);
+        setPasteProgress(null);
+        toast.error("Failed to save pasted titles.");
+      }
+    },
+    [board, records],
   );
 
    const handleBulkDelete = useCallback(
@@ -459,36 +565,38 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
     [records],
   );
 
-const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string, settings?: Record<string, unknown>) => {
+const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string, settings?: Record<string, unknown>): Promise<string | undefined> => {
+     const s = settings ?? {};
      const newColumn: ColumnDefinition = {
        id: crypto.randomUUID(),
-      boardId: board.id,
-      key: `col_${Date.now()}`,
-      label: `New ${type}`,
-      type: type as ColumnDefinition["type"],
-      required: false,
-      hidden: false,
-      frozen: false,
-      defaultValue: null,
-      // A new Status column starts with the four standard labels, so the
-      // picker shows them right away and the cells can be filled in.
-      settings: buildColumnSettings(type, settings ?? {}),
-      permissions: { view: ["owner", "editor", "commenter", "viewer"], edit: ["owner", "editor"], configure: ["owner"] },
-      validation: [],
-      version: 1,
-      order: columns.length,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setColumns((prev) => [...prev, newColumn]);
-    if (type === "mirror") setMirrorColumnId(newColumn.id);
-    try {
-      await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, [...columns, newColumn]);
-    } catch (err) {
-      toast.error("Failed to create column");
-      console.error(err);
-    }
-  }, [board, columns]);
+       boardId: board.id,
+       key: `col_${Date.now()}`,
+       label: String(s.label ?? `New ${type}`),
+       type: type as ColumnDefinition["type"],
+       required: Boolean(s.required ?? false),
+       hidden: Boolean(s.hidden ?? false),
+       frozen: Boolean(s.frozen ?? false),
+       defaultValue: (s.defaultValue ?? null) as ColumnDefinition["defaultValue"],
+       // A new Status column starts with the four standard labels, so the
+       // picker shows them right away and the cells can be filled in.
+       settings: buildColumnSettings(type, s),
+       permissions: (s.permissions as ColumnDefinition["permissions"]) ?? { view: ["owner", "editor", "commenter", "viewer"], edit: ["owner", "editor"], configure: ["owner"] },
+       validation: (s.validation as ColumnDefinition["validation"]) ?? [],
+       version: 1,
+       order: columnsRef.current.length,
+       createdAt: new Date().toISOString(),
+       updatedAt: new Date().toISOString(),
+     };
+     setColumns((prev) => [...prev, newColumn]);
+     if (type === "mirror") setMirrorColumnId(newColumn.id);
+     try {
+       await upsertBoardColumns(board.id, board.organizationId, board.workspaceId, [...columnsRef.current, newColumn]);
+     } catch (err) {
+       toast.error("Failed to create column");
+       console.error(err);
+     }
+     return newColumn.id;
+   }, [board, buildColumnSettings]);
 
   const handleConfigureMirror = useCallback((column: ColumnDefinition) => {
     setMirrorColumnId(column.id);
@@ -553,68 +661,48 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     [columns],
   );
 
-  const handleColumnDelete = useCallback(async (columnId: string) => {
+  const handleColumnDelete = useCallback(async (columnIds: string | string[]) => {
+    const ids = Array.isArray(columnIds) ? columnIds : [columnIds];
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(columnId)) {
+    if (ids.some((id) => !uuidRegex.test(id))) {
       toast.error("Invalid column ID");
       return;
     }
 
-    const targetColumn = columns.find((c) => c.id === columnId);
-    if (!targetColumn) return;
+    const targets = columns.filter((c) => ids.includes(c.id));
+    if (targets.length === 0) return;
 
-    const remainingColumns = columns.filter((c) => c.id !== columnId);
-
-    // Never leave a board with zero columns. If the user deletes the last
-    // remaining column, refuse with a clear message instead of crashing views.
-    if (remainingColumns.length === 0) {
-      toast.error("Cannot delete the last column. Add another column first.");
-      return;
-    }
-
-    setDeletingColumnId(columnId);
+    setDeletingColumnId(ids.length === 1 ? ids[0] : "bulk");
     const prevColumns = columns;
+    const prevCellValues = cellValues;
+    const prevBoardViews = boardViews;
 
-    // NOTE: deleting the structural "name" column deliberately does NOT
-    // rename the title column. The title column label is its own field
-    // (`boards.title_column_label`); promoting an unrelated text column's
-    // label into it is what made the pinned header read
-    // "Batch Details (PFM1_No)" instead of the title column's own name.
-
-    // Optimistic UI update — remove the column and its cell values
-    setColumns((prev) => prev.filter((c) => c.id !== columnId));
+    setColumns((prev) => prev.filter((c) => !ids.includes(c.id)));
     setCellValues((prev) => {
       const next = new Map(prev);
       for (const key of next.keys()) {
-        if (key.endsWith(`:${columnId}`)) next.delete(key);
+        if (ids.some((id) => key.endsWith(`:${id}`))) next.delete(key);
       }
       return next;
     });
 
-    // Clean up view config references in local state
     setBoardViews((prevViews) =>
       prevViews.map((view) => {
-        if (!view.visibleColumnIds?.includes(columnId) &&
-            !view.columnWidths?.[columnId] &&
-            !(view.filters || []).some((f) => f.columnId === columnId) &&
-            !(view.sorting || []).some((s) => s.columnId === columnId) &&
-            !(view.grouping || []).some((g) => g.columnId === columnId)) {
+        if (!ids.some((id) => view.visibleColumnIds?.includes(id) ||
+            Boolean(view.columnWidths?.[id]) ||
+            (view.filters || []).some((f) => f.columnId === id) ||
+            (view.sorting || []).some((s) => s.columnId === id) ||
+            (view.grouping || []).some((g) => g.columnId === id))) {
           return view;
         }
-        const nextFilters = (view.filters || []).filter((f) => f.columnId !== columnId);
-        const nextSorting = (view.sorting || []).filter((s) => s.columnId !== columnId);
-        const nextGrouping = (view.grouping || []).filter((g) => g.columnId !== columnId);
-        const nextVisibleColumnIds = (view.visibleColumnIds || []).filter((id) => id !== columnId);
+        const nextFilters = (view.filters || []).filter((f) => !ids.includes(f.columnId));
+        const nextSorting = (view.sorting || []).filter((s) => !ids.includes(s.columnId));
+        const nextGrouping = (view.grouping || []).filter((g) => !ids.includes(g.columnId));
+        const nextVisibleColumnIds = (view.visibleColumnIds || []).filter((id) => !ids.includes(id));
         const nextColumnWidths = { ...(view.columnWidths || {}) };
-        delete nextColumnWidths[columnId];
-        // Clear view-type-specific refs to this column. Walks the settings
-        // object generically so it works for every view type (kanban groupBy,
-        // calendar dateColumnId, timeline startDateColumnId, chart valueColumnId,
-        // cardFields, collapsedColumns, ...).
-        const nextSettings = clearColumnRefsFromViewSettings(
-          view.settings ?? ({} as BoardView["settings"]),
-          columnId,
-        );
+        for (const id of ids) delete nextColumnWidths[id];
+        let nextSettings = view.settings ?? ({} as BoardView["settings"]);
+        for (const id of ids) nextSettings = clearColumnRefsFromViewSettings(nextSettings, id);
         return {
           ...view,
           filters: nextFilters,
@@ -629,22 +717,28 @@ const handleColumnAdd = useCallback(async (type: string, afterColumnId?: string,
     );
 
     try {
-      const response = await deleteColumn(columnId);
+      const response = ids.length === 1
+        ? await deleteColumn(ids[0])
+        : await deleteBoardColumns(board.id, ids);
       if (response.error) {
-        // Restore columns on failure
         setColumns(prevColumns);
+        setCellValues(prevCellValues);
+        setBoardViews(prevBoardViews);
         toast.error(response.error);
       } else {
-        toast.success(`Column "${targetColumn.label}" deleted.`);
+        toast.success(`Deleted ${targets.length} columns`);
+        toast.info("Undo is unavailable because deleted column data is permanently removed.");
       }
     } catch (err) {
       setColumns(prevColumns);
+      setCellValues(prevCellValues);
+      setBoardViews(prevBoardViews);
       const message = err instanceof Error ? err.message : "Failed to delete column";
       toast.error(message);
     } finally {
       setDeletingColumnId(null);
     }
-  }, [columns]);
+  }, [columns, cellValues, boardViews, board.id]);
 
   const handleColumnRename = useCallback(async (columnId: string, label: string) => {
     setColumns((prev) => prev.map((c) => (c.id === columnId ? { ...c, label, updatedAt: new Date().toISOString() } : c)));
@@ -1557,7 +1651,7 @@ setImporting(true);
   );
 
   const handleNewItem = useCallback(
-    async (requestedGroupId?: string | null) => {
+    async (requestedGroupId?: string | null): Promise<string | undefined> => {
       let groupId = requestedGroupId ?? groups[0]?.id ?? null;
 
       if (!groupId && groups.length === 0) {
@@ -1603,12 +1697,70 @@ setImporting(true);
         setRecords((prev) => [
           ...prev.filter((record) => record.id !== created.id),
         ].map((record) => record.id === temporaryId ? created : record));
+        return created.id;
       } catch (error) {
         setRecords((prev) => prev.filter((record) => record.id !== temporaryId));
         toast.error(error instanceof Error ? error.message : "Failed to create the item.");
       }
     },
     [board, columns, groups, handleRecordCreate],
+  );
+
+  /** Batched row creation for paste: one bulk write, returns created record IDs. */
+  const handleBulkNewItem = useCallback(
+    async (count: number, groupId?: string | null): Promise<string[]> => {
+      if (count <= 0) return [];
+      let resolvedGroupId = groupId ?? groups[0]?.id ?? null;
+      if (!resolvedGroupId) {
+        const fd = new FormData();
+        fd.set("organizationId", board.organizationId);
+        fd.set("workspaceId", board.workspaceId);
+        fd.set("boardId", board.id);
+        fd.set("name", "Main Group");
+        fd.set("columnMode", "shared");
+        const groupResponse = await createGroup(fd);
+        if (groupResponse.error || !groupResponse.data) {
+          toast.error(groupResponse.error ?? "Failed to create a default group.");
+          return [];
+        }
+        const createdGroup = groupResponse.data!;
+        setGroups((prev) => [...prev, createdGroup]);
+        resolvedGroupId = createdGroup.id;
+      }
+
+      const initialCellValues = buildInitialCellValues(columns);
+      const recordsInput = Array.from({ length: count }, () => ({
+        title: "Untitled",
+        cellValues: initialCellValues,
+      }));
+
+      const response = await bulkCreateRecords({
+        organizationId: board.organizationId,
+        workspaceId: board.workspaceId,
+        boardId: board.id,
+        groupId: resolvedGroupId,
+        records: recordsInput,
+      });
+
+      if (response.error || !response.data) {
+        toast.error(response.error ?? "Failed to create rows.");
+        return [];
+      }
+
+      const created = response.data.createdRecords;
+      setRecords((prev) => [...prev, ...created]);
+      setCellValues((prev) => {
+        const next = new Map(prev);
+        for (const rec of created) {
+          for (const [columnId, value] of Object.entries(initialCellValues)) {
+            next.set(`${rec.id}:${columnId}`, value);
+          }
+        }
+        return next;
+      });
+      return created.map((r) => r.id);
+    },
+    [board, columns, groups, bulkCreateRecords, createGroup],
   );
 
   /** Rename a row from a view (inline title editing). */
@@ -1669,7 +1821,10 @@ setImporting(true);
             onCellChange={handleCellChange}
             onRecordCreate={handleRecordCreate}
             onNewItem={handleNewItem}
+            onBulkNewItem={handleBulkNewItem}
             onRecordTitleChange={handleRecordTitleChange}
+            onBulkCellChange={handleBulkCellChange}
+            onBulkRecordTitleChange={handleBulkRecordTitleChange}
             columnOps={{
               onColumnRename: handleColumnRename,
               onColumnDuplicate: handleColumnDuplicate,
@@ -1679,6 +1834,7 @@ setImporting(true);
               onColumnSetPrimary: handleColumnSetPrimary,
               onColumnChangeType: handleColumnChangeType,
               onColumnDelete: handleColumnDelete,
+              canEditColumns: isOwner || access === "owner" || access === "edit",
               deletingColumnId,
               onColumnAdd: handleColumnAdd,
               onUpdateColumnSettings: handleColumnUpdateSettings,
@@ -1688,7 +1844,8 @@ setImporting(true);
               onColumnToggleRestrictEditing: handleColumnToggleRestrictEditing,
               onColumnToggleRestrictView: handleColumnToggleRestrictView,
               onColumnManageAccess: handleColumnManageAccess,
-              members,
+              members: workspaceMembers ?? members,
+              membersLoading: workspaceMembersLoading || false,
                onColumnToggleWrapText: handleColumnToggleWrapText,
                onColumnResize: handleColumnResize,
                onColumnReorder: handleColumnReorder,
@@ -1718,7 +1875,14 @@ setImporting(true);
             bulkArchiveLoading={bulkArchiveLoading}
             bulkDeleteLoading={bulkDeleteLoading}
           />
-      </BoardLayout>
+
+          {pasteProgress && (
+            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs shadow-lg">
+              <span className="animate-pulse text-muted-foreground">…</span>
+              <span className="text-foreground">Pasting {pasteProgress.total} cell{ pasteProgress.total === 1 ? "" : "s" }…</span>
+            </div>
+          )}
+        </BoardLayout>
 
             <ColumnAccessModal
         open={accessModalColumn !== null}

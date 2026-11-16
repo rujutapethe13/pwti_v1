@@ -1,13 +1,10 @@
-﻿
-import { getEmailProvider } from './providers';
-import { renderPendingEmailTemplate } from './template';
-import { EmailNotificationPayload } from './types';
+﻿import { renderPendingEmailTemplate } from './template';
+import type { EmailNotificationPayload } from './types';
+import { resendProvider, type SendEmailInput } from './resend';
 
 export class EmailService {
-  private provider = getEmailProvider();
-
   /**
-   * Sends a pending status notification email.
+   * Sends a pending status notification email via Resend.
    */
   async sendPendingNotification(
     to: string[],
@@ -23,14 +20,8 @@ export class EmailService {
 
     const subject = `Pending: ${payload.jobName || 'Production Update'}`;
 
-    return this.provider.sendMail(to, subject, html, text);
-  }
-
-  /**
-   * Changes the email provider.
-   */
-  setProvider(providerType: string) {
-    this.provider = getEmailProvider(providerType);
+    const input: SendEmailInput = { to, subject, html, text };
+    return resendProvider.send(input);
   }
 }
 

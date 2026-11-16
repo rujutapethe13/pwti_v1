@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import type { BoardRecord, ColumnDefinition, ColumnValue } from "../../../types";
+import { findOptionForValue } from "../../../lib/option-lookup";
 import type {
   DashboardWidgetGroupFilter,
   BoardGroup,
@@ -56,9 +57,9 @@ import {
   RECORD_TITLE_COLUMN_ID,
   createRecordTitleColumn,
 } from "./dashboard-types";
-import { resolveOptionDisplay } from "../../../lib/option-lookup";
-import { DEFAULT_COLORS } from "@/features/boards/engine/components/cell-options-popup";
 import { RenderChart, seriesColor, hashColor, type SeriesData } from "./chart-svg";
+import { STATUS_COLOR_MAP } from "./chart-colors";
+import { ChartCard } from "./chart-card";
 import {
   MEASURE_ROLE,
   clientGroupKey,
@@ -106,6 +107,8 @@ export interface ChartWidgetContentProps {
   onMapColumn?: (role: DashboardRoleKey) => void;
   /** Client-name aliases, applied when the X-axis role is "client". */
   clientAliases?: ClientAliasMap;
+  /** Widget heading shown by the shared <ChartCard /> wrapper. */
+  title?: string;
 }
 
 export function getLabel(
@@ -115,19 +118,18 @@ export function getLabel(
 ): string {
   if (xCol) {
     const v = getCellValue(record.id, xCol.id, cellValues);
-    if (v !== null && v !== undefined && v !== "") {
-      if (OPTION_TYPES.includes(xCol.type)) {
-        // The cell stores the option id; the chart must show the label.
-        // Unresolvable ids are dropped from the legend rather than rendered
-        // as a raw "opt-…" slice.
-        const resolved = resolveOptionDisplay(getColumnOptions(xCol), v);
-        if (resolved.isUnknown) return "";
-        return resolved.label;
-      }
-      return String(v);
+    if (v === null || v === undefined || v === "") return "No value";
+    if (OPTION_TYPES.includes(xCol.type)) {
+      const opts = getColumnOptions(xCol);
+      const opt = findOptionForValue(opts, v);
+      if (opt?.label && !/^opt[-_]/i.test(opt.label)) return opt.label;
+      if (typeof v === "string" && !/^opt[-_]/i.test(v)) return v.trim() || "No value";
+      return "No value";
     }
+    const text = String(v).trim();
+    return text || "No value";
   }
-  return record.title || "(no title)";
+  return record.title?.trim() || "No value";
 }
 
 /**
@@ -156,7 +158,8 @@ function roleLabel(
   clientAliases: ClientAliasMap | undefined,
 ): string {
   const raw = getLabel(record, xCol, cellValues);
-  if (role !== "client" && role !== "itemName") return raw;
+  if (role !== "client" && role !== "itemName") return raw || "No value";
+  if (!raw || raw === "No value") return "No value";
   const key = clientGroupKey(raw, clientAliases);
   return key ? clientGroupLabel(key, clientAliases) : raw;
 }
@@ -174,7 +177,7 @@ function distinctInOrder<T>(values: T[]): T[] {
 }
 
 export const ChartWidgetContent = memo(
-  ({ config, columns, groups, records, cellValues, filters, roles, measure, onCategoryClick, onMapColumn, clientAliases }: ChartWidgetContentProps) => {
+  ({ config, columns, groups, records, cellValues, filters, roles, measure, onCategoryClick, onMapColumn, clientAliases, title }: ChartWidgetContentProps) => {
     const cfg = config as unknown as ChartWidgetConfig;
     const [containerRef, containerSize] = useElementSize();
 
@@ -250,40 +253,73 @@ export const ChartWidgetContent = memo(
             const bucket = working.filter((r) => labelFor(r) === xl && getColumnValue(r, stackCol.id, cellValues) === sv);
             return { label: xl, value: metricFor(bucket) ?? 0 };
           });
-          seriesMap[sv || "(none)"] = { name: sv || "(none)", color: seriesColor(hashColor(sv || "(none)")), points: pts };
+          seriesMap[sv || "(none)"] = {
+            name: sv || "(none)",
+            color: (cfg.seriesColors && cfg.seriesColors[sv || "(none)"]) ?? seriesColor(hashColor(sv || "(none)")),
+            points: pts,
+          };
         }
       } else if (useOptions) {
+        // Resolve every record's stack value once. A cell that matches an
+        // option keeps the option's label; a cell holding free text (an
+        // imported column whose options were never populated) keeps the raw
+        // text so the bar is not silently dropped.
+        const stackValueFor = (r: (typeof working)[number]): string => {
+          const raw = getCellValue(r.id, stackCol!.id, cellValues);
+          const matched = resolveOptionValue(stackCol!, raw);
+          if (matched?.label) return matched.label;
+          if (raw === null || raw === undefined || raw === "") return "(none)";
+          return typeof raw === "string" ? raw : String(raw);
+        };
+
+        // Series come from the options the column declares. Records whose
+        // value is free text are bucketed under their raw text instead, so a
+        // stacked bar is never empty when the board has items.
+        const seriesNames = new Set<string>();
+        for (const opt of stackOptions) seriesNames.add(opt.label);
+        for (const r of working) {
+          const sv = stackValueFor(r);
+          if (sv) seriesNames.add(sv);
+        }
+
         seriesMap = {};
-        for (const opt of stackOptions) {
+        for (const name of seriesNames) {
+          const opt = stackOptions.find((o) => o.label === name);
           const pts = finalLabels.map((xl) => {
-            const bucket = working.filter((r) => {
-              if (labelFor(r) !== xl) return false;
-              const matched = resolveOptionValue(
-                stackCol!,
-                getCellValue(r.id, stackCol!.id, cellValues),
-              );
-              return matched?.id === opt.id || matched?.label === opt.label;
-            });
+            const bucket = working.filter((r) => labelFor(r) === xl && stackValueFor(r) === name);
             return { label: xl, value: metricFor(bucket) ?? 0 };
           });
           const optColor =
-            opt.color ??
-            DEFAULT_COLORS[opt.label] ??
-            cfg.seriesColors?.[opt.label] ??
-            seriesColor(hashColor(opt.label));
-          seriesMap[opt.label] = {
-            name: opt.label,
+            opt?.color ??
+            (cfg.seriesColors && cfg.seriesColors[name]) ??
+            seriesColor(hashColor(name));
+          seriesMap[name] = {
+            name,
             color: optColor,
             points: pts,
           };
         }
       } else {
         const isPie = cfg.chartType === "pie" || cfg.chartType === "donut";
-        const pts = finalLabels.map((xl) => {
+        const xOptions = xCol ? getColumnOptions(xCol) : [];
+        let pts = finalLabels.map((xl) => {
           const bucket = working.filter((r) => labelFor(r) === xl);
-          const customColor = isPie ? (cfg.seriesColors?.[xl] ?? seriesColor(hashColor(xl))) : undefined;
-          return { label: xl, value: metricFor(bucket) ?? 0, color: customColor };
+          const val = metricFor(bucket) ?? 0;
+          let customColor: string | undefined;
+          if (isPie) {
+            const xOpt = xOptions.find((o) => o.label === xl || o.id === xl);
+            customColor =
+              (cfg.seriesColors && cfg.seriesColors[xl]) ??
+              xOpt?.color ??
+              (xl ? STATUS_COLOR_MAP[xl.toLowerCase()] : undefined) ??
+              seriesColor(hashColor(xl || "No value"));
+          }
+          return { label: xl || "No value", value: val, color: customColor };
         });
+        // Hide zero-count categories by default; keep "No value" only when it has real items.
+        if (!cfg.showEmptyValues) {
+          pts = pts.filter((p) => p.value > 0);
+        }
         seriesMap = { _main: { name: cfg.yAxisMode === "count" ? "Count" : cfg.yAxisColumnId, color: seriesColor(0), points: pts } };
       }
 
@@ -321,10 +357,10 @@ export const ChartWidgetContent = memo(
               : String(b.p.label).localeCompare(String(a.p.label)),
           )
           .map((r) => r.i);
-        finalLabels = sortedIdx.map((i) => labels[i]);
+        finalLabels = sortedIdx.map((i) => single[i]?.label ?? labels[i]).filter((v): v is string => v != null);
         seriesArr = seriesArr.map((s) => ({
           ...s,
-          points: s.points.map((_, i) => s.points[sortedIdx[i]]).filter(Boolean),
+          points: sortedIdx.map((i) => s.points[i]).filter(Boolean),
         }));
       }
 
@@ -346,42 +382,56 @@ export const ChartWidgetContent = memo(
 
     const stacked = Boolean(stackByColumnId);
     const clickTarget = xAxisColumnId;
+    const isPie = cfg.chartType === "pie" || cfg.chartType === "donut";
+
+    // A chart with no data at all should show an empty state, not a blank
+    // widget — and a single-status board must still draw the full ring.
+    const hasData = xLabels.length > 0 && series.some((s) => s.points.some((p) => p.value > 0));
+    const cardEmpty = !hasData && !unmappedRole && records.length === 0;
 
     return (
-      <div
-        className="h-full w-full min-w-0 overflow-hidden"
-        ref={containerRef}
-        data-export-series={xLabels.length > 0 ? JSON.stringify({ xLabels, series }) : undefined}
+      <ChartCard
+        title={title ?? "Chart"}
+        empty={cardEmpty}
+        emptyLabel="No data"
       >
-        {unmappedRole ? (
-          <MapColumnPrompt
-            roleLabel={ROLE_LABELS[unmappedRole]}
-            onMapColumn={() => onMapColumn?.(unmappedRole)}
-          />
-        ) : xLabels.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-            Select an X-axis column with data to render the chart.
-          </div>
-        ) : (
-          <RenderChart
-            type={cfg.chartType}
-            series={series}
-            xLabels={xLabels}
-            showLegend={true}
-            showLabels={cfg.showLabels ?? true}
-            showGrid={cfg.showGrid ?? true}
-            stacked={stacked}
-            benchmarkLines={cfg.benchmarkLines ?? []}
-            showValueAs={cfg.showValueAs ?? "percent"}
-            showCumulative={cfg.showCumulative ?? false}
-            onLabelClick={
-              onCategoryClick && clickTarget ? (label: string) => onCategoryClick(clickTarget, label) : undefined
-            }
-            width={containerSize.w || 600}
-            height={containerSize.h || Math.max(220, 60 + xLabels.length * 22)}
-          />
-        )}
-      </div>
+        <div
+          className="relative h-full w-full min-h-0 min-w-0 flex-1 overflow-hidden"
+          ref={containerRef}
+          data-export-series={xLabels.length > 0 ? JSON.stringify({ xLabels, series }) : undefined}
+        >
+          {unmappedRole ? (
+            <MapColumnPrompt
+              roleLabel={ROLE_LABELS[unmappedRole]}
+              onMapColumn={() => onMapColumn?.(unmappedRole)}
+            />
+          ) : xLabels.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+              {xAxisColumnId ? "No data" : "Select an X-axis column with data to render the chart."}
+            </div>
+          ) : !hasData ? (
+            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">No items yet</div>
+          ) : (
+            <RenderChart
+              type={cfg.chartType}
+              series={series}
+              xLabels={xLabels}
+              showLegend={true}
+              showLabels={cfg.showLabels ?? true}
+              showGrid={cfg.showGrid ?? true}
+              stacked={stacked}
+              benchmarkLines={cfg.benchmarkLines ?? []}
+              showValueAs={cfg.showValueAs ?? "percent"}
+              showCumulative={cfg.showCumulative ?? false}
+              onLabelClick={
+                onCategoryClick && clickTarget ? (label: string) => onCategoryClick(clickTarget, label) : undefined
+              }
+              width={containerSize.w || 600}
+              height={containerSize.h || 320}
+            />
+          )}
+        </div>
+      </ChartCard>
     );
   },
 );

@@ -37,8 +37,9 @@ export interface ColumnOperations {
   onColumnToggleFrozen?: (columnId: string) => void;
   onColumnSetPrimary?: (columnId: string) => void;
   onColumnChangeType?: (columnId: string, type: ColumnTypeKey) => void;
-  onColumnDelete?: (columnId: string) => void;
-  onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
+  onColumnDelete?: (columnIds: string | string[]) => void;
+  canEditColumns?: boolean;
+  onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => Promise<string | undefined>;
   /** ID of the column currently being deleted (for loading state in headers) */
   deletingColumnId?: string | null;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
@@ -56,6 +57,7 @@ export interface ColumnOperations {
   onColumnToggleRestrictView?: (columnId: string) => void;
   onColumnManageAccess?: (column: ColumnDefinition) => void;
   members?: Member[];
+  membersLoading?: boolean;
   onColumnToggleWrapText?: (columnId: string) => void;
   columnWidths?: Record<string, number>;
   onColumnResize?: (columnId: string, newWidth: number) => void;
@@ -136,7 +138,13 @@ export interface ViewRendererProps {
 
   /** Rename a row (inline title editing). */
   onRecordTitleChange?: (recordId: string, title: string) => void;
-  onNewItem?: (groupId?: string | null) => void;
+  /** Batched title change callback (preferred for paste / undo / redo) */
+  onBulkRecordTitleChange?: (updates: Array<{ recordId: string; title: string }>) => Promise<void> | void;
+  /** Batched cell change callback (preferred for paste / undo / redo) */
+  onBulkCellChange?: (updates: Array<{ recordId: string; columnId: string; value: ColumnValue }>) => Promise<void> | void;
+  onNewItem?: (groupId?: string | null) => Promise<string | undefined>;
+  /** Batched new item callback (preferred for paste): creates N rows in one write, returns their IDs */
+  onBulkNewItem?: (count: number, groupId?: string | null) => Promise<string[]>;
 
   /** Callback when view settings change */
   onSettingsChange?: (settings: Partial<ViewSettingsByType>) => void;
@@ -217,7 +225,13 @@ export interface ViewEngineProps {
 
   /** Rename a row (inline title editing). */
   onRecordTitleChange?: (recordId: string, title: string) => void;
-  onNewItem?: (groupId?: string | null) => void;
+  /** Batched title change callback (preferred for paste / undo / redo) */
+  onBulkRecordTitleChange?: (updates: Array<{ recordId: string; title: string }>) => Promise<void> | void;
+  /** Batched cell change callback (preferred for paste / undo / redo) */
+  onBulkCellChange?: (updates: Array<{ recordId: string; columnId: string; value: ColumnValue }>) => Promise<void> | void;
+  onNewItem?: (groupId?: string | null) => Promise<string | undefined>;
+  /** Batched new item callback (preferred for paste): creates N rows in one write, returns their IDs */
+  onBulkNewItem?: (count: number, groupId?: string | null) => Promise<string[]>;
 
   /** Column operations passed through to the active view renderer */
   columnOps?: ColumnOperations;

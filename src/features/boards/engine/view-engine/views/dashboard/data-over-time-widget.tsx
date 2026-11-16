@@ -50,8 +50,8 @@ import type {
     TEXT_TYPES,
     createRecordTitleColumn,
   } from "./dashboard-types";
-import { DEFAULT_COLORS } from "@/features/boards/engine/components/cell-options-popup";
 import { RenderChart, seriesColor, hashColor, type SeriesData } from "./chart-svg";
+import { getChartColor } from "./chart-colors";
 import {
   SectionHeader,
   SearchableColumnSelect,
@@ -69,6 +69,7 @@ import {
   type DashboardRoleKey,
 } from "./column-roles";
 import { MapColumnPrompt, ROLE_LABELS } from "./role-widgets";
+import { ChartCard } from "./chart-card";
 
 export interface DataOverTimeContentProps {
   config: Record<string, unknown>;
@@ -82,6 +83,8 @@ export interface DataOverTimeContentProps {
   roles?: DashboardColumnRoles;
   /** Opens "Map your columns", optionally focused on one role. */
   onMapColumn?: (role: DashboardRoleKey) => void;
+  /** Widget heading shown by the shared <ChartCard /> wrapper. */
+  title?: string;
 }
 
 /**
@@ -147,7 +150,7 @@ function distinctInOrder(values: string[]): string[] {
 }
 
 export const DataOverTimeWidgetContent = memo(
-  ({ config, columns, groups, records, cellValues, filters, measure, roles, onMapColumn }: DataOverTimeContentProps) => {
+  ({ config, columns, groups, records, cellValues, filters, measure, roles, onMapColumn, title }: DataOverTimeContentProps) => {
     const cfg = config as unknown as DataOverTimeWidgetConfig;
     const [containerRef, containerSize] = useElementSize();
 
@@ -202,34 +205,43 @@ export const DataOverTimeWidgetContent = memo(
       const seriesArr: SeriesData[] = [];
 
       if (groupCol && useOptions) {
-        for (const opt of groupOptions) {
-          const pts = bucketDates.map((bd) => {
-            const bucket = dated.filter(
-              (v) => {
-                if (bucketKey(v.d) !== format(bd, "yyyy-MM-dd")) return false;
-                const matched = resolveOptionValue(
-                  groupCol,
-                  getCellValue(v.r.id, groupCol.id, cellValues),
-                );
-                return matched?.id === opt.id || matched?.label === opt.label;
-              },
-            );
-            const vals = bucket.map((v) => valueOf(v.r)).filter((v): v is number => v !== null);
-            const agg = aggregate(vals, cfg.calculation ?? "sum", "");
-            return { label: labelFor(bd), value: effectiveValueMode === "count" ? agg.count : agg.value ?? 0 };
-          });
-          const optColor =
-            opt.color ??
-            DEFAULT_COLORS[opt.label] ??
-            cfg.seriesColors?.[opt.label] ??
-            seriesColor(hashColor(opt.label));
-          seriesArr.push({
-            name: opt.label,
-            color: optColor,
-            points: pts,
-          });
-        }
-      } else if (groupCol) {
+      const groupValueFor = (v: (typeof dated)[number]): string => {
+        const raw = getCellValue(v.r.id, groupCol.id, cellValues);
+        const matched = resolveOptionValue(groupCol, raw);
+        if (matched?.label) return matched.label;
+        if (raw === null || raw === undefined || raw === "") return "(none)";
+        return typeof raw === "string" ? raw : String(raw);
+      };
+
+      const seriesNames = new Set<string>();
+      for (const opt of groupOptions) seriesNames.add(opt.label);
+      for (const v of dated) {
+        const sv = groupValueFor(v);
+        if (sv) seriesNames.add(sv);
+      }
+
+      for (const name of seriesNames) {
+        const opt = groupOptions.find((o) => o.label === name);
+        const pts = bucketDates.map((bd) => {
+          const bucket = dated.filter(
+            (v) =>
+              bucketKey(v.d) === format(bd, "yyyy-MM-dd") && groupValueFor(v) === name,
+          );
+          const vals = bucket.map((v) => valueOf(v.r)).filter((v): v is number => v !== null);
+          const agg = aggregate(vals, cfg.calculation ?? "sum", "");
+          return { label: labelFor(bd), value: effectiveValueMode === "count" ? agg.count : agg.value ?? 0 };
+        });
+        const optColor =
+          opt?.color ??
+          getChartColor(name, cfg.seriesColors) ??
+          seriesColor(hashColor(name));
+        seriesArr.push({
+          name,
+          color: optColor,
+          points: pts,
+        });
+      }
+    } else if (groupCol) {
         const groupValues = distinctInOrder(
           dated.map((v) => getColumnValue(v.r, groupCol.id, cellValues)),
         );
@@ -287,36 +299,44 @@ export const DataOverTimeWidgetContent = memo(
       timeColumnId,
     ]);
 
+    const hasData = xLabels.length > 0 && series.some((s) => s.points.some((p) => p.value > 0));
+
     return (
-      <div
-        className="h-full w-full min-w-0 overflow-hidden"
-        ref={containerRef}
-        data-export-series={xLabels.length > 0 ? JSON.stringify({ xLabels, series }) : undefined}
+      <ChartCard
+        title={title ?? "Data over time"}
+        empty={!hasData}
+        emptyLabel={unmappedRole ? undefined : "No items yet"}
       >
-        {unmappedRole ? (
-          <MapColumnPrompt
-            roleLabel={ROLE_LABELS[unmappedRole]}
-            onMapColumn={() => onMapColumn?.(unmappedRole)}
-          />
-        ) : xLabels.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-            Select a time dimension with date values to render the chart.
-          </div>
-        ) : (
-          <RenderChart
-            type={cfg.chartType}
-            series={series}
-            xLabels={xLabels}
-            showLegend={true}
-            showLabels={cfg.showLabels ?? false}
-            showGrid={cfg.showGrid ?? true}
-            stacked={cfg.stacked ?? false}
-            benchmarkLines={cfg.benchmarkLines ?? []}
-            width={containerSize.w || 600}
-            height={containerSize.h || Math.max(220, 44 + xLabels.length * 18)}
-          />
-        )}
-      </div>
+        <div
+          className="relative h-full w-full min-h-0 min-w-0 flex-1 overflow-hidden"
+          ref={containerRef}
+          data-export-series={xLabels.length > 0 ? JSON.stringify({ xLabels, series }) : undefined}
+        >
+          {unmappedRole ? (
+            <MapColumnPrompt
+              roleLabel={ROLE_LABELS[unmappedRole]}
+              onMapColumn={() => onMapColumn?.(unmappedRole)}
+            />
+          ) : xLabels.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
+              Select a time dimension with date values to render the chart.
+            </div>
+          ) : (
+            <RenderChart
+              type={cfg.chartType}
+              series={series}
+              xLabels={xLabels}
+              showLegend={true}
+              showLabels={cfg.showLabels ?? false}
+              showGrid={cfg.showGrid ?? true}
+              stacked={cfg.stacked ?? false}
+              benchmarkLines={cfg.benchmarkLines ?? []}
+              width={containerSize.w || 600}
+              height={containerSize.h || Math.max(220, 44 + xLabels.length * 18)}
+            />
+          )}
+        </div>
+      </ChartCard>
     );
   },
 );

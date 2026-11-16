@@ -800,7 +800,7 @@ export function buildRecordFromRow(
   let recordTitle =
     rawTitle !== null && rawTitle !== undefined && rawTitle !== ""
       ? String(rawTitle)
-      : `Imported row ${rowIndex + 1}`;
+      : "";
   if (primaryColumnId && rawTitle !== null && rawTitle !== undefined && rawTitle !== "") {
     cellValues[primaryColumnId] = String(rawTitle);
   }
@@ -834,9 +834,9 @@ export function buildRecordFromRow(
        }
      }
    }
-   if (!recordTitle) {
-     recordTitle = `Imported row ${rowIndex + 1}`;
-   }
+if (!recordTitle) {
+      recordTitle = "";
+    }
    return { recordTitle, cellValues, rowIndex, rawRow: row, warnings };
 }
 

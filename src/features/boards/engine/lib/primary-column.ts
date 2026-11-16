@@ -1,6 +1,23 @@
 import type { ColumnDefinition } from "../types";
+import { isBlankCellValue } from "./cell-value";
 
 const TEXT_COMPATIBLE_TYPES = new Set(["text", "long_text", "email", "phone", "url"]);
+
+const PLACEHOLDER_TITLES = new Set(["untitled", "untitled record"]);
+
+/**
+ * A record title is a placeholder when it carries no real content. Imports
+ * have historically produced blank, "Untitled" and "Imported row N" titles
+ * even though the title column's cell value holds the real label.
+ */
+export function isPlaceholderTitle(title: unknown): boolean {
+  if (isBlankCellValue(title)) return true;
+  const trimmed = String(title).trim();
+  return (
+    PLACEHOLDER_TITLES.has(trimmed.toLowerCase()) ||
+    /^imported row \d+$/i.test(trimmed)
+  );
+}
 
 export function isTextCompatibleColumn(column: ColumnDefinition): boolean {
   return TEXT_COMPATIBLE_TYPES.has(column.type);

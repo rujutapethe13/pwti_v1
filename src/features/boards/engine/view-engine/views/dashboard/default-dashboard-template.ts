@@ -357,10 +357,15 @@ const TEMPLATE_ROLE_BINDINGS: Record<string, Record<string, string>> = {
   "turnaround-by-client": { xAxisRole: "client" },
 };
 
+// Original/default "Status breakdown" grid size (12-col grid, ROW_HEIGHT 80).
+// Restored on load to heal a corrupted saved layout that made it tall/narrow.
+const STATUS_BREAKDOWN_LAYOUT = { x: 8, y: 2, w: 4, h: 8, minW: 3, minH: 3 } as const;
+
 /**
- * Re-apply the role bindings above to a saved widget list. Column ids already
- * stored in the config are left untouched so a hand-edited layout keeps its
- * explicit column choices; only the role that drives them is added.
+ * Re-apply template role bindings and repair known broken widget layouts.
+ * Column ids already stored in config are left untouched so hand-edited layouts
+ * keep explicit column choices; only roles (and the Status breakdown size) are
+ * restored.
  */
 export function repairRoleBoundWidgets(
   widgets: DashboardWidgetInstance[],
@@ -371,17 +376,35 @@ export function repairRoleBoundWidgets(
     const segments = widget.id.split("-");
     const key = segments.slice(0, Math.max(1, segments.length - 2)).join("-");
     const binding = TEMPLATE_ROLE_BINDINGS[key];
-    if (!binding || widget.type === "kpi-card" || widget.type === "due-list" || widget.type === "jobs-table") {
-      return widget;
+    let next = widget;
+    if (binding && widget.type !== "kpi-card" && widget.type !== "due-list" && widget.type !== "jobs-table") {
+      const config = { ...widget.config };
+      let changed = false;
+      for (const [field, role] of Object.entries(binding)) {
+        if (config[field]) continue;
+        config[field] = role;
+        changed = true;
+      }
+      // Shared Status breakdown: role-bound donut, real values only.
+      if (key === "status") {
+        if (config.chartType !== "donut") { config.chartType = "donut"; changed = true; }
+        if (config.yAxisMode !== "count") { config.yAxisMode = "count"; changed = true; }
+        if (config.yAxisColumnId) { config.yAxisColumnId = ""; changed = true; }
+        if (config.showValueAs !== "percent") { config.showValueAs = "percent"; changed = true; }
+        if (config.showEmptyValues !== false) { config.showEmptyValues = false; changed = true; }
+        if (config.useMeasure !== true) { config.useMeasure = true; changed = true; }
+      }
+      if (changed) next = { ...next, config };
     }
-    const config = { ...widget.config };
-    let changed = false;
-    for (const [field, role] of Object.entries(binding)) {
-      if (config[field]) continue;
-      config[field] = role;
-      changed = true;
+    if (key === "status" && next.title === "Status breakdown") {
+      const sizeChanged =
+        next.w !== STATUS_BREAKDOWN_LAYOUT.w ||
+        next.h !== STATUS_BREAKDOWN_LAYOUT.h ||
+        next.minW !== STATUS_BREAKDOWN_LAYOUT.minW ||
+        next.minH !== STATUS_BREAKDOWN_LAYOUT.minH;
+      if (sizeChanged) next = { ...next, ...STATUS_BREAKDOWN_LAYOUT };
     }
-    return changed ? { ...widget, config } : widget;
+    return next;
   });
 }
 

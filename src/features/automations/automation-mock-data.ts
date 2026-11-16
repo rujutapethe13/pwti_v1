@@ -166,13 +166,13 @@ export const MOCK_PAYMENT_JOBS: PaymentJobItem[] = [
 export const MOCK_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
   {
     id: "tmpl-upload-date-done",
-    title: "When Date of Upload is inputted in the data, change Status to Done",
-    description: "Automatically sets the item Status to Done as soon as Date of Upload is filled in or entered into the board.",
+    title: "When Date of Upload changes from empty to a valid date, change Status to Done",
+    description: "Automatically sets the item Status to Done when Date of Upload changes from empty to a valid date.",
     category: "Status & Movement",
     popular: true,
     trigger: {
       type: "date_inputted",
-      label: "Date of Upload is inputted in the data",
+      label: "Date of Upload changes from empty to a valid date",
       columnName: "Date of Upload",
       timing: "is_inputted",
     },
@@ -187,7 +187,7 @@ export const MOCK_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
       },
     ],
     sentenceParts: {
-      triggerText: "When Date of Upload is inputted in the data",
+      triggerText: "When Date of Upload changes from empty to a valid date",
       actionText: "then change Status to Done",
     },
   },
@@ -599,8 +599,8 @@ export const MOCK_AUTOMATION_TEMPLATES: AutomationTemplate[] = [
 export const INITIAL_AUTOMATION_RULES: AutomationRule[] = [
   {
     id: "rule-upload-date-status-done",
-    name: "When Date of Upload is inputted in the data, change Status to Done",
-    description: "When Date of Upload is inputted in the data, change Status to Done.",
+    name: "When Date of Upload changes from empty to a valid date, change Status to Done",
+    description: "When Date of Upload changes from empty to a valid date, change Status to Done.",
     category: "Status & Movement",
     boardId: "board-october-2026",
     boardName: "October",
@@ -615,7 +615,7 @@ export const INITIAL_AUTOMATION_RULES: AutomationRule[] = [
     runCount: 12,
     trigger: {
       type: "date_inputted",
-      label: "Date of Upload is inputted in data",
+      label: "Date of Upload changes from empty to a valid date",
       columnName: "Date of Upload",
       timing: "is_inputted",
     },

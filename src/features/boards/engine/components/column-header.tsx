@@ -48,6 +48,9 @@ export interface ColumnHeaderProps {
   onSetPrimary?: (columnId: string) => void;
   onChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onDelete?: (columnId: string) => void;
+  selectedColumnIds?: string[];
+  onDeleteColumns?: (columnIds: string[]) => void;
+  canEdit?: boolean;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
   onConfigureMirror?: (column: ColumnDefinition) => void;
@@ -74,6 +77,11 @@ export interface ColumnHeaderProps {
   /** Props for @dnd-kit sortable integration */
   sortableListeners?: Record<string, unknown>;
   sortableAttributes?: Record<string, unknown>;
+  /** Selection state for Excel-style header copy/paste */
+  selected?: boolean;
+  onSelect?: (columnId: string, e: React.MouseEvent) => void;
+  /** Called on mousedown (not click) to begin a drag-select across headers. */
+  onSelectStart?: (columnId: string, e: React.MouseEvent) => void;
 }
 
 // ── InlineRenameInput ─────────────────────────────────────
@@ -236,6 +244,9 @@ export function ColumnHeader({
   onSetPrimary,
   onChangeType,
   onDelete,
+  selectedColumnIds,
+  onDeleteColumns,
+  canEdit = true,
   onAddColumn,
   onUpdateColumnSettings,
   onConfigureMirror,
@@ -260,6 +271,9 @@ export function ColumnHeader({
   deleteLoading,
   sortableListeners,
   sortableAttributes,
+  selected,
+  onSelect,
+  onSelectStart,
 }: ColumnHeaderProps) {
   const definition = columnTypeRegistry[column.type];
   const { width: currentWidth, resizing, handleResizeStart } = useColumnResize(
@@ -302,21 +316,43 @@ export function ColumnHeader({
     <div
       className={cn(
         "group relative flex items-center gap-1 overflow-hidden border-r border-[var(--border)] px-3 py-2 text-xs font-semibold tracking-wide text-[var(--text-muted)]",
-        frozen && "sticky left-12 z-10 board-table-sticky",
-        hidden && "opacity-40",
-        resizing && "select-none",
-      )}
+         frozen && "sticky left-12 z-10 board-table-sticky",
+         hidden && "opacity-40",
+         resizing && "select-none",
+         selected && "ring-2 ring-green-500 bg-green-500/10",
+       )}
       style={{ width: currentWidth, minWidth: currentWidth }}
       role="columnheader"
       data-column-id={column.id}
       data-column-type={column.type}
       onDoubleClick={handleDoubleClick}
+      onMouseDown={(e) => {
+        // Selection drag must not start on the drag handle or the resize edge.
+        const target = e.target as HTMLElement;
+        if (e.button !== 0) return;
+        if (target.closest("[data-drag-handle]") || target.closest(".group\\/resizer")) return;
+        onSelectStart?.(column.id, e);
+      }}
+      onClick={(e) => {
+        // Don't trigger selection from drag handle or resize edge
+        const target = e.target as HTMLElement;
+        if (target.closest(".group\\/resizer") || target.closest("[data-drag-handle]")) return;
+        onSelect?.(column.id, e);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!selected) onSelect?.(column.id, e);
+        window.setTimeout(() => {
+          (e.currentTarget.querySelector("[data-column-menu]") as HTMLElement | null)?.click();
+        }, 0);
+      }}
     >
       <TooltipProvider delayDuration={300}>
       {/* Drag handle */}
       {onDragStart && (
         <button
           type="button"
+          data-drag-handle
           className="mr-1 shrink-0 cursor-grab touch-none text-muted-foreground/40 hover:text-muted-foreground"
           onMouseDown={onDragStart}
           {...(sortableListeners || {})}
@@ -424,6 +460,9 @@ export function ColumnHeader({
         onSetPrimary={onSetPrimary}
         onChangeType={onChangeType}
         onDelete={onDelete}
+        selectedColumnIds={selectedColumnIds}
+        onDeleteColumns={onDeleteColumns}
+        canEdit={canEdit}
         onAddColumn={onAddColumn}
         onUpdateColumnSettings={onUpdateColumnSettings}
         onConfigureMirror={onConfigureMirror}

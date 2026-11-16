@@ -67,7 +67,8 @@ import { CellRenderer } from "./cell-renderer";
 import { ColumnTypePicker } from "./column-type-picker";
 import { AddGroupPopover, type AddGroupPayload } from "./add-group-popover";
 import { DEFAULT_TITLE_COLUMN_LABEL } from "../lib/title-column";
-import { getPrimaryColumn } from "../lib/primary-column";
+import { getPrimaryColumn, isPlaceholderTitle } from "../lib/primary-column";
+import { isBlankCellValue, cellTitleText } from "../lib/cell-value";
 import { ConnectBoardColumnModal } from "./connect-board-column-modal";
 import { ConfirmDialog } from "./confirm-dialog";
 import { useSelection } from "../hooks/use-selection";
@@ -86,8 +87,19 @@ import {
   getColumnOptions,
   isOptionColumnType,
   resolveOptionDisplay,
+  findOptionForValue,
 } from "../lib/option-lookup";
 import { formatDateTimeIST, formatRelativeIST, getUserLabel } from "../cell-change-utils";
+import {
+  GRID_MATRIX_MIME,
+  matrixToHtml as gridMatrixToHtml,
+  matrixToTSV,
+  matrixSize,
+  padMatrix,
+  resolveClipboardMatrix,
+  serializeMatrix,
+  type CellMatrix,
+} from "../lib/grid-clipboard";
 
 const PRESET_COLORS = [
   "#ef4444", "#f97316", "#f59e0b", "#eab308", "#84cc16",
@@ -109,7 +121,91 @@ const STATUS_OPTIONS = [
   { id: "status-done", name: "Done", color: "#22c55e" },
 ] as const;
 
-// ── Types ──────────────────────────────────────────────────
+const PASTE_CHUNK_SIZE = 200;
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+
+// -- Grid paste/copy helpers --------------------------------------------------
+// Serialization lives in ../lib/grid-clipboard so it can be unit tested.
+const COMPUTED_TYPES = new Set(["formula", "mirror", "rollup", "lookup", "created_by", "created_at", "updated_at", "last_edited_by", "last_edited_time", "auto_number"]);
+const isComputedColumn = (c: ColumnDefinition) => COMPUTED_TYPES.has(c.type);
+
+function formatYmd(y: number, m: number, d: number): string | null {
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function parseDateForPaste(str: string): string | null {
+  const s = str.trim();
+  let m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (m) return formatYmd(+m[3], +m[2], +m[1]);
+  m = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{2})$/);
+  if (m) { const yy = +m[3]; return formatYmd(yy < 50 ? 2000 + yy : 1900 + yy, +m[2], +m[1]); }
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:$|[Ts])/);
+  if (m) return formatYmd(+m[1], +m[2], +m[3]);
+  if (/^\d+(\.\d+)?$/.test(s)) {
+    const n = Number(s);
+    if (n > 59 && n < 100000) {
+      const d = new Date(Date.UTC(1899, 11, 30) + Math.round(n * 86400000));
+      return formatYmd(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+    }
+  }
+  return null;
+}
+
+function formatDateForCopy(ymd: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(ymd));
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : String(ymd);
+}
+
+/** True when a day/month/year string is ambiguous (both parts <= 12, unequal). */
+function isAmbiguousDate(str: string): boolean {
+  const m = str.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})$/);
+  if (!m) return false;
+  const d = +m[1], mo = +m[2];
+  return d !== mo && d <= 12 && mo <= 12;
+}
+
+type PasteConvert = { value: ColumnValue; skip: boolean; reason?: string; clear?: boolean; warning?: string };
+
+function convertPastedValue(raw: string, column: ColumnDefinition, options: DropdownOption[], members: Member[]): PasteConvert {
+  const str = raw.trim();
+  if (str === "") return { value: null, skip: false, clear: true };
+  if (isOptionColumnType(column.type)) {
+    const matched = findOptionForValue(options, str);
+    return matched ? { value: matched.id, skip: false } : { value: null, skip: true, reason: `no matching option for "${str}"` };
+  }
+  if (column.type === "person") {
+    const low = str.toLowerCase();
+    const matched = members.find((m) => m.name?.toLowerCase() === low || m.email?.toLowerCase() === low);
+    return matched ? { value: matched.user_id, skip: false } : { value: null, skip: true, reason: `no matching user for "${str}"` };
+  }
+  if (column.type === "date" || column.type === "timeline") {
+    const parsed = parseDateForPaste(str);
+    const ambiguous = parsed != null && isAmbiguousDate(str);
+    return parsed
+      ? { value: parsed, skip: false, warning: ambiguous ? `ambiguous date "${str}" — read as ${parsed} (day-first)` : undefined }
+      : { value: null, skip: true, reason: `invalid date "${str}"` };
+  }
+  if (column.type === "number" || column.type === "currency") {
+    const cleaned = str.replace(/[\s,₹$€£¥]/g, "");
+    if (cleaned === "" || Number.isNaN(Number(cleaned))) return { value: null, skip: true, reason: `invalid number "${str}"` };
+    return { value: Number(cleaned), skip: false };
+  }
+  if (column.type === "checkbox") {
+    const lower = str.toLowerCase();
+    if (["true","yes","1","on"].includes(lower)) return { value: true, skip: false };
+    if (["false","no","0","off"].includes(lower)) return { value: false, skip: false };
+    return { value: null, skip: true, reason: `invalid boolean "${str}"` };
+  }
+  return { value: str, skip: false };
+}
 
 export interface TableViewProps {
   board: BoardDefinition;
@@ -141,10 +237,11 @@ export interface TableViewProps {
   onColumnSetPrimary?: (columnId: string) => void;
   onColumnChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onColumnToggleWrapText?: (columnId: string) => void;
-   onColumnDelete?: (columnId: string) => void;
+  onColumnDelete?: (columnIds: string | string[]) => void;
+  canEditColumns?: boolean;
   /** ID of the column currently being deleted (for loading state) */
   deletingColumnId?: string | null;
-  onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
+  onColumnAdd?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => Promise<string | undefined>;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
   onConfigureMirror?: (column: ColumnDefinition) => void;
   /**
@@ -157,7 +254,7 @@ export interface TableViewProps {
   onColumnToggleRestrictView?: (columnId: string) => void;
   onColumnManageAccess?: (column: ColumnDefinition) => void;
   members?: Member[];
-  /** Title (record-title) column label rendered in the pinned first column header */
+  membersLoading?: boolean;
   titleColumnLabel?: string;
   /** Rename the title (record-title) column */
   onTitleColumnRename?: (label: string) => void;
@@ -191,9 +288,15 @@ export interface TableViewProps {
   onUpdateGroupTitleColumnLabel?: (groupId: string, titleColumnLabel: string) => void;
   onUpdateGroupColumnMode?: (groupId: string, mode: "inherit" | "custom", copyBoardColumns?: boolean) => void;
   /** New item callback */
-  onNewItem?: (groupId?: string | null) => void;
+  onNewItem?: (groupId?: string | null) => Promise<string | undefined>;
+  /** Batched new item callback (preferred for paste): creates N rows in one write, returns their IDs */
+  onBulkNewItem?: (count: number, groupId?: string | null) => Promise<string[]>;
   /** Record title change callback */
   onRecordTitleChange?: (recordId: string, title: string) => void;
+  /** Batched title change callback (preferred for paste / undo / redo) */
+  onBulkRecordTitleChange?: (updates: Array<{ recordId: string; title: string }>) => Promise<void> | void;
+  /** Batched cell change callback (preferred for paste / undo / redo) */
+  onBulkCellChange?: (updates: Array<{ recordId: string; columnId: string; value: ColumnValue }>) => Promise<void> | void;
   /** Groups for collapsible row grouping */
   groups?: Group[];
   /** Pagination / infinite scroll */
@@ -220,9 +323,15 @@ function SortableColumnHeaderWrapper({
   onSetPrimary,
   onChangeType,
   onDelete,
+  selectedColumnIds,
+  onDeleteColumns,
+  canEdit,
   onAddColumn,
   onUpdateColumnSettings,
   onConfigureMirror,
+  selected,
+  onSelect,
+  onSelectStart,
   sortColumnId,
   sortDirection,
   onSort,
@@ -256,6 +365,9 @@ function SortableColumnHeaderWrapper({
   onSetPrimary?: (columnId: string) => void;
   onChangeType?: (columnId: string, type: ColumnTypeKey) => void;
   onDelete?: (columnId: string) => void;
+  selectedColumnIds?: string[];
+  onDeleteColumns?: (columnIds: string[]) => void;
+  canEdit?: boolean;
   onAddColumn?: (type: ColumnTypeKey, afterColumnId?: string, settings?: Record<string, unknown>) => void;
   onUpdateColumnSettings?: (columnId: string, patch: Partial<ColumnDefinition>) => void;
   sortColumnId?: string;
@@ -278,6 +390,9 @@ function SortableColumnHeaderWrapper({
   isWrapped?: boolean;
   deleteLoading?: boolean;
   onConfigureMirror?: (column: ColumnDefinition) => void;
+  selected?: boolean;
+  onSelect?: (columnId: string, e: React.MouseEvent) => void;
+  onSelectStart?: (columnId: string, e: React.MouseEvent) => void;
 }) {
   const {
     attributes,
@@ -314,6 +429,9 @@ function SortableColumnHeaderWrapper({
         onSetPrimary={onSetPrimary}
         onChangeType={onChangeType}
         onDelete={onDelete}
+        selectedColumnIds={selectedColumnIds}
+        onDeleteColumns={onDeleteColumns}
+        canEdit={canEdit}
         onAddColumn={onAddColumn}
         onUpdateColumnSettings={onUpdateColumnSettings}
         onConfigureMirror={onConfigureMirror}
@@ -337,6 +455,9 @@ function SortableColumnHeaderWrapper({
         isFiltered={isFiltered}
         isCollapsed={isCollapsed}
         isWrapped={isWrapped}
+        selected={selected}
+        onSelect={onSelect}
+        onSelectStart={onSelectStart}
       />
     </div>
   );
@@ -765,6 +886,7 @@ export function TableView({
   onColumnSetPrimary,
   onColumnChangeType,
   onColumnDelete,
+  canEditColumns = true,
   deletingColumnId,
   onColumnAdd,
   onUpdateColumnSettings,
@@ -774,6 +896,7 @@ export function TableView({
   onColumnToggleRestrictView,
   onColumnManageAccess,
   members,
+  membersLoading,
   titleColumnLabel,
   onTitleColumnRename,
   sortColumnId,
@@ -786,7 +909,10 @@ export function TableView({
   onConfigureMirror,
   groups,
   onNewItem,
+  onBulkNewItem,
   onRecordTitleChange,
+  onBulkRecordTitleChange,
+  onBulkCellChange,
   onRowDelete,
   onRowDuplicate,
   onMoveToGroup,
@@ -824,6 +950,22 @@ export function TableView({
   // ── Selection ──────────────────────────────────────────
   const recordIds = useMemo(() => records.map((r) => r.id), [records]);
   const selection = useSelection<string>();
+  // -- Excel-style grid selection (anchor/focus = grid range) ----------------
+  const [gridAnchor, setGridAnchor] = useState<{ row: number; col: number } | null>(null);
+  const [gridEnd, setGridEnd] = useState<{ row: number; col: number } | null>(null); // focus
+  const gridSelectingRef = useRef(false);
+  const [gridDragSelecting, setGridDragSelecting] = useState(false);
+  const gridCutRef = useRef<{r1:number;r2:number;c1:number;c2:number}|null>(null);
+  const gridFillRef = useRef<{ active: boolean; source: {r1:number;r2:number;c1:number;c2:number} | null }>({ active: false, source: null });
+  const internalClipboardRef = useRef<{ values: CellMatrix; raw: GridChange[] } | null>(null);
+  // Set when Ctrl+C/Ctrl+X already wrote the clipboard, so the native copy
+  // event that follows does not write it a second time.
+  const gridCopyHandledRef = useRef(false);
+  type GridChange = { kind: "title"; recordId: string; value: string } | { kind: "cell"; recordId: string; columnId: string; value: ColumnValue };
+  type GridUndo = { prev: GridChange[]; next: GridChange[]; createdIds?: string[] };
+  const [gridUndo, setGridUndo] = useState<GridUndo[]>([]);
+  const [gridRedo, setGridRedo] = useState<GridUndo[]>([]);
+  const [gridCtx, setGridCtx] = useState<{x:number;y:number;r:number;c:number}|null>(null);
   const [bulkAction, setBulkAction] = useState<"archive" | "delete" | null>(
     null,
   );
@@ -834,6 +976,41 @@ export function TableView({
   const [restrictEditingColumns, setRestrictEditingColumns] = useState<Set<string>>(new Set());
   const [restrictViewColumns, setRestrictViewColumns] = useState<Set<string>>(new Set());
   const [wrappedColumns, setWrappedColumns] = useState<Set<string>>(new Set());
+  // Excel-style header selection
+  const [selectedHeaderIds, setSelectedHeaderIds] = useState<string[]>([]);
+  const [pendingColumnDeleteIds, setPendingColumnDeleteIds] = useState<string[]>([]);
+  const [headerAnchorId, setHeaderAnchorId] = useState<string | null>(null);
+  const selectDragRef = useRef<{
+    active: boolean;
+    anchorId: string | null;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  }>({ active: false, anchorId: null, startX: 0, startY: 0, moved: false });
+  const suppressHeaderClickRef = useRef(false);
+
+  const requestDeleteSelectedColumns = useCallback((ids: string[]) => {
+    if (!canEditColumns) return;
+    const selected = columns.filter((column) => ids.includes(column.id));
+    if (selected.length === 0) return;
+    setPendingColumnDeleteIds(selected.map((column) => column.id));
+  }, [columns, canEditColumns]);
+
+  const confirmDeleteSelectedColumns = useCallback(() => {
+    if (pendingColumnDeleteIds.length === 0) return;
+    onColumnDelete?.(pendingColumnDeleteIds);
+    setPendingColumnDeleteIds([]);
+    setSelectedHeaderIds([]);
+    setHeaderAnchorId(null);
+  }, [onColumnDelete, pendingColumnDeleteIds]);
+
+  const handleSingleColumnDelete = useCallback((columnId: string) => {
+    if (!canEditColumns) return;
+    if (!columns.some((column) => column.id === columnId)) return;
+    onColumnDelete?.(columnId);
+    setSelectedHeaderIds([]);
+    setHeaderAnchorId(null);
+  }, [canEditColumns, columns, onColumnDelete]);
 
   const handleToggleCollapse = useCallback((columnId: string) => {
     setCollapsedColumns((prev) => {
@@ -904,6 +1081,226 @@ export function TableView({
       return next;
     });
   }, []);
+
+  const handleHeaderSelect = useCallback((columnId: string, e: React.MouseEvent) => {
+    if (suppressHeaderClickRef.current) {
+      suppressHeaderClickRef.current = false;
+      return;
+    }
+    const ids = [...columns].sort((a, b) => a.order - b.order).map((c) => c.id);
+    if (e.shiftKey && headerAnchorId) {
+      const start = ids.indexOf(headerAnchorId);
+      const end = ids.indexOf(columnId);
+      if (start >= 0 && end >= 0) {
+        const [lo, hi] = start < end ? [start, end] : [end, start];
+        setSelectedHeaderIds(ids.slice(lo, hi + 1));
+      }
+    } else if (e.ctrlKey || e.metaKey) {
+      setSelectedHeaderIds((prev) =>
+        prev.includes(columnId) ? prev.filter((id) => id !== columnId) : [...prev, columnId],
+      );
+      setHeaderAnchorId(columnId);
+    } else {
+      setSelectedHeaderIds([columnId]);
+      setHeaderAnchorId(columnId);
+    }
+  }, [columns, headerAnchorId]);
+
+  const handleHeaderSelectStart = useCallback((columnId: string, e: React.MouseEvent) => {
+    selectDragRef.current = {
+      active: true,
+      anchorId: columnId,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+  }, []);
+
+  useEffect(() => {
+    const onCopy = (e: ClipboardEvent) => {
+      if (selectedHeaderIds.length === 0) return;
+      const target = e.target as HTMLElement;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      const ordered = [...columns]
+        .sort((a, b) => a.order - b.order)
+        .filter((c) => selectedHeaderIds.includes(c.id));
+      if (ordered.length === 0) return;
+      const payload = {
+        version: 1,
+        sourceBoardId: board.id,
+        columns: ordered.map((c) => ({
+          label: c.label,
+          description: c.description,
+          type: c.type,
+          required: c.required,
+          hidden: c.hidden,
+          frozen: c.frozen,
+          isPrimary: c.isPrimary,
+          pinned: c.pinned,
+          defaultValue: c.defaultValue,
+          settings: JSON.parse(JSON.stringify(c.settings ?? {})),
+          permissions: JSON.parse(JSON.stringify(c.permissions)),
+          validation: JSON.parse(JSON.stringify(c.validation ?? [])),
+          restrictEditing: c.restrictEditing,
+          restrictView: c.restrictView,
+          collapsed: c.collapsed,
+          wrapText: c.wrapText,
+          width: columnWidths?.[c.id] ?? 180,
+        })),
+      };
+       e.clipboardData?.setData("application/x-board-columns", JSON.stringify(payload));
+       e.clipboardData?.setData("text/plain", ordered.map((c) => c.label).join("\t"));
+       copyKindRef.current = "columns";
+       headerCopyDefsRef.current = payload.columns;
+       e.preventDefault();
+      toast(`Copied ${ordered.length} column${ordered.length === 1 ? "" : "s"}`);
+    };
+    window.addEventListener("copy", onCopy);
+    return () => window.removeEventListener("copy", onCopy);
+  }, [selectedHeaderIds, columns, board.id, columnWidths]);
+
+  useEffect(() => {
+    const onPaste = async (e: ClipboardEvent) => {
+      const target = e.target as HTMLElement;
+       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+       if (selection.count > 0) return; // row paste handled separately; never create columns
+       // A cell range owns the clipboard: without this guard a range paste also
+       // created columns named after the first copied row.
+       if (selectedHeaderIds.length === 0 && (gridAnchor || gridEnd)) return;
+       if (!document.querySelector("[data-column-id]")) return;
+      const cd = e.clipboardData;
+      if (!cd) return;
+      const custom = cd.getData("application/x-board-columns");
+      const plain = cd.getData("text/plain");
+      if (!custom && !plain) return;
+      let names: string[] = [];
+      let defs: any[] = [];
+      if (custom) {
+        try {
+          const parsed = JSON.parse(custom);
+          if (parsed?.version === 1 && Array.isArray(parsed.columns)) defs = parsed.columns;
+        } catch { /* ignore */ }
+      }
+      if (defs.length === 0 && plain) {
+        const lines = plain.split(/\r?\n/);
+        const first = lines[0] ?? "";
+        names = first.split("\t").map((s) => s.trim()).filter(Boolean);
+      }
+      if (defs.length === 0 && names.length === 0) return;
+      e.preventDefault();
+      const skip: string[] = [];
+      const existing = new Set(columns.map((c) => c.label.toLowerCase()));
+      const addedNames = new Set<string>();
+      const unsupported = new Set(["formula", "lookup", "rollup", "mirror", "connected_board", "person"]);
+      const afterId = selectedHeaderIds.length
+        ? selectedHeaderIds[selectedHeaderIds.length - 1]
+        : undefined;
+      let pasted = 0;
+      const items = defs.length
+        ? defs
+        : names.map((n) => ({ label: n, type: "text", width: 180, settings: {}, required: false, hidden: false, frozen: false, permissions: { view: [], edit: [], configure: [] }, validation: [], defaultValue: null }));
+      for (const d of items) {
+        const type = String(d.type ?? "text");
+        if (unsupported.has(type)) { skip.push(d.label); continue; }
+        let name = String(d.label ?? "Column").trim() || "Column";
+        let candidate = name;
+        let i = 2;
+        while (existing.has(candidate.toLowerCase()) || addedNames.has(candidate.toLowerCase())) {
+          candidate = `${name} (${i++})`;
+        }
+        addedNames.add(candidate.toLowerCase());
+        existing.add(candidate.toLowerCase());
+        const settings = d.settings ? JSON.parse(JSON.stringify(d.settings)) : {};
+        const newId = await onColumnAdd?.(type as any, afterId, {
+          ...settings,
+          label: candidate,
+          width: d.width,
+          required: d.required,
+          hidden: d.hidden,
+          frozen: d.frozen,
+          defaultValue: d.defaultValue,
+          permissions: d.permissions,
+          validation: d.validation,
+        });
+        if (newId && d.width != null) {
+          onColumnResize?.(newId, d.width);
+        }
+        pasted++;
+      }
+      const msg = skip.length
+        ? `Pasted ${pasted} columns, skipped ${skip.length}: ${skip.join(", ")}`
+        : `Pasted ${pasted} columns`;
+      toast(msg);
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [selectedHeaderIds, gridAnchor, gridEnd, selection.count, columns, onColumnAdd, onColumnResize]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      const editing = target?.tagName === "INPUT" || target?.tagName === "TEXTAREA" || target?.isContentEditable;
+      if ((e.key === "Delete" || e.key === "Backspace") && !editing && selectedHeaderIds.length > 0) {
+        e.preventDefault();
+        requestDeleteSelectedColumns(selectedHeaderIds);
+        return;
+      }
+      if (e.key === "Escape") {
+        setSelectedHeaderIds([]);
+        setHeaderAnchorId(null);
+      }
+    };
+    const onClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-column-id]")) {
+        setSelectedHeaderIds([]);
+        setHeaderAnchorId(null);
+      }
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!selectDragRef.current.active) return;
+      const dx = Math.abs(e.clientX - selectDragRef.current.startX);
+      const dy = Math.abs(e.clientY - selectDragRef.current.startY);
+      if (!selectDragRef.current.moved && (dx > 4 || dy > 4)) {
+        selectDragRef.current.moved = true;
+      }
+      if (!selectDragRef.current.moved) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const header = el?.closest("[data-column-id]");
+      if (!header) return;
+      const id = header.getAttribute("data-column-id")!;
+      const anchor = selectDragRef.current.anchorId;
+      if (!anchor || id === anchor) return;
+      const ids = [...columns].sort((a, b) => a.order - b.order).map((c) => c.id);
+      const a = ids.indexOf(anchor);
+      const b = ids.indexOf(id);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        setSelectedHeaderIds(ids.slice(lo, hi + 1));
+      }
+    };
+    const onUp = () => {
+      if (selectDragRef.current.moved) {
+        suppressHeaderClickRef.current = true;
+        window.setTimeout(() => {
+          suppressHeaderClickRef.current = false;
+        }, 0);
+      }
+      selectDragRef.current.active = false;
+      selectDragRef.current.moved = false;
+      selectDragRef.current.anchorId = null;
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("mousedown", onClick);
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("mousedown", onClick);
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [columns, selectedHeaderIds, requestDeleteSelectedColumns]);
 
   // ── Groups ────────────────────────────────────────────
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
@@ -1003,13 +1400,6 @@ export function TableView({
     });
   }, [sortedRecords, columns, cellValues, activeFilters]);
 
-  const handleSelectAll = useCallback(() => {
-    if (selection.isAllSelected(recordIds)) {
-      selection.deselectAll();
-    } else {
-      selection.selectAll(recordIds);
-    }
-  }, [selection, recordIds]);
 
   // ── Groups ────────────────────────────────────────────
   const groupedRecords = useMemo(() => {
@@ -1038,7 +1428,7 @@ export function TableView({
   }, [filteredRecords, visibleRowRange]);
 
   // ── Add column state ──────────────────────────────────
-  const [addColumnAfterId, setAddColumnAfterId] = useState<string | null>(null);
+  const [addColumnAfterId, setAddColumnAfterId] = useState<string | null | "end">(null);
   const [connectBoardAfterId, setConnectBoardAfterId] = useState<string | null>(null);
 
   /** Per-group title column rename (the group keeps its own label). */
@@ -1090,6 +1480,8 @@ export function TableView({
     [columns],
   );
 
+  const hasColumnLayout = allVisibleColumns.length > 0;
+
   const visibleColumns = useMemo(() => {
     const start = visibleColumnRange?.start ?? 0;
     const count = visibleColumnRange?.count ?? allVisibleColumns.length;
@@ -1097,6 +1489,16 @@ export function TableView({
   }, [allVisibleColumns, visibleColumnRange]);
 
   const hasSelection = selection.count > 0;
+  const rowCopyRef = useRef<{ text: string; pairs: { columnId: string; value: any }[] } | null>(null);
+  const copyKindRef = useRef<"row" | "columns" | null>(null);
+  const headerCopyDefsRef = useRef<any[]>([]);
+
+  const targetColumns = useCallback(() => {
+    if (selectedHeaderIds.length > 0) {
+      return [...columns].sort((a, b) => a.order - b.order).filter((c) => selectedHeaderIds.includes(c.id));
+    }
+    return allVisibleColumns.filter((c) => !["formula", "mirror", "rollup", "lookup"].includes(c.type));
+  }, [selectedHeaderIds, columns, allVisibleColumns]);
 
   // ── Number column sums for footer ─────────────────────
   const numberColumnSums = useMemo(() => {
@@ -1114,100 +1516,539 @@ export function TableView({
     return sums;
   }, [columns, records, cellValues]);
 
-  // ── Keyboard navigation ────────────────────────────────
-  const tableRef = useRef<HTMLDivElement>(null);
-  const [focusedCell, setFocusedCell] = useState<{
-    rowIdx: number;
-    colIdx: number;
-  } | null>(null);
+// -- Excel-style grid model (continuous 2D: all visible items in order) -----
+const flatRecords = useMemo(
+    () => groupedRecords.flatMap((e) => (collapsedGroups.has(e.groupId ?? "null") ? [] : e.records)),
+    [groupedRecords, collapsedGroups],
+  );
+  const flatIndexById = useMemo(() => new Map(flatRecords.map((r, i) => [r.id, i])), [flatRecords]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
+  const getRowColumns = useCallback((record: BoardRecord) => {
+    const group = groups?.find((candidate) => candidate.id === record.groupId);
+    if (group?.columnMode === "custom") {
+      return columns.filter((column) => column.groupId === group.id && !column.hidden);
+    }
+    return visibleColumns;
+  }, [columns, groups, visibleColumns]);
+
+  const gridColumnsFor = useCallback((record: BoardRecord) => {
+    return getRowColumns(record).filter((c) => !collapsedColumns.has(c.id));
+  }, [getRowColumns, collapsedColumns]);
+
+  const isTitleCell = useCallback((record: BoardRecord, column: ColumnDefinition) => {
+    const cols = getRowColumns(record);
+    const isPrimary = column.id === getPrimaryColumn(columns, { groupId: record.groupId })?.id;
+    const fallback = !isPrimary ? cols.find((c) => ["text","long_text","email","phone","url"].includes(c.type)) : undefined;
+    return isPrimary || column.id === fallback?.id;
+  }, [columns, getRowColumns]);
+
+  const handleSelectAll = useCallback(() => {
+    if (flatRecords.length) {
+      const last = flatRecords.length - 1;
+      const lc = Math.max(0, gridColumnsFor(flatRecords[last] || records[0]).length - 1);
+      setGridAnchor({ row: 0, col: 0 });
+      setGridEnd({ row: last, col: lc });
+      setFocusedCell({ rowIdx: 0, colIdx: 0 });
+      console.log("[grid-selection]", { r1: 0, c1: 0, r2: last, c2: lc });
+    } else {
+      selection.deselectAll();
+    }
+  }, [flatRecords, gridColumnsFor, records, selection]);
+
+  const gridRange = useMemo(() => {
+    if (!gridAnchor || !gridEnd) return null;
+    return {
+      r1: Math.min(gridAnchor.row, gridEnd.row),
+      r2: Math.max(gridAnchor.row, gridEnd.row),
+      c1: Math.min(gridAnchor.col, gridEnd.col),
+      c2: Math.max(gridAnchor.col, gridEnd.col),
+    };
+  }, [gridAnchor, gridEnd]);
+  const gridColsCount = useCallback((r = 0) => Math.max(1, gridColumnsFor(flatRecords[r] || records[0]).length), [flatRecords, gridColumnsFor, records]);
+  const isInGridRange = useCallback((r: number, c: number) => !!gridRange && r >= gridRange.r1 && r <= gridRange.r2 && c >= gridRange.c1 && c <= gridRange.c2, [gridRange]);
+
+  const scrollGridCellIntoView = useCallback((row: number, col: number) => {
+    requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-grid-row="${row}"][data-grid-col="${col}"]`);
+      (el as HTMLElement | null)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!gridAnchor && !gridEnd) return;
+    const range = gridRange;
+    const cols = (flatRecords[range?.r1 ?? 0] || records[0]) ? gridColumnsFor(flatRecords[range?.r1 ?? 0] || records[0]) : [];
+    const ordered = cols.map((c, i) => ({ index: i, id: c.id, title: c.label, type: c.type }));
+    console.log("[grid-selection]", range, { anchor: gridAnchor, focus: gridEnd, columns: ordered });
+  }, [gridAnchor, gridEnd, gridRange, flatRecords, gridColumnsFor, records]);
+
+  const getDisplayValue = useCallback((record: BoardRecord, column: ColumnDefinition): string => {
+    const titleCell = isTitleCell(record, column);
+    const title = typeof record.title === "string" ? record.title.trim() : "";
+    if (titleCell && !isPlaceholderTitle(record.title)) {
+      return title;
+    }
+    const v = cellValues.get(getCellKey(record.id, column.id)) ?? column.defaultValue;
+    if (isBlankCellValue(v)) return "";
+    if (titleCell) return cellTitleText(v);
+    if (isOptionColumnType(column.type)) {
+      const opts = getColumnOptions(column);
+      const o = opts.find((x) => String(x.id).toLowerCase() === String(v).toLowerCase() || String((x as any).name ?? (x as any).label ?? "").toLowerCase() === String(v).toLowerCase());
+      return String((o as any)?.name ?? (o as any)?.label ?? v);
+    }
+    if (column.type === "person") {
+      const m = (members as Member[] | undefined)?.find((mm: any) => mm.user_id === v || mm.id === v);
+      return String(m?.name || m?.email || v);
+    }
+    if (column.type === "date" || column.type === "timeline") return formatDateForCopy(String(v));
+    if (column.type === "checkbox") return v ? "true" : "false";
+    return String(v);
+  }, [cellValues, isTitleCell, members]);
+
+  // Max cell/title updates per bulk server write: keeps large pastes under
+  // the server-action body size limit and Vercel function timeout while
+  // still reporting progress per chunk. See PASTE_CHUNK_SIZE above.
+
+  const applyPasteUpdates = useCallback(async (
+    titleUpdates: Array<{ recordId: string; title: string }>,
+    cellUpdates: Array<{ recordId: string; columnId: string; value: ColumnValue }>,
+    prev: GridChange[],
+  ) => {
+    const next: GridChange[] = [
+      ...titleUpdates.map((t) => ({ kind: "title" as const, recordId: t.recordId, value: t.title })),
+      ...cellUpdates.map((c) => ({ kind: "cell" as const, recordId: c.recordId, columnId: c.columnId, value: c.value })),
+    ];
+    if (cellUpdates.length) {
+      const batches = chunk(cellUpdates, PASTE_CHUNK_SIZE);
+      if (onBulkCellChange) {
+        for (const batch of batches) await onBulkCellChange(batch);
+      } else {
+        for (const u of cellUpdates) await onCellChange?.(u);
+      }
+    }
+    if (titleUpdates.length) {
+      const batches = chunk(titleUpdates, PASTE_CHUNK_SIZE);
+      if (onBulkRecordTitleChange) {
+        for (const batch of batches) await onBulkRecordTitleChange(batch);
+      } else {
+        for (const u of titleUpdates) await onRecordTitleChange?.(u.recordId, u.title);
+      }
+    }
+    if (prev.length) { setGridUndo((s) => [...s, { prev, next }]); setGridRedo([]); }
+  }, [onBulkCellChange, onBulkRecordTitleChange, onCellChange, onRecordTitleChange]);
+
+  const undoGrid = useCallback(async () => {
+    const entry = gridUndo[gridUndo.length - 1];
+    if (!entry) return;
+    const titles: Array<{recordId:string;title:string}> = [];
+    const cells: Array<{recordId:string;columnId:string;value:ColumnValue}> = [];
+    for (const p of entry.prev) {
+      if (p.kind === "title") titles.push({ recordId: p.recordId, title: p.value });
+      else cells.push({ recordId: p.recordId, columnId: p.columnId, value: p.value });
+    }
+    if (cells.length) { if (onBulkCellChange) await onBulkCellChange(cells); else for (const u of cells) await onCellChange?.(u); }
+    if (titles.length) { if (onBulkRecordTitleChange) await onBulkRecordTitleChange(titles); else for (const u of titles) await onRecordTitleChange?.(u.recordId, u.title); }
+    setGridUndo((s) => s.slice(0, -1));
+    setGridRedo((s) => [...s, entry]);
+    toast("Undo paste");
+  }, [gridUndo, onBulkCellChange, onBulkRecordTitleChange, onCellChange, onRecordTitleChange]);
+
+  const redoGrid = useCallback(async () => {
+    const entry = gridRedo[gridRedo.length - 1];
+    if (!entry) return;
+    const titles: Array<{recordId:string;title:string}> = [];
+    const cells: Array<{recordId:string;columnId:string;value:ColumnValue}> = [];
+    for (const p of entry.next) {
+      if (p.kind === "title") titles.push({ recordId: p.recordId, title: p.value });
+      else cells.push({ recordId: p.recordId, columnId: p.columnId, value: p.value });
+    }
+    if (cells.length) { if (onBulkCellChange) await onBulkCellChange(cells); else for (const u of cells) await onCellChange?.(u); }
+    if (titles.length) { if (onBulkRecordTitleChange) await onBulkRecordTitleChange(titles); else for (const u of titles) await onRecordTitleChange?.(u.recordId, u.title); }
+    setGridRedo((s) => s.slice(0, -1));
+    setGridUndo((s) => [...s, entry]);
+    toast("Redo paste");
+  }, [gridRedo, onBulkCellChange, onBulkRecordTitleChange, onCellChange, onRecordTitleChange]);
+
+  const readGridMatrix = useCallback((range: {r1:number;r2:number;c1:number;c2:number}): CellMatrix => {
+    const rows: CellMatrix = [];
+    for (let r = range.r1; r <= range.r2; r++) {
+      const rec = flatRecords[r];
+      if (!rec) {
+        // Keep the rectangle: a missing row still occupies its slot so the
+        // pasted block has the same height as the copied one.
+        rows.push(new Array(Math.max(0, range.c2 - range.c1 + 1)).fill(""));
+        continue;
+      }
+      const cols = gridColumnsFor(rec);
+      const rowVals: string[] = [];
+      for (let c = range.c1; c <= range.c2; c++) {
+        const col = cols[c];
+        rowVals.push(col ? getDisplayValue(rec, col) : "");
+      }
+      rows.push(rowVals);
+    }
+    return rows;
+  }, [flatRecords, gridColumnsFor, getDisplayValue]);
+
+  const copyGridRange = useCallback(async (range: {r1:number;r2:number;c1:number;c2:number}, cut = false) => {
+    const prev: GridUndo["prev"] = [];
+    const titleUpdates: Array<{recordId:string;title:string}> = [];
+    const cellUpdates: Array<{recordId:string;columnId:string;value:ColumnValue}> = [];
+    const readOnly = restrictEditingColumns ?? new Set<string>();
+    const rows = readGridMatrix(range);
+    for (let r = range.r1; r <= range.r2; r++) {
+      const rec = flatRecords[r];
+      if (!rec || !cut) continue;
+      const cols = gridColumnsFor(rec);
+      for (let c = range.c1; c <= range.c2; c++) {
+        const col = cols[c];
+        if (!col || isComputedColumn(col) || readOnly.has(col.id)) continue;
+        if (isTitleCell(rec, col)) { prev.push({kind:"title",recordId:rec.id,value:rec.title||""}); titleUpdates.push({recordId:rec.id,title:""}); }
+        else { prev.push({kind:"cell",recordId:rec.id,columnId:col.id,value:cellValues.get(getCellKey(rec.id,col.id)) ?? col.defaultValue ?? null}); cellUpdates.push({recordId:rec.id,columnId:col.id,value:null}); }
+      }
+    }
+    const matrix = padMatrix(rows);
+    const tsv = matrixToTSV(matrix);
+    const html = gridMatrixToHtml(matrix);
+    internalClipboardRef.current = { values: matrix, raw: [] };
+    try {
+      if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
+        const payload: Record<string, Blob> = {
+          "text/plain": new Blob([tsv], { type: "text/plain" }),
+          "text/html": new Blob([html], { type: "text/html" }),
+        };
+        // Custom MIME types are not accepted by every ClipboardItem impl.
+        try { payload[GRID_MATRIX_MIME] = new Blob([serializeMatrix(matrix)], { type: GRID_MATRIX_MIME }); } catch { /* optional */ }
+        await navigator.clipboard.write([new ClipboardItem(payload)]);
+      } else {
+        await navigator.clipboard.writeText(tsv);
+      }
+    } catch {
+      try { await navigator.clipboard.writeText(tsv); } catch { /* in-app paste still works */ }
+    }
+    gridCutRef.current = cut ? { ...range } : null;
+    if (cut) await applyPasteUpdates(titleUpdates, cellUpdates, prev);
+    const { rows: copiedRows, cols: copiedCols } = matrixSize(matrix);
+    console.log("[grid-copy]", { range, cut, rows: copiedRows, cols: copiedCols });
+  }, [flatRecords, gridColumnsFor, readGridMatrix, isTitleCell, restrictEditingColumns, cellValues, applyPasteUpdates]);
+
+  const clearGridRange = useCallback(async (range: {r1:number;r2:number;c1:number;c2:number}) => {
+    const prev: GridUndo["prev"] = [];
+    const titleUpdates: Array<{recordId:string;title:string}> = [];
+    const cellUpdates: Array<{recordId:string;columnId:string;value:ColumnValue}> = [];
+    const readOnly = restrictEditingColumns ?? new Set<string>();
+    for (let r = range.r1; r <= range.r2; r++) {
+      const rec = flatRecords[r]; if (!rec) continue;
+      const cols = gridColumnsFor(rec);
+      for (let c = range.c1; c <= range.c2; c++) {
+        const col = cols[c]; if (!col || isComputedColumn(col) || readOnly.has(col.id)) continue;
+        if (isTitleCell(rec, col)) { prev.push({kind:"title",recordId:rec.id,value:rec.title||""}); titleUpdates.push({recordId:rec.id,title:""}); }
+        else { prev.push({kind:"cell",recordId:rec.id,columnId:col.id,value:cellValues.get(getCellKey(rec.id,col.id)) ?? col.defaultValue ?? null}); cellUpdates.push({recordId:rec.id,columnId:col.id,value:null}); }
+      }
+    }
+    await applyPasteUpdates(titleUpdates, cellUpdates, prev);
+    toast("Cleared selection");
+  }, [flatRecords, gridColumnsFor, isTitleCell, restrictEditingColumns, cellValues, applyPasteUpdates]);
+
+  const doGridPaste = useCallback(async (text: string, clipboard?: { getData: (format: string) => string } | null) => {
+    const resolved = resolveClipboardMatrix(clipboard ?? null, text, internalClipboardRef.current?.values ?? null);
+    if (!resolved) return;
+    const matrix = resolved.rows;
+    const anchor = gridAnchor ?? gridEnd ?? { row: 0, col: 0 };
+    const sel = gridRange ?? { r1: anchor.row, r2: anchor.row, c1: anchor.col, c2: anchor.col };
+    const top = Math.max(0, sel.r1);
+    const left = Math.max(0, sel.c1);
+    const single = matrix.length === 1 && (matrix[0]?.length || 0) === 1;
+    // A single copied value pasted over a multi-cell selection fills that
+    // selection; a real block always lands at the anchor and keeps its shape.
+    const block: CellMatrix = single && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)
+      ? Array.from({ length: sel.r2 - sel.r1 + 1 }, () => Array.from({ length: sel.c2 - sel.c1 + 1 }, () => matrix[0][0] ?? ""))
+      : matrix;
+    const R = block.length;
+    const C = block.reduce((m, r) => Math.max(m, r.length), 0);
+    if (!R || !C) return;
+
+    const needed = top + R;
+
+    // ── Batched row creation: one write per chunk instead of one per row ──
+    const createdIds: string[] = [];
+    const rowsToCreate = Math.max(0, needed - flatRecords.length);
+    if (rowsToCreate > 0) {
+      const gid = flatRecords[flatRecords.length - 1]?.groupId ?? (groups && groups.length > 0 ? groups[0].id : null);
+      if (onBulkNewItem) {
+        // Chunked so one paste can never exceed the server-action body limit.
+        for (let offset = 0; offset < rowsToCreate; offset += PASTE_CHUNK_SIZE) {
+          const count = Math.min(PASTE_CHUNK_SIZE, rowsToCreate - offset);
+          const ids = await onBulkNewItem(count, gid);
+          createdIds.push(...(ids || []).filter(Boolean));
+        }
+      } else if (onNewItem) {
+        // Fallback: serial creation keeps prior behaviour when batch isn't wired.
+        while (createdIds.length < rowsToCreate) {
+          const id = await onNewItem(gid);
+          if (id) createdIds.push(id);
+          else break;
+        }
+      }
+    }
+
+    // Resolve target columns ONCE from the anchor row's group so every source
+    // column maps to the same target column across all paste rows. Groups with
+    // different column sets are handled explicitly per row below.
+    const anchorRec = flatRecords[top] ?? records[0];
+    const anchorCols = gridColumnsFor(anchorRec);
+
+    const readOnly = restrictEditingColumns ?? new Set<string>();
+    const prev: GridUndo["prev"] = [];
+    const titleUpdates: Array<{recordId:string;title:string}> = [];
+    const cellUpdates: Array<{recordId:string;columnId:string;value:ColumnValue}> = [];
+    const skipped: Array<{row:number;col:number;label:string;value:string;reason:string}> = [];
+    const warned: Array<{row:number;col:number;label:string;value:string;warning:string}> = [];
+    const synthetic = new Set<string>();
+    let overflow = false;
+
+    const liveFlat = groupedRecords.flatMap((e) => (collapsedGroups.has(e.groupId ?? "null") ? [] : e.records));
+    const working = [...liveFlat];
+    let ciCreated = 0;
+    while (working.length < needed) {
+      const realId = createdIds[ciCreated++];
+      const template = working[working.length - 1] || liveFlat[0] || records[0];
+      const id = realId ?? `__new_${working.length}`;
+      if (!realId) synthetic.add(id);
+      working.push({ ...(template || {}), id, title: "", groupId: template?.groupId ?? (groups?.[0]?.id ?? null) } as any);
+    }
+
+    for (let i = 0; i < R; i++) {
+      const rec = working[top + i] || flatRecords[top + i];
+      if (!rec) continue;
+      if (synthetic.has(rec.id)) { skipped.push({ row: top + i + 1, col: 0, label: "row", value: "", reason: "row could not be created" }); continue; }
+      const recCols = gridColumnsFor(rec);
+      const recColIds = new Set(recCols.map((c) => c.id));
+      const srcRow = block[i] || [];
+      for (let j = 0; j < srcRow.length; j++) {
+        const ci = left + j;
+        if (ci >= anchorCols.length) { overflow = true; continue; }
+        const col = anchorCols[ci];
+        // Column must exist in this row's group (groups may have different columns).
+        if (!recColIds.has(col.id)) {
+          skipped.push({ row: top + i + 1, col: ci + 1, label: col.label, value: String(srcRow[j] ?? ""), reason: "column not in this row's group" });
+          continue;
+        }
+        const raw = String(srcRow[j] ?? "");
+        if (isComputedColumn(col) || readOnly.has(col.id)) {
+          if (raw.trim() !== "") skipped.push({ row: top + i + 1, col: ci + 1, label: col.label, value: raw, reason: "read-only" });
+          continue;
+        }
+        const titleHere = isTitleCell(rec, col);
+        if (titleHere) {
+          prev.push({ kind: "title", recordId: rec.id, value: rec.title || "" });
+          titleUpdates.push({ recordId: rec.id, title: raw.trim() });
+          continue;
+        }
+        const options = getColumnOptions(col);
+        const conv = convertPastedValue(raw, col, options, (members as Member[]) || []);
+        if (conv.warning) warned.push({ row: top + i + 1, col: ci + 1, label: col.label, value: raw, warning: conv.warning });
+        if (conv.skip) {
+          skipped.push({ row: top + i + 1, col: ci + 1, label: col.label, value: raw, reason: conv.reason || "skipped" });
+          continue;
+        }
+        prev.push({ kind: "cell", recordId: rec.id, columnId: col.id, value: cellValues.get(getCellKey(rec.id, col.id)) ?? col.defaultValue ?? null });
+        cellUpdates.push({ recordId: rec.id, columnId: col.id, value: conv.value });
+      }
+    }
+    if (overflow) skipped.push({ row: 0, col: 0, label: "block", value: "", reason: "overflow past last column" });
+
+    // One optimistic state update per type + one batched write per type:
+    // all cells in a single upsert, all titles in a single upsert.
+    await applyPasteUpdates(titleUpdates, cellUpdates, prev);
+    gridCutRef.current = null;
+
+    const anchorColsEnd = gridColumnsFor(flatRecords[top] || records[0]);
+    const endR = top + R - 1;
+    const endC = Math.min(left + C - 1, Math.max(left, (anchorColsEnd.length || 1) - 1));
+    setGridAnchor({ row: top, col: left });
+    setGridEnd({ row: Math.max(top, endR), col: Math.max(left, endC) });
+    setFocusedCell({ rowIdx: top, colIdx: left });
+    scrollGridCellIntoView(top, left);
+
+    const skipCount = skipped.length;
+    const warnCount = warned.length;
+    const skipDetail = skipped.map((s) => `row ${s.row}, col ${s.col} "${s.label}": value="${s.value}" — ${s.reason}`).join("; ");
+    const warnDetail = warned.map((w) => `row ${w.row}, col ${w.col} "${w.label}": value="${w.value}" — ${w.warning}`).join("; ");
+    const reportParts: string[] = [];
+    if (skipDetail) reportParts.push(`${skipCount} skipped: ${skipDetail}`);
+    if (warnDetail) reportParts.push(`${warnCount} warned: ${warnDetail}`);
+    const reportMsg = reportParts.length ? ` — ${reportParts.join(" ")}` : "";
+    console.log("[grid-paste]", { source: resolved.exact ? "matrix" : "text", selected: { r1: top, c1: left, r2: Math.max(top, endR), c2: Math.max(left, endC) }, matrix: { rows: R, cols: C }, skipped, warned });
+    toast(`Pasted ${R} rows x ${C} cols${skipCount ? `, ${skipCount} skipped` : ""}${warnCount ? `, ${warnCount} warned` : ""}${reportMsg}`);
+  }, [gridAnchor, gridEnd, gridRange, flatRecords, groupedRecords, collapsedGroups, groups, onNewItem, onBulkNewItem, records, restrictEditingColumns, gridColumnsFor, cellValues, members, isTitleCell, applyPasteUpdates, scrollGridCellIntoView]);
+
+  const applyGridFill = useCallback(async (source: {r1:number;r2:number;c1:number;c2:number}, target: {r1:number;r2:number;c1:number;c2:number}) => {
+    const down = target.r2 > source.r2;
+    const right = target.c2 > source.c2 && target.r2 === source.r2;
+    if (!down && !right) return;
+    const block: CellMatrix = [];
+    const srcH = Math.max(1, source.r2 - source.r1 + 1);
+    const srcW = Math.max(1, source.c2 - source.c1 + 1);
+    for (let r = target.r1; r <= target.r2; r++) {
+      const row: string[] = [];
+      for (let c = target.c1; c <= target.c2; c++) {
+        const sr = source.r1 + ((r - source.r1) % srcH);
+        const sc = source.c1 + ((c - source.c1) % srcW);
+        const srec = flatRecords[sr]; const scols = srec ? gridColumnsFor(srec) : [];
+        row.push(srec && scols[sc] ? getDisplayValue(srec, scols[sc]) : "");
+      }
+      block.push(row);
+    }
+    const pa = gridAnchor, pe = gridEnd;
+    setGridAnchor({ row: target.r1, col: target.c1 }); setGridEnd({ row: target.r2, col: target.c2 });
+    await doGridPaste(matrixToTSV(padMatrix(block)));
+    setGridAnchor(pa ?? { row: target.r1, col: target.c1 }); setGridEnd(pe ?? { row: target.r2, col: target.c2 });
+  }, [flatRecords, gridColumnsFor, getDisplayValue, doGridPaste, gridAnchor, gridEnd]);
+
+  // The grid is made of divs, so after a cell click the DOM focus is still on
+  // <body> and a native paste never reaches the table element. Listen on the
+  // window so Ctrl+V lands on the grid, and defer to the header/column handler
+  // when a header selection is active.
+  useEffect(() => {
+    const isEditable = (el: EventTarget | null) => {
+      const node = el as HTMLElement | null;
+      return !!node && (node.tagName === "INPUT" || node.tagName === "TEXTAREA" || node.isContentEditable);
+    };
+    const hasGridSelection = () => !!(gridAnchor || gridEnd);
+    const onWindowPaste = (e: ClipboardEvent) => {
+      if (isEditable(e.target)) return;
+      if (selectedHeaderIds.length > 0) return;
+      if (selection.count > 0) return;
+      if (!hasGridSelection()) return;
+      const text = e.clipboardData?.getData("text/plain");
+      if (text == null) return;
+      e.preventDefault();
+      void doGridPaste(text, e.clipboardData);
+    };
+    const onWindowCopy = (e: ClipboardEvent) => {
+      if (isEditable(e.target)) return;
+      if (selectedHeaderIds.length > 0) return;
+      if (!gridRange) return;
+      // Let the execCommand path (Ctrl+C keydown) own the clipboard; this
+      // handler only covers the native copy event.
+      if (gridCopyHandledRef.current) { gridCopyHandledRef.current = false; return; }
+      const matrix = padMatrix(readGridMatrix(gridRange));
+      e.preventDefault();
+      const cd = e.clipboardData;
+      if (cd) {
+        cd.setData("text/plain", matrixToTSV(matrix));
+        cd.setData("text/html", gridMatrixToHtml(matrix));
+        try { cd.setData(GRID_MATRIX_MIME, serializeMatrix(matrix)); } catch { /* optional */ }
+      }
+      internalClipboardRef.current = { values: matrix, raw: [] };
+      gridCutRef.current = null;
+    };
+    const onWindowCut = (e: ClipboardEvent) => {
+      if (isEditable(e.target)) return;
+      if (selectedHeaderIds.length > 0) return;
+      if (!gridRange) return;
+      // copyGridRange writes the clipboard itself; just clear the source cells.
+      gridCopyHandledRef.current = true;
+      e.preventDefault();
+      void copyGridRange(gridRange, true);
+    };
+    window.addEventListener("paste", onWindowPaste);
+    window.addEventListener("copy", onWindowCopy);
+    window.addEventListener("cut", onWindowCut);
+    return () => {
+      window.removeEventListener("paste", onWindowPaste);
+      window.removeEventListener("copy", onWindowCopy);
+      window.removeEventListener("cut", onWindowCut);
+    };
+  }, [gridAnchor, gridEnd, gridRange, selectedHeaderIds.length, selection.count, doGridPaste, copyGridRange, readGridMatrix]);
+
+  // keep legacy names referenced by UI (replaced by grid actions)
+  const copyRow = useCallback(async () => {
+    const r = gridRange ?? (gridAnchor ? {r1:gridAnchor.row,r2:gridAnchor.row,c1:gridAnchor.col,c2:gridAnchor.col} : null);
+    if (r) await copyGridRange(r);
+  }, [gridRange, gridAnchor, copyGridRange]);
+  const pasteRow = useCallback(async () => {
+    try { const t = await navigator.clipboard.readText(); await doGridPaste(t); } catch {}
+  }, [doGridPaste]);
+
+  // -- Keyboard navigation / grid selection ----------------------------------
+  const tableRef = useRef<HTMLDivElement>(null);
+  const [focusedCell, setFocusedCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+    const cur = gridEnd ?? gridAnchor ?? (focusedCell ? { row: focusedCell.rowIdx, col: focusedCell.colIdx } : null);
+    if (!cur && !(e.ctrlKey || e.metaKey)) return;
+    const maxRow = Math.max(0, flatRecords.length - 1);
+    const colsLen = Math.max(1, gridColumnsFor(flatRecords[cur?.row ?? 0] || records[0]).length);
+    const maxCol = Math.max(0, colsLen - 1);
+    const setSel = (r:number,c:number,extend:boolean) => {
+      r = Math.max(0, Math.min(maxRow, r)); c = Math.max(0, Math.min(maxCol, c));
+      const next = { row: r, col: c };
+      if (extend && gridAnchor) { setGridEnd(next); } else { setGridAnchor(next); setGridEnd(next); }
+      setFocusedCell({ rowIdx: r, colIdx: c }); scrollGridCellIntoView(r,c);
+    };
+    const r = cur?.row ?? 0, c = cur?.col ?? 0;
+    const edgeLeft = (_row:number) => 0;
+    const edgeRight = (row:number) => Math.max(0, gridColumnsFor(flatRecords[row] || records[0]).length - 1);
+    const isEmptyCell = (row:number, col:number) => {
+      const rec = flatRecords[row]; const cols = rec ? gridColumnsFor(rec) : []; const cdef = cols[col];
+      if (!rec || !cdef) return true;
+      return getDisplayValue(rec, cdef).trim() === "";
+    };
+    const jumpData = (row:number, col:number, dr:number, dc:number, extend:boolean) => {
+      let nr=row, nc=col; const stepR = dr===0?0:(dr>0?1:-1), stepC = dc===0?0:(dc>0?1:-1);
+      const inB = (rr:number,cc:number)=>rr>=0&&rr<=maxRow&&cc>=0&&cc<=edgeRight(rr);
+      const next = (rr:number,cc:number)=>({rr:rr+stepR,cc:cc+stepC});
+      if (!inB(nr+stepR,nc+stepC)) return setSel(nr+stepR,nc+stepC,extend);
+      let {rr,cc}=next(nr,nc);
+      const curEmpty = isEmptyCell(nr,nc);
+      if (curEmpty) { while(inB(rr,cc) && isEmptyCell(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); } if(inB(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); while(inB(rr,cc) && !isEmptyCell(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); } } }
+      else { if(inB(rr,cc) && !isEmptyCell(rr,cc)){ while(inB(rr,cc) && !isEmptyCell(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); } } else { while(inB(rr,cc) && isEmptyCell(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); } if(inB(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); while(inB(rr,cc) && !isEmptyCell(rr,cc)){ nr=rr; nc=cc; ({rr,cc}=next(rr,cc)); } } } }
+      setSel(nr,nc,extend);
+    };
+    switch (e.key) {
+      case "ArrowUp": e.preventDefault(); if(e.ctrlKey||e.metaKey) jumpData(r,c,-1,0,e.shiftKey); else setSel(r-1,c,e.shiftKey); return;
+      case "ArrowDown": e.preventDefault(); if(e.ctrlKey||e.metaKey) jumpData(r,c,1,0,e.shiftKey); else setSel(r+1,c,e.shiftKey); return;
+      case "ArrowLeft": e.preventDefault(); if(e.ctrlKey||e.metaKey) jumpData(r,c,0,-1,e.shiftKey); else setSel(r,c-1,e.shiftKey); return;
+      case "ArrowRight": e.preventDefault(); if(e.ctrlKey||e.metaKey) jumpData(r,c,0,1,e.shiftKey); else setSel(r,c+1,e.shiftKey); return;
+      case "PageUp": e.preventDefault(); setSel(r - 20, c, e.shiftKey); return;
+      case "PageDown": e.preventDefault(); setSel(r + 20, c, e.shiftKey); return;
+      case "Tab": e.preventDefault(); setSel(r, c + (e.shiftKey ? -1 : 1), false); return;
+      case "Enter": e.preventDefault(); setSel(r+1,c,false); return;
+      case "Home": e.preventDefault(); if (e.ctrlKey||e.metaKey) setSel(0,0,e.shiftKey); else setSel(r,edgeLeft(r),e.shiftKey); return;
+      case "End": e.preventDefault(); if (e.ctrlKey||e.metaKey) setSel(maxRow,edgeRight(maxRow),e.shiftKey); else setSel(r,edgeRight(r),e.shiftKey); return;
+      case "a": case "A": if (e.ctrlKey||e.metaKey) { e.preventDefault(); if (flatRecords.length){ const last=flatRecords.length-1; setGridAnchor({row:0,col:0}); setGridEnd({row:last,col:edgeRight(last)}); setFocusedCell({rowIdx:0,colIdx:0}); } } return;
+      case "F2": {
+        const el = document.querySelector(`[data-grid-row="${r}"][data-grid-col="${c}"]`) as HTMLElement | null;
+        const input = el?.querySelector("input,textarea,[contenteditable='true']") as HTMLElement | null;
+        if (input) { e.preventDefault(); input.focus(); }
         return;
       }
-      if (!focusedCell) return;
-      const { rowIdx, colIdx } = focusedCell;
-      const maxRow = visibleRecords.length - 1;
-      const maxCol = visibleColumns.length;
-
-      let newRow = rowIdx;
-      let newCol = colIdx;
-
-      switch (e.key) {
-        case "ArrowUp":
-          newRow = Math.max(0, rowIdx - 1);
-          e.preventDefault();
-          break;
-        case "ArrowDown":
-          newRow = Math.min(maxRow, rowIdx + 1);
-          e.preventDefault();
-          break;
-        case "ArrowLeft":
-          newCol = Math.max(0, colIdx - 1);
-          e.preventDefault();
-          break;
-        case "ArrowRight":
-          newCol = Math.min(maxCol, colIdx + 1);
-          e.preventDefault();
-          break;
-        case "Home":
-          if (e.ctrlKey || e.metaKey) {
-            newRow = 0;
-          }
-          newCol = 0;
-          e.preventDefault();
-          break;
-        case "End":
-          if (e.ctrlKey || e.metaKey) {
-            newRow = maxRow;
-          }
-          newCol = maxCol;
-          e.preventDefault();
-          break;
-        case " ":
-          // Space to toggle selection
-          if (visibleRecords[rowIdx]) {
-            selection.toggle(visibleRecords[rowIdx].id);
-            e.preventDefault();
-          }
-          break;
-        case "Enter":
-          // Focus the cell input
-          if (
-            visibleRecords[rowIdx]
-          ) {
-            const cell = document.querySelector(
-              `[data-cell-row="${rowIdx}"][data-cell-col="${colIdx}"] input, [data-cell-row="${rowIdx}"][data-cell-col="${colIdx}"] textarea`,
-            );
-            (cell as HTMLElement)?.focus();
-          }
-          e.preventDefault();
-          break;
-        case "Escape":
-          setFocusedCell(null);
-          tableRef.current?.focus();
-          break;
+      case "c": case "C": if (e.ctrlKey||e.metaKey) { const range = gridRange ?? (gridAnchor?{r1:gridAnchor.row,r2:gridAnchor.row,c1:gridAnchor.col,c2:gridAnchor.col}:null); if (range){ e.preventDefault(); gridCopyHandledRef.current = true; void copyGridRange(range,false); } } return;
+      case "x": case "X": if (e.ctrlKey||e.metaKey) { const range = gridRange ?? (gridAnchor?{r1:gridAnchor.row,r2:gridAnchor.row,c1:gridAnchor.col,c2:gridAnchor.col}:null); if (range){ e.preventDefault(); gridCopyHandledRef.current = true; void copyGridRange(range,true); } } return;
+      case "d": case "D": if (e.ctrlKey||e.metaKey) { e.preventDefault(); if (gridRange) void applyGridFill({r1:gridRange.r1,r2:gridRange.r1,c1:gridRange.c1,c2:gridRange.c2}, gridRange); } return;
+      case "r": case "R": if (e.ctrlKey||e.metaKey) { e.preventDefault(); /* fill right: copy first col across range */ if (gridRange){ const {r1,r2,c1,c2}=gridRange; const src=flatRecords[r1]; if(src){ const cols=gridColumnsFor(src); const text=Array.from({length:r2-r1+1},()=>Array.from({length:c2-c1+1},(_,j)=>getDisplayValue(src,cols[c1])).join("\t")).join("\n"); const pa=gridAnchor,pe=gridEnd; setGridAnchor({row:r1,col:c1}); setGridEnd({row:r2,col:c2}); void doGridPaste(text).then(()=>{setGridAnchor(pa??{row:r1,col:c1}); setGridEnd(pe??{row:r2,col:c2});}); } } } return;
+      case "z": case "Z": if (e.ctrlKey||e.metaKey) { e.preventDefault(); if (e.shiftKey) void redoGrid(); else void undoGrid(); } return;
+      case "y": case "Y": if (e.ctrlKey||e.metaKey) { e.preventDefault(); void redoGrid(); } return;
+      case "Delete": case "Backspace": { const range = gridRange ?? (gridAnchor?{r1:gridAnchor.row,r2:gridAnchor.row,c1:gridAnchor.col,c2:gridAnchor.col}:null); if (range){ e.preventDefault(); void clearGridRange(range); } return; }
+      case "Escape": gridCutRef.current=null; setGridCtx(null); setGridAnchor(null); setGridEnd(null); setFocusedCell(null); return;
+      case " ": if (cur) { e.preventDefault(); const rec = flatRecords[r]; if (rec) selection.toggle(rec.id); } return;
+    }
+    // Type-to-edit: printable character enters edit on focused cell
+    if (!e.ctrlKey && !e.metaKey && !e.altKey && e.key.length === 1 && cur) {
+      const el = document.querySelector(`[data-grid-row="${r}"][data-grid-col="${c}"]`) as HTMLElement | null;
+      const input = el?.querySelector("input:not([type='checkbox']),textarea,[contenteditable='true']") as HTMLInputElement | HTMLTextAreaElement | null;
+      if (input) {
+        e.preventDefault();
+        input.focus();
+        try { const native = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set; native?.call(input, e.key); input.dispatchEvent(new Event("input", { bubbles: true })); } catch { /* best effort */ }
       }
+    }
+  }, [gridAnchor, gridEnd, gridRange, focusedCell, flatRecords, gridColumnsFor, records, scrollGridCellIntoView, applyGridFill, undoGrid, redoGrid, clearGridRange, copyGridRange, selection, getDisplayValue, doGridPaste]);
 
-      if (newRow !== rowIdx || newCol !== colIdx) {
-        setFocusedCell({ rowIdx: newRow, colIdx: newCol });
-        // Scroll into view
-        const cellEl = document.querySelector(
-          `[data-cell-row="${newRow}"][data-cell-col="${newCol}"]`,
-        );
-        cellEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      }
-    },
-    [focusedCell, visibleRecords, visibleColumns, selection],
-  );
-
-  // ── Grid template ──────────────────────────────────────
   const columnWidthsList = useMemo(() => {
     const widths = [`${ROW_CHECKBOX_WIDTH}px`];
     for (const col of visibleColumns) {
@@ -1220,14 +2061,6 @@ export function TableView({
     if (showLastEdited) widths.push("190px");
     return widths.join(" ");
   }, [visibleColumns, columnWidths, collapsedColumns, showLastEdited]);
-
-  const getRowColumns = useCallback((record: BoardRecord) => {
-    const group = groups?.find((candidate) => candidate.id === record.groupId);
-    if (group?.columnMode === "custom") {
-      return columns.filter((column) => column.groupId === group.id && !column.hidden);
-    }
-    return visibleColumns;
-  }, [columns, groups, visibleColumns]);
 
   const getRowWidths = useCallback((rowColumns: ColumnDefinition[]) => {
     return [
@@ -1256,101 +2089,29 @@ export function TableView({
     [onScrollBottom],
   );
 
-  // â”€â”€ Keyboard event listener â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement;
-      if (
-        target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable
-      ) {
-        return;
+    const up = () => {
+      if (gridFillRef.current.active && gridFillRef.current.source) {
+        const s = gridFillRef.current.source;
+        const end = gridEnd ?? gridAnchor;
+        if (end) void applyGridFill(s, { r1: s.r1, c1: s.c1, r2: Math.max(s.r2, end.row), c2: Math.max(s.c2, end.col) });
+        gridFillRef.current = { active: false, source: null };
       }
-      if (!focusedCell) return;
-      const { rowIdx, colIdx } = focusedCell;
-      const maxRow = visibleRecords.length - 1;
-      const maxCol = visibleColumns.length;
-
-      let newRow = rowIdx;
-      let newCol = colIdx;
-
-      switch (e.key) {
-        case "ArrowUp":
-          newRow = Math.max(0, rowIdx - 1);
-          e.preventDefault();
-          break;
-        case "ArrowDown":
-          newRow = Math.min(maxRow, rowIdx + 1);
-          e.preventDefault();
-          break;
-        case "ArrowLeft":
-          newCol = Math.max(0, colIdx - 1);
-          e.preventDefault();
-          break;
-        case "ArrowRight":
-          newCol = Math.min(maxCol, colIdx + 1);
-          e.preventDefault();
-          break;
-        case "Home":
-          if (e.ctrlKey || e.metaKey) {
-            newRow = 0;
-          }
-          newCol = 0;
-          e.preventDefault();
-          break;
-        case "End":
-          if (e.ctrlKey || e.metaKey) {
-            newRow = maxRow;
-          }
-          newCol = maxCol;
-          e.preventDefault();
-          break;
-        case " ":
-          // Space to toggle selection
-          if (visibleRecords[rowIdx]) {
-            selection.toggle(visibleRecords[rowIdx].id);
-          }
-          e.preventDefault();
-          break;
-        case "Enter":
-          // Focus the cell input
-          if (visibleRecords[rowIdx]) {
-            const cell = document.querySelector(
-              `[data-cell-row="${rowIdx}"][data-cell-col="${colIdx}"] input, [data-cell-row="${rowIdx}"][data-cell-col="${colIdx}"] textarea`,
-            );
-            (cell as HTMLElement)?.focus();
-          }
-          e.preventDefault();
-          break;
-        case "Escape":
-          setFocusedCell(null);
-          tableRef.current?.focus();
-          break;
-      }
-
-      if (newRow !== rowIdx || newCol !== colIdx) {
-        setFocusedCell({ rowIdx: newRow, colIdx: newCol });
-        // Scroll into view
-        const cellEl = document.querySelector(
-          `[data-cell-row="${newRow}"][data-cell-col="${newCol}"]`,
-        );
-        cellEl?.scrollIntoView({ block: "nearest", inline: "nearest" });
-      }
+      gridSelectingRef.current = false; setGridDragSelecting(false);
     };
+    window.addEventListener("mouseup", up);
+    return () => window.removeEventListener("mouseup", up);
+  }, [gridAnchor, gridEnd, applyGridFill]);
+  useEffect(() => {
+    if (!gridCtx) return;
+    const close = () => setGridCtx(null); // close grid ctx
+    window.addEventListener('mousedown', close);
+    window.addEventListener('scroll', close, true);
+    return () => { window.removeEventListener('mousedown', close); window.removeEventListener('scroll', close, true); };
+  }, [gridCtx]);
 
-    const tableElement = tableRef.current;
-    if (tableElement) {
-      tableElement.addEventListener("keydown", handleKeyDown);
-    }
-
-    return () => {
-      const tableElement = tableRef.current;
-      if (tableElement) {
-        tableElement.removeEventListener("keydown", handleKeyDown);
-      }
-    };
-  }, [focusedCell, visibleRecords, visibleColumns, selection]);
+  // (legacy keyboard listener removed; grid keyboard handled via container onKeyDown)
+  useEffect(() => { setGridAnchor(null); setGridEnd(null); }, [activeFilters.size, activeSortColumnId, activeSortDirection, collapsedGroups.size]);
 
   // Flat list of every visual row (group headers + records + add-row),
   // honouring collapsed groups. Only the slice inside the viewport is rendered.
@@ -1397,6 +2158,16 @@ export function TableView({
 
   const virtualRows = rowVirtualizer.getVirtualItems();
   const totalRowsHeight = rowVirtualizer.getTotalSize();
+
+  // Keep grid selection/focus visible in virtualized list
+  useEffect(() => {
+    const r = gridEnd?.row ?? gridAnchor?.row;
+    if (r == null) return;
+    const rec = flatRecords[r];
+    if (!rec) return;
+    const vIdx = allRows.findIndex((it) => it.type === "row" && it.record?.id === rec.id);
+    if (vIdx >= 0) rowVirtualizer.scrollToIndex(vIdx, { align: "auto" });
+  }, [gridAnchor?.row, gridEnd?.row, flatRecords, allRows, rowVirtualizer]);
 
   // ── Scroll a newly created group into view ─────────────
   const [pendingScrollGroupId, setPendingScrollGroupId] = useState<string | null>(null);
@@ -1447,17 +2218,22 @@ export function TableView({
                 Archive
               </Button>
             )}
-            {onBulkDelete && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:text-destructive"
-                onClick={() => setBulkAction("delete")}
-              >
-                <Trash2 className="mr-1 size-3.5" />
-                Delete
-              </Button>
-            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={selection.count !== 1}
+              onClick={copyRow}
+            >
+              Copy row
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={selection.count !== 1}
+              onClick={pasteRow}
+            >
+              Paste
+            </Button>
             <Button
               variant="ghost"
               size="sm"
@@ -1473,14 +2249,58 @@ export function TableView({
           The full table shell (toolbar + headers + group controls) is always
           rendered by the parent BoardLayout, so a zero-row board is never
           blank. */}
-      {hasAnyData ? (
+      {hasAnyData && hasColumnLayout ? (
         <div
           ref={tableRef}
-          className="board-table min-h-0 flex-1 overflow-auto"
+          className={cn("board-table min-h-0 flex-1 overflow-auto", gridDragSelecting && "select-none")}
           tabIndex={0}
           role="grid"
+          onKeyDown={handleKeyDown}
           aria-label={`${board.name} table`}
           onScroll={handleScroll}
+          onMouseDown={(e)=>{ if (gridCtx && e.button===0) setGridCtx(null); }}
+          onContextMenu={(e)=>{
+            const t = e.target as HTMLElement;
+            if (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable) return;
+            const cell = t.closest("[data-grid-row][data-grid-col]") as HTMLElement | null;
+            if (!cell) return;
+            e.preventDefault();
+            const r = Number(cell.dataset.gridRow), c = Number(cell.dataset.gridCol);
+            if (Number.isFinite(r) && Number.isFinite(c)) {
+              if (!gridRange || r < gridRange.r1 || r > gridRange.r2 || c < gridRange.c1 || c > gridRange.c2) {
+                setGridAnchor({row:r,col:c}); setGridEnd({row:r,col:c}); setFocusedCell({rowIdx:r,colIdx:c});
+              }
+              setGridCtx({ x: e.clientX, y: e.clientY, r, c });
+            }
+          }}
+          onMouseMove={(e) => {
+            const el = document.elementFromPoint(e.clientX, e.clientY)?.closest?.("[data-grid-row][data-grid-col]") as HTMLElement | null;
+            if (!el) return;
+            const r = Number(el.dataset.gridRow); const c = Number(el.dataset.gridCol);
+            if (!Number.isFinite(r) || !Number.isFinite(c)) return;
+            if (gridFillRef.current.active && gridFillRef.current.source) {
+              const s = gridFillRef.current.source;
+              if (r >= s.r2 || (r >= s.r1 && c >= s.c2)) setGridEnd({ row: Math.max(r, s.r1), col: Math.max(c, s.c1) });
+              const sc = tableRef.current; if (sc) { const rect = sc.getBoundingClientRect(); const edge = 40; const step = 30; if (e.clientY < rect.top + edge) sc.scrollTop -= step; else if (e.clientY > rect.bottom - edge) sc.scrollTop += step; if (e.clientX < rect.left + edge) sc.scrollLeft -= step; else if (e.clientX > rect.right - edge) sc.scrollLeft += step; }
+              return;
+            }
+            if (!gridSelectingRef.current) return;
+            setGridEnd({ row: r, col: c });
+            const sc = tableRef.current; if (!sc) return;
+            const rect = sc.getBoundingClientRect(); const edge = 40; const step = 30;
+            if (e.clientY < rect.top + edge) sc.scrollTop -= step; else if (e.clientY > rect.bottom - edge) sc.scrollTop += step;
+            if (e.clientX < rect.left + edge) sc.scrollLeft -= step; else if (e.clientX > rect.right - edge) sc.scrollLeft += step;
+          }}
+          onMouseUp={() => {
+            if (gridFillRef.current.active && gridFillRef.current.source && gridRange) {
+              const s = gridFillRef.current.source;
+              const t = { r1: s.r1, c1: s.c1, r2: Math.max(s.r2, gridRange.r2), c2: Math.max(s.c2, gridRange.c2) };
+              void applyGridFill(s, t);
+              gridFillRef.current = { active: false, source: null };
+            }
+            gridSelectingRef.current = false; setGridDragSelecting(false);
+          }}
+          onMouseLeave={() => { /* keep drag; container mouseup ends */ }}
         >
           <div className="min-w-max">
           {/* ── Sticky Header Row ───────────────────────────── */}
@@ -1497,19 +2317,12 @@ export function TableView({
             >
               {/* Selection checkbox header */}
               <div className="board-table-sticky sticky left-0 z-10 flex items-center justify-center border-r border-[var(--border)] px-2 py-3">
-                <input
-                  type="checkbox"
-                  className="board-table-checkbox"
-                  checked={selection.isAllSelected(recordIds)}
-                  ref={(el) => {
-                    if (el) {
-                      el.indeterminate = selection.isPartiallySelected(
-                        recordIds,
-                      );
-                    }
-                  }}
-                  onChange={handleSelectAll}
-                  aria-label="Select all rows"
+                <button
+                  type="button"
+                  className="size-4 rounded border border-muted-foreground/40 bg-background hover:bg-accent"
+                  onClick={handleSelectAll}
+                  aria-label="Select all cells"
+                  title="Select all"
                 />
               </div>
 
@@ -1576,7 +2389,8 @@ export function TableView({
                 items={visibleColumns.map((c) => c.id)}
                 strategy={horizontalListSortingStrategy}
               >
-                {visibleColumns.map((column) => {
+                {visibleColumns.map((column, vColIdx) => {
+                  const gridColIdx = visibleColumns.slice(0, vColIdx).filter((c)=>!collapsedColumns.has(c.id)).length;
                   if (collapsedColumns.has(column.id)) {
                     return (
                       <button
@@ -1586,7 +2400,7 @@ export function TableView({
                         style={{ width: 10, minWidth: 10 }}
                         aria-label={`Expand ${column.label}`}
                       >
-                        <span className="text-[9px] font-bold text-muted-foreground">⇄</span>
+                        <span className="text-[9px] font-bold text-muted-foreground">â‡„</span>
                       </button>
                     );
                   }
@@ -1594,9 +2408,10 @@ export function TableView({
                     column.pinned === true && titleColumnLabel
                       ? { ...column, label: titleColumnLabel }
                       : column;
+                  const colSelected = !!gridRange && gridColIdx >= gridRange.c1 && gridColIdx <= gridRange.c2;
                   return (
+                    <div key={column.id} className={cn(colSelected && "bg-primary/10")} onClick={(e)=>{ if((e.target as HTMLElement).closest('button,[role="menuitem"],input')) return; if(flatRecords.length){ setGridAnchor({row:0,col:gridColIdx}); setGridEnd({row:flatRecords.length-1,col:gridColIdx}); setFocusedCell({rowIdx:0,colIdx:gridColIdx}); console.log("[grid-selection]", {r1:0,c1:gridColIdx,r2:flatRecords.length-1,c2:gridColIdx}); } }}>
                     <SortableColumnHeaderWrapper
-                      key={column.id}
                       column={headerColumn}
                       columns={columns}
                       frozen={column.pinned === true}
@@ -1614,7 +2429,10 @@ export function TableView({
                       onToggleFrozen={onColumnToggleFrozen}
                       onSetPrimary={onColumnSetPrimary}
                       onChangeType={onColumnChangeType}
-                      onDelete={onColumnDelete}
+                      onDelete={handleSingleColumnDelete}
+                      selectedColumnIds={selectedHeaderIds}
+                      onDeleteColumns={requestDeleteSelectedColumns}
+                      canEdit={canEditColumns}
                       onAddColumn={onColumnAdd}
                       sortColumnId={activeSortColumnId}
                       sortDirection={activeSortDirection}
@@ -1635,7 +2453,11 @@ export function TableView({
                       isCollapsed={collapsedColumns.has(column.id)}
                       isWrapped={wrappedColumns.has(column.id)}
                       deleteLoading={deletingColumnId === column.id}
+                      selected={selectedHeaderIds.includes(column.id)}
+                      onSelect={handleHeaderSelect}
+                      onSelectStart={handleHeaderSelectStart}
                     />
+                    </div>
                   );
                 })}
                 {showLastEdited && (
@@ -1789,37 +2611,40 @@ export function TableView({
                   key={record.id}
                   className={cn(
                     "board-table-row grid transition-colors",
-                    focusedCell?.rowIdx === actualIdx && "ring-1 ring-inset ring-primary/20",
+                    !gridRange && focusedCell && flatRecords[focusedCell.rowIdx]?.id === record.id && "ring-1 ring-inset ring-primary/20",
                   )}
                   data-selected={isSelected}
                   style={{ gridTemplateColumns: getRowWidths(rowColumns), ...style }}
                   role="row"
                   aria-selected={isSelected}
                 >
-                  <div className="board-table-sticky sticky left-0 z-10 flex items-center justify-center border-r border-[var(--border)] px-2 py-3">
+                  <div
+                    className={cn("board-table-sticky sticky left-0 z-10 flex items-center justify-center border-r border-[var(--border)] px-2 py-3 cursor-pointer", gridRange && (flatIndexById.get(record.id)??-1) >= gridRange.r1 && (flatIndexById.get(record.id)??-1) <= gridRange.r2 && "bg-primary/10")}
+                    onClick={(e) => {
+                      const gr = flatIndexById.get(record.id);
+                      if (gr == null) return;
+                      const lc = Math.max(0, gridColumnsFor(record).length - 1);
+                      setGridAnchor({ row: gr, col: 0 }); setGridEnd({ row: gr, col: lc });
+                      setFocusedCell({ rowIdx: gr, colIdx: 0 });
+                      selection.deselectAll();
+                    }}
+                  >
                     <input
                       type="checkbox"
                       className="board-table-checkbox"
                       checked={isSelected}
                       onChange={() => selection.toggle(record.id)}
-                      onClick={(e) => {
-                        if ((e as unknown as MouseEvent).shiftKey) {
-                          e.preventDefault();
-                          selection.selectRange(record.id, recordIds, true);
-                        }
-                      }}
-                      aria-label={`Select ${record.title}`}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${record.title || "Untitled"}`}
                     />
                   </div>
-                  {rowColumns.map((column, colIdx) => {
+                  {(() => { let gridCol = -1; return rowColumns.map((column, colIdx) => { if (!collapsedColumns.has(column.id)) gridCol++; const gCol = gridCol;
                     if (collapsedColumns.has(column.id)) {
                       return (
                         <div
                         key={`collapsed-${column.id}`}
                           className="board-table-cell flex items-center justify-center"
                           style={{ width: 10, minWidth: 10 }}
-                          data-cell-row={actualIdx}
-                          data-cell-col={colIdx}
                         >
                           <button
                             onClick={() => handleToggleCollapse(column.id)}
@@ -1832,12 +2657,25 @@ export function TableView({
                       );
                     }
                     const isPrimary = column.id === getPrimaryColumn(columns, { groupId: record.groupId })?.id;
+                    const fallbackColumn = !isPrimary
+                      ? rowColumns.find((c) => ["text", "long_text", "email", "phone", "url"].includes(c.type))
+                      : undefined;
+                    const showTitleHere = isPrimary || column.id === fallbackColumn?.id;
                     // The primary column is backed by records.title, not a
                     // cell_values row. Prefer that canonical value so a
                     // legacy empty/stale cell row cannot hide the title.
-                    const value = isPrimary
-                      ? record.title
-                      : cellValues.get(getCellKey(record.id, column.id)) ?? column.defaultValue;
+                    // When the title is missing or a placeholder ("Untitled"),
+                    // fall back to the column's own cell value — imports can
+                    // populate cell_values without ever setting records.title.
+                    // If neither holds a value, render "Untitled".
+                    const cellValue =
+                      cellValues.get(getCellKey(record.id, column.id)) ?? column.defaultValue;
+                    const titleValue =
+                      !isPlaceholderTitle(record.title) ? record.title : undefined;
+                    const cellTitle = cellTitleText(cellValue);
+                    const value = showTitleHere
+                      ? (titleValue ?? (cellTitle || "Untitled"))
+                      : cellValue;
                     const metadata = cellMetadata?.get(getCellKey(record.id, column.id));
                     const hasValue = value !== null && value !== undefined && value !== "";
                     const isComputed = ["formula", "mirror", "rollup", "lookup"].includes(column.type);
@@ -1848,21 +2686,61 @@ export function TableView({
                         : metadata?.source === "automation"
                           ? "Automation"
                           : metadata?.changedAt
-                            ? `${metadata.approximate ? "Added" : "Edited"} ${formatDateTimeIST(metadata.changedAt)} · ${getUserLabel(metadata.changedBy)}`
+                            ? `${metadata.approximate ? "Added" : "Edited"} ${formatDateTimeIST(metadata.changedAt)} · ${getUserLabel(metadata.changedBy, members as any) || (membersLoading ? '' : 'Former member')}`
                             : undefined;
+                    const gr = flatIndexById.get(record.id) ?? -1;
+                    const inRange = gCol >= 0 && isInGridRange(gr, gCol);
+                    const isAnchor = !!gridAnchor && gridAnchor.row === gr && gridAnchor.col === gCol;
+                    const isFocus = !!gridEnd && gridEnd.row === gr && gridEnd.col === gCol;
+                    const isBottomRight = !!gridRange && gr === gridRange.r2 && gCol === gridRange.c2;
+                    const cutHere = !!gridCutRef.current && gr >= gridCutRef.current.r1 && gr <= gridCutRef.current.r2 && gCol >= gridCutRef.current.c1 && gCol <= gridCutRef.current.c2;
+                    const edgeT = inRange && !!gridRange && gr === gridRange.r1;
+                    const edgeB = inRange && !!gridRange && gr === gridRange.r2;
+                    const edgeL = inRange && !!gridRange && gCol === gridRange.c1;
+                    const edgeR = inRange && !!gridRange && gCol === gridRange.c2;
                     return (
                       <div
                         key={column.id}
                         className={cn(
-                          "board-table-cell align-top",
+                          "board-table-cell align-top relative",
                           column.pinned === true && "sticky left-12 z-10 board-table-sticky",
                           wrappedColumns.has(column.id)
                             ? "whitespace-normal break-words"
                             : "whitespace-nowrap",
+                          inRange && "bg-primary/10",
+                          inRange && edgeT && "shadow-[inset_0_2px_0_0_hsl(var(--primary))]",
+                          inRange && edgeB && "shadow-[inset_0_-2px_0_0_hsl(var(--primary))]",
+                          inRange && edgeL && "before:absolute before:inset-y-0 before:left-0 before:w-[2px] before:bg-primary before:content-['']",
+                          inRange && edgeR && "after:absolute after:inset-y-0 after:right-0 after:w-[2px] after:bg-primary after:content-['']",
+                          cutHere && "outline outline-2 outline-dashed outline-primary/70 -outline-offset-1",
+                          isAnchor && "ring-2 ring-inset ring-primary",
                         )}
                         data-cell-row={actualIdx}
                         data-cell-col={colIdx}
-                        onClick={() => setFocusedCell({ rowIdx: actualIdx, colIdx })}
+                        {...(gCol >= 0 ? { "data-grid-row": gr, "data-grid-col": gCol, "data-row": gr, "data-col": gCol } : {})}
+                        onMouseDown={(e) => {
+                          if (gCol < 0) return;
+                          if (gr < 0) return;
+                          if ((e as unknown as MouseEvent).shiftKey && gridAnchor) {
+                            setGridEnd({ row: gr, col: gCol });
+                          } else {
+                            setGridAnchor({ row: gr, col: gCol }); setGridEnd({ row: gr, col: gCol });
+                          }
+                          setFocusedCell({ rowIdx: gr, colIdx: gCol });
+                          // Cell selection and header selection are separate
+                          // clipboard modes; picking a cell leaves header mode.
+                          if (selectedHeaderIds.length) { setSelectedHeaderIds([]); setHeaderAnchorId(null); }
+                          selection.deselectAll();
+                          gridSelectingRef.current = true; setGridDragSelecting(true);
+                        }}
+                        onClick={() => { if (gCol >= 0) setFocusedCell({ rowIdx: gr, colIdx: gCol }); }}
+                        onDoubleClick={() => {
+                          if (gCol < 0) return;
+                          const el = document.querySelector(`[data-grid-row="${gr}"][data-grid-col="${gCol}"]`);
+                          const input = el?.querySelector("input:not([type='checkbox']),textarea,[contenteditable='true'],button[role='combobox']") as HTMLElement | null;
+                          if (input) (input as HTMLElement).focus();
+                          else (el as HTMLElement | null)?.querySelector("button, [tabindex]")?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+                        }}
                       >
                         <div className="board-table-cell-content">
                         <CellRenderer
@@ -1874,7 +2752,7 @@ export function TableView({
                           onUpdateColumnLabels={onUpdateColumnLabels}
                           onConfigureMirror={onConfigureMirror}
                           onChange={(nextValue) => {
-                            if (isPrimary && typeof nextValue === "string") {
+                            if (showTitleHere && typeof nextValue === "string") {
                               onRecordTitleChange?.(record.id, nextValue);
                             } else {
                               onCellChange?.({ recordId: record.id, columnId: column.id, value: nextValue });
@@ -1887,15 +2765,25 @@ export function TableView({
                           </span>
                         )}
                         </div>
+                        {isBottomRight && (
+                          <div className="absolute bottom-0 right-0 z-20 size-2 translate-x-1/2 translate-y-1/2 cursor-crosshair border border-background bg-primary" data-fill-handle onMouseDown={(e)=>{ e.preventDefault(); e.stopPropagation(); if(gridRange){ gridFillRef.current={active:true, source:{...gridRange}}; setGridDragSelecting(true);} }} />
+                        )}
                       </div>
                     );
-                  })}
+                  }); })()}
                   {showLastEdited && (
                     <div className="board-table-cell board-table-last-edited" title={record.lastEditedAt ? formatDateTimeIST(record.lastEditedAt) : undefined}>
                       {record.lastEditedAt ? (
                         <>
                           <span>{formatRelativeIST(record.lastEditedAt)}</span>
-                          <small>by {getUserLabel(record.lastEditedBy)}</small>
+                          {(() => {
+                            const label = getUserLabel(record.lastEditedBy, members as any);
+                            if (!label) {
+                              if (membersLoading) return <small>by </small>;
+                              return <small>by Former member</small>;
+                            }
+                            return <small>by {label}</small>;
+                          })()}
                         </>
                       ) : <span>Before tracking started</span>}
                     </div>
@@ -1914,7 +2802,7 @@ export function TableView({
                     type="button"
                     className="flex h-full items-center gap-2 px-4 text-sm text-muted-foreground hover:text-foreground"
                     style={{ paddingLeft: ROW_CHECKBOX_WIDTH + 16 }}
-                    onClick={() => onNewItem?.(item.groupId)}
+                    onClick={() => void onNewItem?.(item.groupId)}
                   >
                     <Plus className="size-4" />
                     Add item
@@ -2017,8 +2905,20 @@ export function TableView({
         </div>
         </div>
       ) : (
-        <div className="flex min-h-[400px] items-center justify-center rounded-xl border border-dashed border-border bg-card p-6">
-          {emptyStateNode}
+        <div className="flex min-h-[400px] flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-border bg-card p-6">
+              {!hasColumnLayout ? (
+                <>
+                  <p className="text-sm text-muted-foreground">No columns yet</p>
+                  {onColumnAdd && (
+                    <Button size="sm" onClick={() => setAddColumnAfterId("end")}>
+                      <Plus className="mr-1 size-4" />
+                      Add column
+                    </Button>
+                  )}
+                </>
+              ) : (
+                emptyStateNode
+              )}
         </div>
       )}
 
@@ -2152,13 +3052,41 @@ export function TableView({
         loading={bulkDeleteLoading}
       />
 
+      <ConfirmDialog
+        open={pendingColumnDeleteIds.length > 0}
+        onOpenChange={(open) => !open && setPendingColumnDeleteIds([])}
+        title="Delete columns"
+        description={(() => {
+          const pending = pendingColumnDeleteIds
+            .map((id) => columns.find((column) => column.id === id))
+            .filter(Boolean) as ColumnDefinition[];
+          const names = pendingColumnDeleteIds.length <= 3 ? ` (${pending.map((column) => column.label).join(", ")})` : "";
+          const includesPrimary = pending.some((column) => column.isPrimary);
+          return `Delete ${pendingColumnDeleteIds.length} column${pendingColumnDeleteIds.length === 1 ? "" : "s"}? Their data in this board will be removed.${names}${includesPrimary ? " This removes the item title column." : ""}`;
+        })()}
+        confirmLabel="Delete"
+        variant="destructive"
+        onConfirm={confirmDeleteSelectedColumns}
+      />
+
       {/* Add Column Picker */}
       <ColumnTypePicker
         open={addColumnAfterId !== null}
         onOpenChange={(open) => !open && setAddColumnAfterId(null)}
-        onSelect={handleAddColumn}
+        onSelect={(type) => handleAddColumn(type, addColumnAfterId === "end" ? undefined : addColumnAfterId ?? undefined)}
       />
 
+      {gridCtx && (
+        <div className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 text-sm shadow-md" style={{ left: gridCtx.x, top: gridCtx.y }} onMouseDown={(e)=>e.stopPropagation()} onContextMenu={(e)=>e.preventDefault()}>
+          <button className="flex w-full items-center rounded px-2 py-1.5 hover:bg-accent" onClick={async ()=>{ const range=gridRange??{r1:gridCtx.r,r2:gridCtx.r,c1:gridCtx.c,c2:gridCtx.c}; await copyGridRange(range,false); setGridCtx(null); }}>Copy</button>
+          <button className="flex w-full items-center rounded px-2 py-1.5 hover:bg-accent" onClick={async ()=>{ const range=gridRange??{r1:gridCtx.r,r2:gridCtx.r,c1:gridCtx.c,c2:gridCtx.c}; await copyGridRange(range,true); setGridCtx(null); }}>Cut</button>
+          <button className="flex w-full items-center rounded px-2 py-1.5 hover:bg-accent" onClick={async ()=>{ try{ const t=await navigator.clipboard.readText(); await doGridPaste(t);}catch{} setGridCtx(null); }}>Paste</button>
+          <button className="flex w-full items-center rounded px-2 py-1.5 hover:bg-accent" onClick={async ()=>{ const range=gridRange??{r1:gridCtx.r,r2:gridCtx.r,c1:gridCtx.c,c2:gridCtx.c}; await clearGridRange(range); setGridCtx(null); }}>Clear</button>
+          <div className="my-1 h-px bg-border" />
+          <button className="flex w-full items-center rounded px-2 py-1.5 hover:bg-accent" onClick={async ()=>{ const rec=flatRecords[gridCtx.r]; if(rec&&onNewItem){ await onNewItem(rec.groupId ?? null); toast("Inserted row"); } setGridCtx(null); }}>Insert row above/below</button>
+          <button className="flex w-full items-center rounded px-2 py-1.5 text-destructive hover:bg-accent" onClick={()=>{ const ids = gridRange ? Array.from(new Set(flatRecords.slice(gridRange.r1, gridRange.r2+1).map(r=>r.id))) : (flatRecords[gridCtx.r]?[flatRecords[gridCtx.r].id]:[]); if(ids.length){ if(onBulkDelete) onBulkDelete(ids); else ids.forEach(id=>onRowDelete?.(id)); } setGridCtx(null); }}>Delete rows</button>
+        </div>
+      )}
       {/* Connect Board Column Modal */}
       <ConnectBoardColumnModal
         open={connectBoardAfterId !== null}

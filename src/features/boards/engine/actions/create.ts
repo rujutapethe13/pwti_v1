@@ -220,15 +220,7 @@ defaultValue: "",
       hidden: false,
       frozen: false,
       defaultValue: "",
-      settings: {
-        is_default: true,
-        options: [
-          { id: "opt-retouching", label: "Retouching" },
-          { id: "opt-compositing", label: "Compositing" },
-          { id: "opt-color-grade", label: "Color Grade" },
-          { id: "opt-delivery", label: "Delivery" },
-        ],
-      },
+      settings: { is_default: true },
       permissions: {
         view: ["owner", "editor", "commenter", "viewer"],
         edit: ["owner", "editor"],

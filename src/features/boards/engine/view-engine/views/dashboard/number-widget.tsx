@@ -54,10 +54,12 @@ export interface WidgetContentProps {
   records: Array<FilterableRecord & { title: string; groupId?: string | null }>;
   cellValues: Map<string, ColumnValue>;
   filters: DashboardFilterCondition[];
+  /** Widget heading shown by the shared <ChartCard /> wrapper. */
+  title?: string;
 }
 
 export const NumberWidgetContent = memo(
-  ({ config, columns, groups, records, cellValues, filters }: WidgetContentProps) => {
+  ({ config, columns, groups, records, cellValues, filters, title }: WidgetContentProps) => {
     const cfg = config as unknown as NumberWidgetConfig;
     const numericColumnIds = getNumericColumnIds(columns);
 

@@ -38,6 +38,7 @@ import {
 import { DerivedValueCache } from "./cache";
 import type { EventSubscription, DomainEventPayload } from "../events/event-types";
 import type { ColumnDefinition, ColumnValue } from "../types";
+import { toValueText } from "../lib/cell-value";
 import type { DependencyGraphNode, DerivedValue } from "./types";
 
 const columnRepo = new ColumnRepository();
@@ -158,9 +159,7 @@ async function recomputeDerivedValue(
   // Store the computed value in the derived_values table
   const now = new Date().toISOString();
   const derivedId = `${boardId}:${recordId}:${column.id}`;
-  const valueText = typeof value === "string"
-    ? value
-    : JSON.stringify(value);
+  const valueText = toValueText(value);
 
   await cellRepo.upsertMany([
     {
