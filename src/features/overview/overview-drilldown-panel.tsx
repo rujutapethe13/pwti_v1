@@ -24,6 +24,25 @@ import type {
 } from "@/features/overview/overview-drilldown-service";
 import type { StatCardId } from "@/features/overview/stat-cards";
 
+async function approveUnmatchedClient(rawName: string) {
+  try {
+    const res = await fetch("/api/client-360/approve-client", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rawName, mode: "create_new" }),
+    });
+    const result = await res.json();
+    if (result.ok) {
+      alert(`Client "${rawName}" approved successfully!`);
+      window.location.reload();
+    } else {
+      alert(`Failed to approve: ${result.error}`);
+    }
+  } catch (err) {
+    alert(`Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+  }
+}
+
 export type OverviewDrilldownTarget =
   | StatCardId
   | "today_list"
@@ -113,6 +132,9 @@ export function OverviewDrilldownPanel({
     if (activeTarget === "upcoming_list") return data.upcomingItems;
 
     let items = data.periodItems;
+    if (activeTarget === "jobsCompleted") {
+      items = data.completedItems;
+    }
     if (selectedDateFilter) {
       items = items.filter((item) => item.received_at === selectedDateFilter);
     }
@@ -123,6 +145,7 @@ export function OverviewDrilldownPanel({
   }, [
     activeTarget,
     busiestScope,
+    data.completedItems,
     data.overdueItems,
     data.periodItems,
     data.todayItems,
@@ -382,6 +405,36 @@ export function OverviewDrilldownPanel({
         </div>
       )}
 
+      {/* Needs Review panel for unmatched clients (admin only) */}
+      {data.unmatchedClients && data.unmatchedClients.length > 0 && (
+        <div className="border-border/60 bg-blue-500/10 flex flex-col gap-2 border-b px-5 py-3 text-xs">
+          <div className="flex items-center gap-1.5 font-medium text-blue-800 dark:text-blue-300">
+            <AlertTriangle className="size-3.5 shrink-0" />
+            <span>Needs review: {data.unmatchedClients.length} unmatched client{data.unmatchedClients.length !== 1 ? "s" : ""}</span>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {data.unmatchedClients.map((u: any) => (
+              <div key={u.normalizedName} className="border-border bg-background hover:bg-accent inline-flex items-center gap-1.5 rounded border px-2 py-1.5 text-[11px]">
+                <span className="font-medium">{u.rawName}</span>
+                <Badge variant="secondary" className="text-[10px]">New client, not confirmed</Badge>
+                <Badge variant="outline" className="text-[10px]">{u.count} job{u.count !== 1 ? "s" : ""}</Badge>
+                <span className="text-muted-foreground/70">on {u.boards.map((b: any) => b.board_name).join(", ")}</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-6 gap-1 px-2 text-[11px]"
+                  onClick={() => approveUnmatchedClient(u.rawName)}
+                  title={`Approve "${u.rawName}" as a new client`}
+                >
+                  <CheckCircle2 className="size-3" />
+                  Approve
+                </Button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Search, Group By & Quick Filters */}
       <div className="border-border/60 flex flex-wrap items-center justify-between gap-2 border-b px-5 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
@@ -523,7 +576,23 @@ export function OverviewDrilldownPanel({
                                 </div>
                               </td>
                               <td className="px-3 py-2.5">
-                                {row.client ?? <span className="text-muted-foreground">—</span>}
+                                {row.client ? (
+                                  <>
+                                    {row.client}
+                                    {row.client_unmatched && (
+                                      <Badge variant="secondary" className="ml-1.5 text-[10px]">
+                                        New client, not confirmed
+                                      </Badge>
+                                    )}
+                                    {row.client_column_label && row.client_raw && row.client_raw !== row.client && (
+                                      <span className="ml-1.5 text-[10px] text-muted-foreground/80">
+                                        (from {row.client_column_label}: {row.client_raw})
+                                      </span>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
                               </td>
                               <td className="px-3 py-2.5">
                                 <span className="font-medium">{row.board_name}</span>

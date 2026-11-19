@@ -1,9 +1,8 @@
-import "server-only";
+﻿import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getLiveJobScope, effectiveClientLabel, isCompletedUploaded, isJobReceivedInRange, completedUploadedJobs, type LiveJobRow } from "@/features/client-360/live-job-scope";
 import { fetchDataBounds } from "@/features/overview/data-bounds";
-
-import { checkAndRefreshSnapshotIfNeeded } from "@/features/client-360/daily-activity-service";
 import {
   EMPTY_COVERAGE,
   narrowAllTimeRange,
@@ -13,152 +12,124 @@ import {
 } from "@/features/overview/time-range";
 import {
   buildStatCards,
+  normalizeClientName,
   type BusiestClient,
   type PeriodAggregate,
   type PeriodComparison,
   type StatCardsResult,
 } from "@/features/overview/stat-cards";
 
-/** Coerces a JSONB number to a finite number, defaulting to 0. */
-function toCount(value: unknown): number {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return 0;
-}
-
-/** Coerces a JSONB number to a finite number, or null when it is absent. */
-function toNullableNumber(value: unknown): number | null {
-  if (value === null || value === undefined) return null;
-  const parsed = toCount(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function toBoolean(value: unknown): boolean {
-  return value === true || value === "true" || value === 1;
-}
-
-function toDateKeyOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-export function parseCoverage(value: unknown): RangeCoverage {
-  if (!value || typeof value !== "object") return EMPTY_COVERAGE;
-  const record = value as Record<string, unknown>;
-  return {
-    totalRows: toCount(record.total_rows),
-    datedRows: toCount(record.dated_rows),
-    inRange: toCount(record.in_range),
-    beforeRange: toCount(record.before_range),
-    afterRange: toCount(record.after_range),
-    undated: toCount(record.undated),
-    earliest: toDateKeyOrNull(record.earliest),
-    latest: toDateKeyOrNull(record.latest),
-  };
-}
-
-function parseBusiestClient(value: unknown): BusiestClient | null {
-  if (!value || typeof value !== "object") return null;
-  const record = value as Record<string, unknown>;
-  const clientId = typeof record.client_id === "string" ? record.client_id : null;
-  if (!clientId) return null;
-  return {
-    clientId,
-    name: typeof record.name === "string" && record.name.length > 0 ? record.name : null,
-    count: toCount(record.count),
-  };
-}
-
-/**
- * Normalizes the `overview_period_stats` payload. Every field is coerced rather
- * than trusted, and an absent number reads as a real 0 — never as a placeholder.
- */
-export function parsePeriodComparison(payload: unknown): PeriodComparison {
-  const root = (payload ?? {}) as Record<string, unknown>;
-  const parseWindow = (value: unknown): PeriodAggregate => {
-    const window = (value ?? {}) as Record<string, unknown>;
-    return {
-      recordsInWindow: toCount(window.records_in_window),
-      jobsReceived: toCount(window.jobs_received),
-      clientsActive: toCount(window.clients_active),
-      boardsTouched: toCount(window.boards_touched),
-      completedByStatus: toCount(window.completed_by_status),
-      jobsCompleted: toCount(window.jobs_completed),
-      receivedTimestamps: toCount(window.received_timestamps),
-      completedTimestamps: toCount(window.completed_timestamps),
-      turnaroundSample: toCount(window.turnaround_sample),
-      turnaroundAvgDays: toNullableNumber(window.turnaround_avg_days),
-      completedDateAvailable: toBoolean(window.completed_date_available),
-      busiestClient: parseBusiestClient(window.busiest_client),
-    };
-  };
-
-  return {
-    current: parseWindow(root.current),
-    prior: parseWindow(root.prior),
-    currentTopClientPriorCount: toCount(root.current_top_client_prior_count),
-  };
-}
-
 export interface OverviewStatCardsOptions {
   organizationId: string;
   range: ResolvedTimeRange;
-  /** Restricts the aggregate to specific workspaces. Null means all in the org. */
   workspaceIds?: string[] | null;
+  boardIds?: string[] | null;
 }
 
-/**
- * Loads the Overview stat cards for `range` together with the immediately
- * preceding window of the same length, aggregated by PostgreSQL. Throws when the
- * aggregation itself fails so the caller can surface a real error state — there
- * is no fallback data path.
- *
- * An "All time" selection is narrowed to the earliest and latest received dates
- * the workspace actually holds before the window is used, so the aggregate never
- * scans from a sentinel date and the prior-period comparison stays meaningful.
- */
-export async function fetchOverviewStatCards(
-  supabase: SupabaseClient,
-  { organizationId, range, workspaceIds = null }: OverviewStatCardsOptions,
-): Promise<StatCardsResult> {
-  // Newly written records land in the snapshot only after a refresh; without it
-  // the cards would under-report.
-  console.log("[TEMP-LOG] fetchOverviewStatCards — org:", organizationId, "range:", JSON.stringify(range), "workspaceIds:", workspaceIds);
-  await checkAndRefreshSnapshotIfNeeded(supabase);
+function daysBetween(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return 0;
+  return Math.round((b - a) / 86400000);
+}
 
-  const bounds = await fetchDataBounds(supabase, organizationId, workspaceIds);
-  console.log("[TEMP-LOG] stat-cards data bounds:", JSON.stringify(bounds));
-  const window = narrowAllTimeRange(range, bounds);
-  console.log("[TEMP-LOG] stat-cards narrowed window:", JSON.stringify(window));
+function computeCoverage(jobs: LiveJobRow[], from: string, to: string): RangeCoverage {
+  let datedRows = 0;
+  let inRange = 0;
+  let beforeRange = 0;
+  let afterRange = 0;
+  let undated = 0;
+  let earliest: string | null = null;
+  let latest: string | null = null;
+  for (const job of jobs) {
+    if (!job.received_date) {
+      undated += 1;
+      continue;
+    }
+    datedRows += 1;
+    const d = job.received_date;
+    if (earliest == null || d < earliest) earliest = d;
+    if (latest == null || d > latest) latest = d;
+    if (d >= from && d <= to) inRange += 1;
+    else if (d < from) beforeRange += 1;
+    else afterRange += 1;
+  }
+  return { totalRows: jobs.length, datedRows, inRange, beforeRange, afterRange, undated, earliest, latest };
+}
 
-  const prior = priorPeriod(window);
+function aggregateWindow(jobs: LiveJobRow[], from: string, to: string): PeriodAggregate {
+  const receivedInWindow = jobs.filter((j) => isJobReceivedInRange(j, from, to));
+  const clients = new Set<string>();
+  const boards = new Set<string>();
+  const clientCounts = new Map<string, { clientId: string; name: string | null; count: number }>();
+  let turnaroundSum = 0;
+  let turnaroundSample = 0;
 
-  const { data, error } = await supabase.rpc("overview_period_stats", {
-    p_organization_id: organizationId,
-    p_workspace_ids: workspaceIds,
-    p_from: window.from,
-    p_to: window.to,
-    p_prior_from: prior.from,
-    p_prior_to: prior.to,
-  });
-
-  if (error) {
-    console.error("[TEMP-LOG] overview_period_stats RPC error:", error.message);
-    throw new Error(
-      `Failed to aggregate period stats: ${error.message || String(error)}`,
-    );
+  for (const job of receivedInWindow) {
+    boards.add(job.board_id);
+    const clientLabel = effectiveClientLabel(job);
+    const clientId = job.client_id ?? (job.client_unmatched ? `unmatched:${job.client_raw ?? job.record_id}` : null);
+    if (clientId) {
+      clients.add(clientId);
+      const existing = clientCounts.get(clientId);
+      if (existing) existing.count += 1;
+      else clientCounts.set(clientId, { clientId, name: normalizeClientName(clientLabel), count: 1 });
+    }
+    if (isCompletedUploaded(job) && job.upload_date && job.received_date) {
+      const diff = daysBetween(job.received_date, job.upload_date);
+      if (diff >= 0) {
+        turnaroundSum += diff;
+        turnaroundSample += 1;
+      }
+    }
   }
 
-  console.log("[TEMP-LOG] overview_period_stats raw result:", JSON.stringify(data));
-  const root = (data ?? {}) as Record<string, unknown>;
-  const comparison = parsePeriodComparison(data);
-  const coverage = parseCoverage(root.coverage);
-  console.log("[TEMP-LOG] stat-cards parsed coverage:", JSON.stringify(coverage));
-  console.log("[TEMP-LOG] stat-cards current.jobsReceived:", comparison.current.jobsReceived, "prior.jobsReceived:", comparison.prior.jobsReceived);
+  const busiestClient: BusiestClient | null = [...clientCounts.values()].sort((a, b) => b.count - a.count || (a.name ?? "").localeCompare(b.name ?? ""))[0] ?? null;
+  const completedUploaded = completedUploadedJobs(jobs, from, to);
+  const jobsCompleted = completedUploaded.length;
+  const completedByStatus = receivedInWindow.filter((j) => j.status_class === "completed" || isCompletedUploaded(j)).length;
+  const completedDateAvailable = jobs.some((j) => j.upload_date != null);
 
-  return buildStatCards(comparison, {
+  return {
+    recordsInWindow: receivedInWindow.length,
+    jobsReceived: receivedInWindow.length,
+    clientsActive: clients.size,
+    boardsTouched: boards.size,
+    completedByStatus,
+    jobsCompleted,
+    receivedTimestamps: receivedInWindow.length,
+    completedTimestamps: jobsCompleted,
+    turnaroundSample,
+    turnaroundAvgDays: turnaroundSample > 0 ? Number((turnaroundSum / turnaroundSample).toFixed(1)) : null,
+    completedDateAvailable,
+    busiestClient,
+  };
+}
+
+export async function fetchOverviewStatCards(
+  _supabase: SupabaseClient,
+  { organizationId, range, boardIds = null }: OverviewStatCardsOptions,
+): Promise<StatCardsResult & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; missingReceivedDateCount: number }> {
+  const scope = await getLiveJobScope(organizationId);
+  let jobs = scope.jobs;
+  if (boardIds && boardIds.length > 0) {
+    const allowed = new Set(boardIds);
+    jobs = jobs.filter((j) => allowed.has(j.board_id));
+  }
+
+  const bounds = await fetchDataBounds(_supabase, organizationId, null);
+  const window = narrowAllTimeRange(range, bounds);
+  const prior = priorPeriod(window);
+
+  const current = aggregateWindow(jobs, window.from, window.to);
+  const priorAgg = aggregateWindow(jobs, prior.from, prior.to);
+  const currentTopClientPriorCount = current.busiestClient
+    ? jobs.filter((j) => isJobReceivedInRange(j, prior.from, prior.to) && (j.client_id ?? (j.client_unmatched ? `unmatched:${j.client_raw ?? j.record_id}` : null)) === current.busiestClient!.clientId).length
+    : 0;
+
+  const comparison: PeriodComparison = { current, prior: priorAgg, currentTopClientPriorCount };
+  const coverage = computeCoverage(jobs, window.from, window.to);
+  const cards = buildStatCards(comparison, {
     id: window.id,
     label: window.label,
     from: window.from,
@@ -167,6 +138,12 @@ export async function fetchOverviewStatCards(
     priorFrom: prior.from,
     priorTo: prior.to,
   }, coverage);
+
+  return {
+    ...cards,
+    generatedAt: scope.generatedAt,
+    todayIST: scope.todayIST,
+    boardsWithoutUploadMapping: scope.boardsWithoutUploadMapping,
+    missingReceivedDateCount: scope.missingReceivedDate.length,
+  };
 }
-
-
