@@ -2,9 +2,6 @@
 
 import * as React from "react";
 import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Mail,
   Phone,
   Calendar,
@@ -60,6 +57,12 @@ import {
 } from "recharts";
 import { toast } from "sonner";
 
+import {
+  useSearchParams,
+  usePathname,
+  useRouter,
+} from "next/navigation";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +76,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { formatPaymentTermDays } from "./card-types";
+import { InvoicingTermsDialog } from "./invoicing-terms-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -83,6 +88,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
+import {
+  getClient360RelationshipClientsAction,
+  getClient360RelationshipProfileAction,
+  logClient360ActivityAction,
+} from "./actions";
+import { setClientPaymentTermAction } from "./actions/payment-term-action";
 
 import type {
   Client360Profile,
@@ -94,45 +106,226 @@ import type {
   DealProject,
   ClientNote,
 } from "./relationship-types";
-import { MOCK_CLIENTS } from "./relationship-mock-data";
 import { AutomationCenterModal } from "@/features/automations/automation-center-modal";
 import { calculateDueDate } from "@/features/automations/payment-overdue-service";
+import { Client360AnalyticsDashboard } from "./client-360-analytics-dashboard";
 
 export interface RelationshipClient360Props {
   initialClientId?: string;
   onSwitchToStudioOrders?: () => void;
 }
 
+const EMPTY_CLIENT_PROFILE: Client360Profile = {
+  id: "",
+  name: "Not added",
+  legalName: "Not added",
+  domain: "",
+  industry: "Not added",
+  hqLocation: "Not added",
+  timezone: "—",
+  accountOwner: { name: "Not added", email: "", role: "Not added" },
+  lifecycleStage: "Lead",
+  financials: { lifetimeValue: 0, arr: 0, revenueYtd: 0, contractStartDate: "", contractRenewalDate: "", renewalDaysLeft: 0, contractTier: "Not added" },
+  kpis: { revenueYtd: 0, openDealsCount: 0, openDealsValue: 0, openTicketsCount: 0, urgentTicketsCount: 0, lastContactDate: "", npsScore: 0, csatScore: 0 },
+  nextBestActions: [], keyContacts: [], dealsAndProjects: [],
+  billing: { arr: 0, mrr: 0, lifetimeValue: 0, paymentTerms: "Custom", paymentMethod: "—", billingFrequency: "Monthly", currency: "—", invoices: [] },
+  support: { openTickets: 0, avgFirstResponseHours: 0, avgResolutionDays: 0, tickets: [] },
+  documents: [], notes: [], timeline: [], revenueTrend: [], recentWins: [], recentIssues: [], assignedTeam: [], tags: [], socialLinks: {}, dataSources: [],
+  canViewBilling: false,
+};
+
 export function RelationshipClient360({
-  initialClientId = "safari",
+  initialClientId = "",
   onSwitchToStudioOrders,
 }: RelationshipClient360Props) {
   // Client selection
   const [selectedClientId, setSelectedClientId] = React.useState<string>(
-    initialClientId in MOCK_CLIENTS ? initialClientId : "safari"
+    initialClientId
   );
-  const [clientData, setClientData] = React.useState<Client360Profile>(
-    MOCK_CLIENTS[selectedClientId] ?? MOCK_CLIENTS["safari"]
-  );
+  const [clientData, setClientData] = React.useState<Client360Profile>(EMPTY_CLIENT_PROFILE);
+  const [liveClients, setLiveClients] = React.useState<Array<{ id: string; name: string; aliases: string[]; jobs: number; boardCount: number }>>([]);
+  const [clientSearch, setClientSearch] = React.useState("");
+  const [clientCursor, setClientCursor] = React.useState(0);
+  const clientSearchRef = React.useRef<HTMLInputElement>(null);
+  const [isLoadingLiveData, setIsLoadingLiveData] = React.useState(true);
+  const [liveClientsError, setLiveClientsError] = React.useState<string | null>(null);
+  const [liveClientsRetryKey, setLiveClientsRetryKey] = React.useState(0);
+  const [jobsWithoutClient, setJobsWithoutClient] = React.useState(0);
+  const [possibleDuplicates, setPossibleDuplicates] = React.useState<Array<{ canonicalName: string; similarTo: string; similarity: number }>>([]);
+  const [excludedValues, setExcludedValues] = React.useState<Array<{ name: string; reason: string }>>([]);
+  const [totalClientsFound, setTotalClientsFound] = React.useState(0);
 
   // Sync clientData when initialClientId or selectedClientId changes
   React.useEffect(() => {
-    if (initialClientId && initialClientId in MOCK_CLIENTS) {
-      setSelectedClientId(initialClientId);
-    }
+    if (initialClientId) setSelectedClientId(initialClientId);
   }, [initialClientId]);
 
   React.useEffect(() => {
-    if (MOCK_CLIENTS[selectedClientId]) {
-      setClientData(MOCK_CLIENTS[selectedClientId]);
+    let cancelled = false;
+    async function loadLiveProfile() {
+      setIsLoadingLiveData(true);
+      setLiveClientsError(null);
+      const clientsResult = await getClient360RelationshipClientsAction();
+      if (cancelled) return;
+      if (clientsResult.error) {
+        setLiveClientsError(clientsResult.error);
+        setLiveClients([]);
+        setIsLoadingLiveData(false);
+        return;
+      }
+      const requested = initialClientId.trim().toLowerCase().replace(/\s+/g, " ");
+      const resolved = (clientsResult.data ?? []).find((client) => {
+        if (client.id === selectedClientId) return true;
+        if (!requested) return false;
+        return [client.name, ...client.aliases].some(
+          (name) => name.trim().toLowerCase().replace(/\s+/g, " ") === requested,
+        );
+      });
+      const nextClientId = resolved?.id ?? (selectedClientId && (clientsResult.data ?? []).some((client) => client.id === selectedClientId) ? selectedClientId : "");
+      if (clientsResult.data) {
+        setLiveClients(clientsResult.data ?? []);
+        setJobsWithoutClient(clientsResult.jobsWithoutClient);
+        setPossibleDuplicates(clientsResult.possibleDuplicates);
+        if (nextClientId !== selectedClientId) setSelectedClientId(nextClientId);
+      }
+      const profileResult = nextClientId
+        ? await getClient360RelationshipProfileAction(nextClientId)
+        : { data: null, error: null, status: 200 };
+      if (cancelled) return;
+      if (profileResult.data) {
+        const meta = (profileResult.data as typeof profileResult.data & { _liveMeta?: { generatedAt?: string } })._liveMeta;
+        setClientData(profileResult.data);
+        if (meta?.generatedAt) setLastSyncTime(`Data as of ${new Date(meta.generatedAt).toLocaleString()}`);
+      }
+      setIsLoadingLiveData(false);
     }
+    void loadLiveProfile();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialClientId, selectedClientId, liveClientsRetryKey]);
+
+  React.useEffect(() => {
+    const supabase = createClient();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const refresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void getClient360RelationshipProfileAction(selectedClientId).then((result) => {
+          if (result.data) {
+            const meta = (result.data as typeof result.data & { _liveMeta?: { generatedAt?: string } })._liveMeta;
+            setClientData(result.data);
+            if (meta?.generatedAt) setLastSyncTime(`Data as of ${new Date(meta.generatedAt).toLocaleString()}`);
+            else setLastSyncTime("just now");
+          }
+        });
+      }, 300);
+    };
+    const channel = supabase
+      .channel(`client-360-live-meta-${selectedClientId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_360_clients" }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "client_360_client_aliases" }, refresh)
+      .subscribe();
+    return () => {
+      if (timer) clearTimeout(timer);
+      void supabase.removeChannel(channel);
+    };
   }, [selectedClientId]);
 
   // Role permissions
   const [currentRole, setCurrentRole] = React.useState<UserViewRole>("Admin");
   const canEdit = currentRole !== "Viewer";
-  const canViewFinance = currentRole === "Admin" || currentRole === "Finance" || currentRole === "Sales";
+  const canViewFinance = clientData.canViewBilling === true;
   const canViewConfidentialNotes = currentRole === "Admin" || currentRole === "Sales";
+
+  // Next Best Actions (loaded per client, one card per board+batch issue)
+  const [nbaActions, setNbaActions] = React.useState<Array<{ id: string; title: string; reason: string; jobs: Array<{ recordId: string; title: string; boardName: string; batchId: string }> }>>([]);
+  const [nbaLoading, setNbaLoading] = React.useState(false);
+
+  // Boards that contribute to this client (job count + last updated).
+  const [boardsContributing, setBoardsContributing] = React.useState<Array<{ boardId: string; boardName: string; jobCount: number; lastUpdated: string | null }>>([]);
+  const [selectedBoardIds, setSelectedBoardIds] = React.useState<string[] | null>(null);
+  const [allBoards, setAllBoards] = React.useState<Array<{ id: string; name: string }>>([]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!selectedClientId) { setBoardsContributing([]); return; }
+      try {
+        const { getJobsDetail } = await import("./card-data");
+        const res = await getJobsDetail(selectedClientId, 1, 50);
+        if (cancelled) return;
+        setBoardsContributing(res.boardsContributing ?? []);
+      } catch {
+        setBoardsContributing([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedClientId]);
+
+  // Load list of non-Practice, non-archived boards for the Boards filter.
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const supabase = createClient();
+        const { data } = await supabase
+          .from("boards")
+          .select("id, name, status, archived_at")
+          .eq("status", "active")
+          .is("archived_at", null);
+        const filtered = (data ?? [])
+          .filter((b) => !/^practice$/i.test(String(b.name ?? "").trim()))
+          .map((b) => ({ id: String(b.id), name: String(b.name) }));
+        if (!cancelled) setAllBoards(filtered);
+      } catch {
+        if (!cancelled) setAllBoards([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!selectedClientId) { setNbaActions([]); return; }
+      setNbaLoading(true);
+      try {
+        const { getNextBestActions } = await import("./card-data");
+        const res = await getNextBestActions(selectedClientId);
+        if (cancelled) return;
+        if (res.error) setNbaActions([]);
+        else setNbaActions(res.data?.actions ?? []);
+      } catch {
+        if (cancelled) return;
+        setNbaActions([]);
+      } finally {
+        if (!cancelled) setNbaLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedClientId]);
+  const filteredLiveClients = React.useMemo(() => {
+    const query = clientSearch.trim().toLowerCase();
+    return liveClients.filter((client) =>
+      !query ||
+      client.name.toLowerCase().includes(query) ||
+      client.aliases.some((alias) => alias.toLowerCase().includes(query))
+    );
+  }, [clientSearch, liveClients]);
+
+  // The trigger/header must reflect the client the user picked, even while the
+  // profile is still loading or failed to resolve. Resolve the display name
+  // from the de-duplicated client list (canonical clientId/clientName) so the
+  // label never falls back to "Not added" while a client is selected.
+  const selectedClientEntry = React.useMemo(
+    () => liveClients.find((c) => c.id === selectedClientId),
+    [liveClients, selectedClientId],
+  );
+  // Never fall back to "Not added" for the client itself: a valid client must
+  // be present in the resolved live client list.
+  const hasValidClient = !!selectedClientId && !!selectedClientEntry;
+  const selectedClientName = hasValidClient ? selectedClientEntry?.name : "";
 
   // Tabs
   const [activeTab, setActiveTab] = React.useState<
@@ -152,6 +345,24 @@ export function RelationshipClient360({
   const [timelineSearch, setTimelineSearch] = React.useState("");
   const [chartMetric, setChartMetric] = React.useState<"jobs" | "skus" | "revenue">("jobs");
 
+  const [invoicingOpen, setInvoicingOpen] = React.useState(false);
+  const [clientDropdownOpen, setClientDropdownOpen] = React.useState(false);
+  const [lifecycleDropdownOpen, setLifecycleDropdownOpen] = React.useState(false);
+  const [roleDropdownOpen, setRoleDropdownOpen] = React.useState(false);
+  const searchParams = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  // Persist the selection in the URL (?client=) so it survives a refresh and
+  // switching between the Profile and Cross-Board Production Orders tabs.
+  React.useEffect(() => {
+    if (!selectedClientId) return;
+    const params = new URLSearchParams(searchParams.toString());
+    if (params.get("client") === selectedClientId) return;
+    params.set("client", selectedClientId);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [selectedClientId, searchParams, pathname, router]);
+
   // Modals for Quick Actions
   const [emailModalOpen, setEmailModalOpen] = React.useState(false);
   const [callModalOpen, setCallModalOpen] = React.useState(false);
@@ -169,15 +380,29 @@ export function RelationshipClient360({
   const hasOverduePayment = overdueInvoices.length > 0;
   const overdueTotalAmount = overdueInvoices.reduce((acc, inv) => acc + inv.amount, 0);
 
-  // Recalculate payment due dates dynamically if payment terms change
+  // Recalculate payment due dates dynamically if payment terms change, and
+  // persist the term for invoice-clearance alerts (admins only; the server
+  // action re-checks the admin role).
   const handlePaymentTermsChange = (
-    newTerms: "Immediate" | "15 days" | "30 days" | "45 days" | "Custom",
+    newTerms: "Immediate" | "15 days" | "30 days" | "45 days" | "Custom" | "Not added",
     customDays?: number
   ) => {
+    const termDays =
+      newTerms === "Not added"
+        ? null
+        : newTerms === "Immediate"
+          ? 0
+          : newTerms === "15 days"
+            ? 15
+            : newTerms === "30 days"
+              ? 30
+              : newTerms === "45 days"
+                ? 45
+                : Math.max(0, customDays ?? 60);
     setClientData((prev) => {
       const updatedInvoices = prev.billing.invoices.map((inv) => {
         const booked = inv.jobBookedDate || inv.issueDate;
-        const newDueDate = calculateDueDate(booked, newTerms, customDays);
+        const newDueDate = calculateDueDate(booked, newTerms === "Not added" ? "Custom" : newTerms, termDays ?? 0);
         const today = new Date();
         const dueD = new Date(newDueDate);
         const isPast = dueD.getTime() < today.getTime();
@@ -204,12 +429,32 @@ export function RelationshipClient360({
         billing: {
           ...prev.billing,
           paymentTerms: newTerms,
-          customPaymentDays: customDays,
+          customPaymentDays: termDays ?? undefined,
+          paymentTermDays: termDays,
           invoices: updatedInvoices,
         },
       };
     });
-    toast.success(`Updated payment terms to "${newTerms}". Recalculated due dates.`);
+
+    if (selectedClientId) {
+      void setClientPaymentTermAction({ clientId: selectedClientId, paymentTermDays: termDays })
+        .then((res) => {
+          if (res.ok) {
+            toast.success(
+              termDays == null
+                ? "Invoice reminders disabled for this client."
+                : `Payment terms saved: ${termDays === 0 ? "same day" : `${termDays} days`}. Invoice reminders are active.`,
+            );
+          } else {
+            toast.error(`Could not save payment terms: ${res.error ?? "unknown error"}`);
+          }
+        })
+        .catch((err) => {
+          toast.error(`Could not save payment terms: ${err instanceof Error ? err.message : "request failed"}`);
+        });
+    } else {
+      toast.success(`Updated payment terms to "${newTerms}".`);
+    }
   };
 
   // Mark invoice as Paid
@@ -332,7 +577,7 @@ export function RelationshipClient360({
     }
   };
 
-  const handleSendEmail = (e: React.FormEvent) => {
+  const handleSendEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!emailForm.subject.trim()) {
       toast.error("Please enter a subject.");
@@ -348,6 +593,17 @@ export function RelationshipClient360({
       authorRole: clientData.accountOwner.role,
       timestamp: new Date().toISOString().slice(0, 16).replace("T", " "),
     };
+    const persisted = await logClient360ActivityAction({
+      clientId: selectedClientId,
+      type: "email",
+      title: newActivity.title,
+      summary: newActivity.summary,
+      details: newActivity.details,
+    });
+    if (!persisted.ok) {
+      toast.error(persisted.error ?? "Could not save email activity.");
+      return;
+    }
     setClientData((prev) => ({
       ...prev,
       timeline: [newActivity, ...prev.timeline],
@@ -356,7 +612,7 @@ export function RelationshipClient360({
     toast.success(`Email sent to ${emailForm.to || clientData.keyContacts[0]?.email}`);
   };
 
-  const handleLogCall = (e: React.FormEvent) => {
+  const handleLogCall = async (e: React.FormEvent) => {
     e.preventDefault();
     const newActivity: TimelineActivity = {
       id: `act-${Date.now()}`,
@@ -368,6 +624,17 @@ export function RelationshipClient360({
       authorRole: clientData.accountOwner.role,
       timestamp: new Date().toISOString().slice(0, 16).replace("T", " "),
     };
+    const persisted = await logClient360ActivityAction({
+      clientId: selectedClientId,
+      type: "call",
+      title: newActivity.title,
+      summary: newActivity.summary,
+      details: newActivity.details,
+    });
+    if (!persisted.ok) {
+      toast.error(persisted.error ?? "Could not save call activity.");
+      return;
+    }
     setClientData((prev) => ({
       ...prev,
       timeline: [newActivity, ...prev.timeline],
@@ -406,7 +673,7 @@ export function RelationshipClient360({
     toast.success("Task added to Next Best Actions");
   };
 
-  const handleAddNote = (e: React.FormEvent) => {
+  const handleAddNote = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!noteForm.content.trim()) {
       toast.error("Please enter note content.");
@@ -423,6 +690,17 @@ export function RelationshipClient360({
       isConfidential: noteForm.isConfidential,
       tags: ["Direct Note"],
     };
+    const persisted = await logClient360ActivityAction({
+      clientId: selectedClientId,
+      type: "note",
+      title: `Added Note: ${newNote.title}`,
+      summary: newNote.content.slice(0, 80) + (newNote.content.length > 80 ? "..." : ""),
+      details: newNote.content,
+    });
+    if (!persisted.ok) {
+      toast.error(persisted.error ?? "Could not save note activity.");
+      return;
+    }
     setClientData((prev) => ({
       ...prev,
       notes: [newNote, ...prev.notes],
@@ -445,11 +723,16 @@ export function RelationshipClient360({
 
   const handleManualSync = () => {
     setIsSyncing(true);
-    setTimeout(() => {
-      setIsSyncing(false);
-      setLastSyncTime("just now");
-      toast.success("All CRM, billing, and support data sources synced.");
-    }, 1200);
+    void getClient360RelationshipProfileAction(selectedClientId).then((profileResult) => {
+      if (profileResult.data) {
+        const meta = (profileResult.data as typeof profileResult.data & { _liveMeta?: { generatedAt?: string } })._liveMeta;
+        setClientData(profileResult.data);
+        setLastSyncTime(meta?.generatedAt ? `Data as of ${new Date(meta.generatedAt).toLocaleString()}` : "just now");
+        toast.success("Client 360 data refreshed.");
+      } else if (profileResult.error) {
+        toast.error(profileResult.error ?? "Unable to refresh Client 360 data");
+      }
+    }).finally(() => setIsSyncing(false));
   };
 
   // Timeline filtering logic
@@ -479,18 +762,6 @@ export function RelationshipClient360({
     });
   }, [clientData.timeline, timelineFilter, timelineRoleView, timelineSearch]);
 
-  // Health score styling
-  const healthScore = clientData.health.score;
-  const healthColor =
-    healthScore >= 80
-      ? "text-emerald-500 bg-emerald-500/10 border-emerald-500/20"
-      : healthScore >= 50
-        ? "text-amber-500 bg-amber-500/10 border-amber-500/20"
-        : "text-rose-500 bg-rose-500/10 border-rose-500/20";
-
-  const healthBgBar =
-    healthScore >= 80 ? "bg-emerald-500" : healthScore >= 50 ? "bg-amber-500" : "bg-rose-500";
-
   const stageBadgeColor: Record<LifecycleStage, string> = {
     Active: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
     "At Risk": "bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20 animate-pulse",
@@ -505,52 +776,125 @@ export function RelationshipClient360({
         <div className="flex flex-wrap items-center gap-2">
           {/* Client Switcher */}
           <span className="text-xs font-medium text-muted-foreground">Client:</span>
-          <DropdownMenu>
+          <DropdownMenu open={clientDropdownOpen} onOpenChange={setClientDropdownOpen}>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-2 font-semibold">
+              <Button aria-label={hasValidClient ? selectedClientName : "Select a client"} variant="outline" size="sm" className="h-8 gap-2 font-semibold">
                 <span className="size-2 rounded-full bg-primary" />
-                {clientData.name}
+                {hasValidClient ? selectedClientName : "Select a client to view their profile"}
                 <ChevronDown className="size-3.5 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-72">
+            <DropdownMenuContent
+              align="start"
+              className="w-80 max-h-[60vh] overflow-y-auto"
+            >
+              <div className="sticky top-0 z-10 bg-popover">
               <DropdownMenuLabel className="text-xs text-muted-foreground flex items-center justify-between">
                 <span>Studio Clients (Real Board Data)</span>
                 <span className="text-[10px] text-muted-foreground">
-                  {Array.from(new Map(Object.values(MOCK_CLIENTS).map((c) => [c.id, c])).values()).length} clients
+                  {liveClients.length || 0} clients
                 </span>
               </DropdownMenuLabel>
+              {currentRole === "Admin" && (
+                <div className="px-2 pb-1 text-[10px] text-muted-foreground">
+                  {totalClientsFound} clients found on boards
+                  {excludedValues.length > 0 &&
+                    `, ${excludedValues.length} excluded (${excludedValues
+                      .map((e) => e.reason)
+                      .filter((r, i, a) => a.indexOf(r) === i)
+                      .join(", ")})`}
+                </div>
+              )}
+              <div className="px-2 pb-2">
+                <Input
+                  ref={clientSearchRef}
+                  value={clientSearch}
+                  placeholder="Search clients..."
+                  aria-label="Search clients"
+                  className="h-8 text-xs"
+                  onChange={(event) => {
+                    setClientSearch(event.target.value);
+                    setClientCursor(0);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "ArrowDown") {
+                      event.preventDefault();
+                      setClientCursor((cursor) => Math.min(cursor + 1, filteredLiveClients.length - 1));
+                    } else if (event.key === "ArrowUp") {
+                      event.preventDefault();
+                      setClientCursor((cursor) => Math.max(cursor - 1, 0));
+                    } else if (event.key === "Enter") {
+                      event.preventDefault();
+                      const client = filteredLiveClients[clientCursor];
+                      if (client) {
+                        setSelectedClientId(client.id);
+                        setClientSearch("");
+                      }
+                    }
+                  }}
+                />
+              </div>
               <DropdownMenuSeparator />
-              {Array.from(
-                new Map(Object.values(MOCK_CLIENTS).map((c) => [c.id, c])).values()
-              ).map((c) => (
+              </div>
+              {filteredLiveClients.map((c, index) => (
                 <DropdownMenuItem
                   key={c.id}
                   onClick={() => setSelectedClientId(c.id)}
-                  className={cn(
-                    "flex items-center justify-between py-2 cursor-pointer",
-                    selectedClientId === c.id && "bg-muted/50 font-semibold"
-                  )}
+className={cn(
+  "flex items-center py-1.5 px-2 cursor-pointer hover:bg-accent/10",
+  selectedClientId === c.id && "bg-muted/50 font-semibold",
+  clientCursor === index && "bg-muted/50",
+)}
                 >
-                  <div className="max-w-[190px]">
-                    <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
-                    <p className="text-[11px] text-muted-foreground truncate">{c.industry}</p>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px] shrink-0 font-bold",
-                      c.health.score >= 80
-                        ? "text-emerald-500 border-emerald-500/30 bg-emerald-500/5"
-                        : c.health.score >= 50
-                          ? "text-amber-500 border-amber-500/30 bg-amber-500/5"
-                          : "text-rose-500 border-rose-500/30 bg-rose-500/5"
-                    )}
-                  >
-                    {c.health.score}/100
-                  </Badge>
+                  <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
                 </DropdownMenuItem>
               ))}
+              {liveClientsError && !isLoadingLiveData && (
+                <DropdownMenuLabel className="text-xs text-destructive py-2">
+                  Couldn&apos;t load clients
+                </DropdownMenuLabel>
+              )}
+              {liveClientsError && !isLoadingLiveData && (
+                <DropdownMenuItem
+                  onSelect={() => setLiveClientsRetryKey((key) => key + 1)}
+                  className="text-xs text-primary cursor-pointer"
+                >
+                  Retry
+                </DropdownMenuItem>
+              )}
+              {filteredLiveClients.length === 0 && !isLoadingLiveData && !liveClientsError && (
+                <DropdownMenuItem disabled className="text-xs text-muted-foreground py-2">
+                  No clients found
+                </DropdownMenuItem>
+              )}
+              {isLoadingLiveData && (
+                <div className="px-2 py-2 space-y-2" aria-label="Loading clients">
+                  <div className="h-8 rounded bg-muted animate-pulse" />
+                  <div className="h-8 rounded bg-muted animate-pulse" />
+                  <div className="h-8 rounded bg-muted animate-pulse" />
+                </div>
+              )}
+              {jobsWithoutClient > 0 && (
+                <DropdownMenuSeparator />
+              )}
+              {jobsWithoutClient > 0 && (
+                <DropdownMenuItem disabled className="text-[10px] text-muted-foreground/70 px-2 py-1">
+                  {jobsWithoutClient} job{jobsWithoutClient !== 1 ? "s" : ""} have no client
+                </DropdownMenuItem>
+              )}
+              {possibleDuplicates.length > 0 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuLabel className="text-[10px] text-amber-600 px-2 py-1">
+                    Possible duplicates (click to review)
+                  </DropdownMenuLabel>
+                  {possibleDuplicates.slice(0, 5).map((d, i) => (
+                    <DropdownMenuItem key={`dup-${i}`} disabled className="text-[10px] text-muted-foreground px-2 py-1">
+                      {d.canonicalName} ~ {d.similarTo} ({d.similarity}%)
+                    </DropdownMenuItem>
+                  ))}
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
 
@@ -574,7 +918,7 @@ export function RelationshipClient360({
           <div className="flex items-center gap-1.5 rounded-lg border border-border/80 bg-muted/30 px-2 py-1">
             <Shield className="size-3.5 text-muted-foreground" />
             <span className="text-[11px] text-muted-foreground">View as:</span>
-            <DropdownMenu>
+            <DropdownMenu open={roleDropdownOpen} onOpenChange={setRoleDropdownOpen}>
               <DropdownMenuTrigger asChild>
                 <button className="flex items-center gap-1 text-xs font-semibold hover:underline">
                   {currentRole}
@@ -634,22 +978,22 @@ export function RelationshipClient360({
         </div>
       </div>
 
-      {/* ── Main Sticky Header: Client Title, Health, Financials, Actions ── */}
+      {/* ── Main Sticky Header: Client Title, Financials, Actions ── */}
       <header className="border-b border-border bg-card px-4 py-5 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
           {/* Client Identity & Account Owner */}
           <div className="flex items-start gap-4">
             <div className="flex size-14 shrink-0 items-center justify-center rounded-xl bg-primary text-xl font-bold text-primary-foreground shadow-sm">
-              {clientData.name.slice(0, 2).toUpperCase()}
+              {hasValidClient ? clientData.name.slice(0, 2).toUpperCase() : "SC"}
             </div>
             <div className="space-y-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl">
-                  {clientData.name}
+                  {hasValidClient ? selectedClientName : "Select a client to view their profile"}
                 </h1>
 
                 {/* Lifecycle Stage dropdown badge */}
-                <DropdownMenu>
+                <DropdownMenu open={lifecycleDropdownOpen} onOpenChange={setLifecycleDropdownOpen}>
                   <DropdownMenuTrigger asChild>
                     <button
                       className={cn(
@@ -705,7 +1049,10 @@ export function RelationshipClient360({
 
                 {/* Payment terms badge */}
                 <Badge variant="outline" className="text-xs font-normal text-muted-foreground border-border">
-                  Terms: {clientData.billing.paymentTerms || "30 days"}
+                  Terms: {formatPaymentTermDays(
+                    clientData.billing.paymentTermDays ?? clientData.billing.customPaymentDays ?? null,
+                    clientData.billing.paymentTerms || "Not added",
+                  )}
                 </Badge>
               </div>
 
@@ -735,37 +1082,10 @@ export function RelationshipClient360({
             </div>
           </div>
 
-          {/* Financials & Health Metrics Strip */}
+          {/* Financials & Volume Metrics Strip */}
           <div className="flex flex-wrap items-center gap-4 border-t border-border pt-4 lg:border-t-0 lg:pt-0">
-            {/* Health Score Pill */}
-            <div className={cn("flex items-center gap-3 rounded-xl border p-2.5 sm:px-3.5", healthColor)}>
-              <div>
-                <div className="flex items-baseline gap-1">
-                  <span className="text-2xl font-black tabular-nums">{clientData.health.score}</span>
-                  <span className="text-xs font-semibold opacity-70">/100</span>
-                </div>
-                <div className="flex items-center gap-1 text-[11px] font-medium leading-none">
-                  {clientData.health.trend === "up" ? (
-                    <TrendingUp className="size-3" />
-                  ) : clientData.health.trend === "down" ? (
-                    <TrendingDown className="size-3" />
-                  ) : (
-                    <Minus className="size-3" />
-                  )}
-                  <span>
-                    {clientData.health.change > 0 ? `+${clientData.health.change}` : clientData.health.change}{" "}
-                    pts
-                  </span>
-                </div>
-              </div>
-              <div className="border-l border-current/20 pl-2.5 text-left">
-                <p className="text-[10px] uppercase font-bold tracking-wider opacity-75">Health</p>
-                <p className="text-xs font-bold leading-tight">{clientData.health.statusLabel}</p>
-              </div>
-            </div>
-
             {/* Studio Production Volume */}
-            <div className="rounded-xl border border-border bg-background p-2.5 sm:px-3.5">
+            <div className="rounded-xl border border-border bg-background p-2.5 sm:px-3.5 cursor-pointer hover:bg-accent/30 transition-colors" onClick={() => {}}>
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Studio Volume
               </p>
@@ -778,12 +1098,20 @@ export function RelationshipClient360({
             </div>
 
             {/* Invoicing Terms & Status */}
-            <div className="rounded-xl border border-border bg-background p-2.5 sm:px-3.5">
+            <button
+              type="button"
+              onClick={() => setInvoicingOpen(true)}
+              className="rounded-xl border border-border bg-background p-2.5 text-left transition-colors hover:bg-accent/30 sm:px-3.5"
+              title="Edit invoicing terms"
+            >
               <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 Invoicing Terms
               </p>
               <p className="text-lg font-bold tabular-nums text-foreground">
-                {clientData.billing.paymentTerms || "Net 15"}
+                {formatPaymentTermDays(
+                  clientData.billing.paymentTermDays ?? clientData.billing.customPaymentDays ?? null,
+                  clientData.billing.paymentTerms || "Not added",
+                )}
               </p>
               <p
                 className={cn(
@@ -793,11 +1121,13 @@ export function RelationshipClient360({
                     : "text-emerald-500 font-medium"
                 )}
               >
-                {hasOverduePayment
+                {clientData.billing.invoices.length === 0
+                  ? "No invoice data yet"
+                  : hasOverduePayment
                   ? `${overdueInvoices.length} Overdue ($${overdueTotalAmount.toLocaleString()})`
                   : "All Invoices Paid"}
               </p>
-            </div>
+            </button>
 
             {/* Quick Action Buttons */}
             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -873,159 +1203,6 @@ export function RelationshipClient360({
         </div>
       </header>
 
-      {/* ── Next Best Actions (Immediately under header) ── */}
-      <section className="border-b border-border bg-muted/20 px-4 py-4 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-2 pb-2.5">
-          <Sparkles className="size-4 text-amber-500" />
-          <h2 className="text-xs font-bold uppercase tracking-wider text-foreground">
-            Next Best Actions ({clientData.nextBestActions.filter((a) => !a.completed).length} Pending)
-          </h2>
-        </div>
-
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {clientData.nextBestActions.map((action) => {
-            const isCritical = action.priority === "critical";
-            const isHigh = action.priority === "high";
-
-            return (
-              <Card
-                key={action.id}
-                className={cn(
-                  "border transition-all",
-                  action.completed && "opacity-50 bg-muted/40",
-                  isCritical && !action.completed && "border-rose-500/40 bg-rose-500/[0.02]",
-                  isHigh && !action.completed && "border-amber-500/30 bg-amber-500/[0.02]",
-                )}
-              >
-                <CardContent className="p-3.5 flex flex-col justify-between h-full">
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-[10px] font-bold uppercase",
-                          isCritical
-                            ? "border-rose-500 text-rose-500"
-                            : isHigh
-                              ? "border-amber-500 text-amber-500"
-                              : "border-blue-500 text-blue-500",
-                        )}
-                      >
-                        {action.priority} · {action.category}
-                      </Badge>
-                      {action.dueDate && (
-                        <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                          <Clock className="size-3" />
-                          {action.dueDate}
-                        </span>
-                      )}
-                    </div>
-
-                    <h3 className="text-sm font-semibold leading-tight text-foreground">
-                      {action.title}
-                    </h3>
-                    <p className="text-xs text-muted-foreground leading-relaxed">
-                      {action.reason}
-                    </p>
-                  </div>
-
-                  <div className="mt-3 pt-2.5 border-t border-border/60 flex items-center justify-between">
-                    <span className="text-[10px] text-muted-foreground italic truncate max-w-[160px]">
-                      {action.impact}
-                    </span>
-                    <Button
-                      size="sm"
-                      variant={isCritical ? "default" : "outline"}
-                      className={cn(
-                        "h-7 text-xs font-semibold",
-                        isCritical && "bg-rose-600 hover:bg-rose-700 text-white",
-                      )}
-                      disabled={action.completed}
-                      onClick={() => handleNextActionClick(action)}
-                    >
-                      {action.completed ? (
-                        <>
-                          <Check className="mr-1 size-3" /> Completed
-                        </>
-                      ) : (
-                        action.actionLabel
-                      )}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* ── KPI Strip: Real Studio Production & Invoicing Metrics ── */}
-      <section className="grid grid-cols-2 divide-x divide-y divide-border border-b border-border bg-card sm:grid-cols-3 lg:grid-cols-5">
-        {/* 1. Total Jobs Logged */}
-        <div className="p-4 sm:px-6">
-          <p className="text-xs font-medium text-muted-foreground">Total Production Jobs</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-foreground">
-            {clientData.kpis.totalJobsCount ?? 185}
-            <span className="ml-1 text-xs font-normal text-muted-foreground">jobs</span>
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">Across Jan, Feb, Oct &amp; studio boards</p>
-        </div>
-
-        {/* 2. Active Studio Batches */}
-        <div className="p-4 sm:px-6">
-          <p className="text-xs font-medium text-muted-foreground">Active Studio Batches</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-foreground">
-            {clientData.kpis.activeBatchesCount ?? clientData.dealsAndProjects.filter((d) => d.stage !== "Completed").length}
-            <span className="ml-1.5 text-xs font-normal text-amber-500 font-medium">In delivery</span>
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground truncate">
-            {clientData.dealsAndProjects[0]?.name?.split("—")[0]?.trim() ?? "Current active batches"}
-          </p>
-        </div>
-
-        {/* 3. Average Turnaround (TAT) */}
-        <div className="p-4 sm:px-6">
-          <p className="text-xs font-medium text-muted-foreground">Avg Turnaround (TAT)</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-foreground">
-            {clientData.kpis.avgTatDays ?? 2.8}d
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">Receive Date to Date of Upload</p>
-        </div>
-
-        {/* 4. Total Catalog SKUs / Assets */}
-        <div className="p-4 sm:px-6">
-          <p className="text-xs font-medium text-muted-foreground">Catalog SKUs / Assets</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-foreground">
-            {clientData.kpis.totalSkusCount ?? 77}
-            <span className="ml-1 text-xs font-normal text-muted-foreground">SKUs</span>
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">High-res catalog deliverables</p>
-        </div>
-
-        {/* 5. Invoicing & Billing Status */}
-        <div className="p-4 sm:px-6">
-          <p className="text-xs font-medium text-muted-foreground">Invoiced / Billing Status</p>
-          <p className="mt-1 text-2xl font-bold tracking-tight tabular-nums text-foreground">
-            {canViewFinance
-              ? hasOverduePayment
-                ? `${overdueTotalAmount.toLocaleString()}`
-                : clientData.billing.invoices.length > 0
-                  ? `${clientData.billing.invoices.reduce((acc, curr) => acc + (curr.paidAmount ?? curr.amount), 0).toLocaleString()}`
-                  : "—"
-              : "[Protected]"}
-            {hasOverduePayment && (
-              <span className="ml-2 inline-flex items-center rounded-full bg-rose-500/10 px-2 py-0.5 text-xs font-bold text-rose-500">
-                Overdue
-              </span>
-            )}
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {clientData.billing.invoices.length > 0
-              ? `Terms: ${clientData.billing.paymentTerms || "15 days"}`
-              : "Invoice amounts not added yet"}
-          </p>
-        </div>
-      </section>
 
       {/* ── Main Two-Column Layout: Tabs Content + Collapsible Right Sidebar ── */}
       <div className="flex flex-col lg:flex-row">
@@ -1078,179 +1255,13 @@ export function RelationshipClient360({
             {/* 1. OVERVIEW TAB */}
             {activeTab === "overview" && (
               <div className="space-y-6">
-                {/* Health Score Breakdown Card */}
-                <Card>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <CardTitle className="text-base font-semibold">
-                          Health Score Breakdown ({clientData.health.score}/100)
-                        </CardTitle>
-                        <CardDescription className="text-xs">
-                          Algorithmic factors driving account retention and expansion likelihood
-                        </CardDescription>
-                      </div>
-                      <Badge variant="outline" className={cn("text-xs font-bold", healthColor)}>
-                        {clientData.health.statusLabel}
-                      </Badge>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      {clientData.health.factors.map((factor) => {
-                        const isCrit = factor.status === "critical";
-                        const isWarn = factor.status === "warning";
-                        return (
-                          <div
-                            key={factor.name}
-                            className={cn(
-                              "rounded-lg border p-3",
-                              isCrit && "border-rose-500/30 bg-rose-500/[0.02]",
-                              isWarn && "border-amber-500/30 bg-amber-500/[0.02]",
-                            )}
-                          >
-                            <div className="flex items-center justify-between text-xs font-medium">
-                              <span className="text-foreground">{factor.name}</span>
-                              <span className="text-muted-foreground tabular-nums">
-                                {factor.metric} (Weight {factor.weight}%)
-                              </span>
-                            </div>
-                            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                              <div
-                                className={cn(
-                                  "h-full rounded-full",
-                                  factor.score >= 80
-                                    ? "bg-emerald-500"
-                                    : factor.score >= 50
-                                      ? "bg-amber-500"
-                                      : "bg-rose-500",
-                                )}
-                                style={{ width: `${factor.score}%` }}
-                              />
-                            </div>
-                            <p className="mt-2 text-xs text-muted-foreground">{factor.summary}</p>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                {/* Split Row: Monthly Production Throughput Chart + Studio & Client Contacts */}
+                <Client360AnalyticsDashboard
+                  clientId={selectedClientId}
+                  clientName={selectedClientName}
+                  selectedBoardIds={selectedBoardIds}
+                  nextBestActions={nbaActions}
+                />
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                  {/* Monthly Production Throughput Chart */}
-                  <Card>
-                    <CardHeader className="pb-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <CardTitle className="text-sm font-semibold">
-                            Monthly Production Throughput &amp; Volume
-                          </CardTitle>
-                          <CardDescription className="text-xs">
-                            Actual jobs &amp; deliverables across studio boards (Jan, Feb, Oct, Jobs)
-                          </CardDescription>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex rounded-md border border-border bg-muted/30 p-0.5 text-[11px]">
-                            <button
-                              type="button"
-                              onClick={() => setChartMetric("jobs")}
-                              className={cn(
-                                "px-2 py-0.5 rounded font-medium transition-colors cursor-pointer",
-                                chartMetric === "jobs"
-                                  ? "bg-background text-foreground shadow-xs font-bold"
-                                  : "text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              Jobs
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setChartMetric("skus")}
-                              className={cn(
-                                "px-2 py-0.5 rounded font-medium transition-colors cursor-pointer",
-                                chartMetric === "skus"
-                                  ? "bg-background text-foreground shadow-xs font-bold"
-                                  : "text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              SKUs
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setChartMetric("revenue")}
-                              className={cn(
-                                "px-2 py-0.5 rounded font-medium transition-colors cursor-pointer",
-                                chartMetric === "revenue"
-                                  ? "bg-background text-foreground shadow-xs font-bold"
-                                  : "text-muted-foreground hover:text-foreground"
-                              )}
-                            >
-                              Invoiced ($)
-                            </button>
-                          </div>
-                          <span className="text-xs font-bold text-foreground tabular-nums">
-                            {chartMetric === "jobs"
-                              ? `${clientData.kpis.totalJobsCount ?? clientData.revenueTrend.reduce((acc, curr) => acc + (curr.jobsCount ?? 0), 0)} Jobs`
-                              : chartMetric === "skus"
-                                ? `${clientData.kpis.totalSkusCount ?? clientData.revenueTrend.reduce((acc, curr) => acc + (curr.skusCount ?? 0), 0)} SKUs`
-                                : canViewFinance
-                                  ? `$${clientData.revenueTrend.reduce((acc, curr) => acc + curr.revenue, 0).toLocaleString()}`
-                                  : "[Protected]"}
-                          </span>
-                        </div>
-                      </div>
-                    </CardHeader>
-                    <CardContent>
-                      {chartMetric === "revenue" && !canViewFinance ? (
-                        <div className="flex h-[180px] items-center justify-center text-xs text-muted-foreground">
-                          <Lock className="mr-1.5 size-4" /> Financial metrics restricted to Finance & Admin roles.
-                        </div>
-                      ) : (
-                        <div className="h-[200px] w-full pt-2">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <AreaChart data={clientData.revenueTrend}>
-                              <defs>
-                                <linearGradient id="metricGrad" x1="0" y1="0" x2="0" y2="1">
-                                  <stop
-                                    offset="5%"
-                                    stopColor={chartMetric === "jobs" ? "#3b82f6" : chartMetric === "skus" ? "#8b5cf6" : "#10b981"}
-                                    stopOpacity={0.4}
-                                  />
-                                  <stop
-                                    offset="95%"
-                                    stopColor={chartMetric === "jobs" ? "#3b82f6" : chartMetric === "skus" ? "#8b5cf6" : "#10b981"}
-                                    stopOpacity={0}
-                                  />
-                                </linearGradient>
-                              </defs>
-                              <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
-                              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                              <YAxis
-                                tick={{ fontSize: 11 }}
-                                tickFormatter={(val) => (chartMetric === "revenue" ? `$${val / 1000}k` : `${val}`)}
-                              />
-                              <Tooltip
-                                formatter={(val: any) => [
-                                  chartMetric === "revenue" ? `$${Number(val).toLocaleString()}` : `${val} ${chartMetric}`,
-                                  chartMetric === "jobs" ? "Jobs Logged" : chartMetric === "skus" ? "SKUs Processed" : "Invoiced Billing",
-                                ]}
-                              />
-                              <Area
-                                type="monotone"
-                                dataKey={chartMetric === "jobs" ? "jobsCount" : chartMetric === "skus" ? "skusCount" : "revenue"}
-                                stroke={chartMetric === "jobs" ? "#3b82f6" : chartMetric === "skus" ? "#8b5cf6" : "#10b981"}
-                                fillOpacity={1}
-                                fill="url(#metricGrad)"
-                                strokeWidth={2}
-                              />
-                            </AreaChart>
-                          </ResponsiveContainer>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-
                   {/* Studio Team & Client Contacts Spotlight */}
                   <Card>
                     <CardHeader className="pb-2">
@@ -1639,17 +1650,33 @@ export function RelationshipClient360({
                               <DropdownMenuLabel className="text-xs">
                                 Select Payment Terms
                               </DropdownMenuLabel>
+                              <DropdownMenuItem
+                                onClick={() => handlePaymentTermsChange("Not added")}
+                              >
+                                Not added (no invoice reminders)
+                              </DropdownMenuItem>
                               {(
                                 ["Immediate", "15 days", "30 days", "45 days", "Custom"] as const
                               ).map((t) => (
                                 <DropdownMenuItem
                                   key={t}
-                                  onClick={() =>
-                                    handlePaymentTermsChange(
-                                      t,
-                                      t === "Custom" ? 60 : undefined
-                                    )
-                                  }
+                                  onClick={() => {
+                                    if (t === "Custom") {
+                                      const raw = window.prompt(
+                                        "Custom payment term in days (invoice reminders start after this many days):",
+                                        "60",
+                                      );
+                                      if (raw == null) return;
+                                      const days = Number(raw);
+                                      if (!Number.isFinite(days) || days < 1) {
+                                        toast.error("Please enter a valid number of days (min 1).");
+                                        return;
+                                      }
+                                      handlePaymentTermsChange("Custom", Math.floor(days));
+                                      return;
+                                    }
+                                    handlePaymentTermsChange(t);
+                                  }}
                                 >
                                   {t} {t === "Immediate" ? "(Due on booking)" : ""}
                                 </DropdownMenuItem>
@@ -1658,7 +1685,10 @@ export function RelationshipClient360({
                           </DropdownMenu>
                         </div>
                         <p className="text-base font-semibold text-foreground">
-                          {clientData.billing.paymentTerms || "30 days"}
+                          {formatPaymentTermDays(
+                            clientData.billing.paymentTermDays ?? clientData.billing.customPaymentDays ?? null,
+                            clientData.billing.paymentTerms || "Not added",
+                          )}
                         </p>
                         <p className="text-[11px] text-muted-foreground">
                           {clientData.billing.paymentMethod} • {clientData.billing.billingFrequency}
@@ -2146,7 +2176,10 @@ export function RelationshipClient360({
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
                       <button className="font-semibold text-primary hover:underline flex items-center gap-1 text-xs">
-                        {clientData.billing.paymentTerms || "30 days"}
+                        {formatPaymentTermDays(
+                          clientData.billing.paymentTermDays ?? clientData.billing.customPaymentDays ?? null,
+                          clientData.billing.paymentTerms || "Not added",
+                        )}
                         <ChevronDown className="size-3 text-muted-foreground" />
                       </button>
                     </DropdownMenuTrigger>
@@ -2269,36 +2302,40 @@ export function RelationshipClient360({
               </div>
             </div>
 
-            {/* Data Source Sync Status */}
+            {/* Boards contributing to this client */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                  Connected Data Sources
+                  Boards contributing
                 </h3>
                 <button
-                  onClick={handleManualSync}
+onClick={() => {}}
                   className="text-[10px] text-primary hover:underline font-medium"
                 >
-                  Sync all
+                  View all jobs
                 </button>
               </div>
 
               <div className="space-y-2">
-                {clientData.dataSources.map((ds) => (
-                  <div
-                    key={ds.name}
-                    className="flex items-center justify-between rounded-md border border-border p-2 text-xs"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
-                      <div>
-                        <p className="font-medium text-foreground">{ds.name}</p>
-                        <p className="text-[10px] text-muted-foreground">{ds.provider}</p>
+                {boardsContributing.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">No contributing boards yet.</p>
+                ) : (
+                  boardsContributing.map((b) => (
+                    <div
+                      key={b.boardId}
+                      className="flex items-center justify-between rounded-md border border-border p-2 text-xs"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="size-2 rounded-full bg-emerald-500 shrink-0" />
+                        <div>
+                          <p className="font-medium text-foreground">{b.boardName}</p>
+                          <p className="text-[10px] text-muted-foreground">{b.jobCount} job{b.jobCount !== 1 ? "s" : ""}</p>
+                        </div>
                       </div>
+                      <span className="text-[10px] text-muted-foreground">{b.lastUpdated ?? "—"}</span>
                     </div>
-                    <span className="text-[10px] text-muted-foreground">{ds.lastSyncedText}</span>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -2551,6 +2588,42 @@ export function RelationshipClient360({
         boardName={`${clientData.name} Production`}
         initialTab="overdue-settings"
       />
+
+      {/* Invoicing terms editor (opens from the Invoicing Terms card) */}
+      {invoicingOpen && (
+        <InvoicingTermsDialog
+          open={invoicingOpen}
+          onOpenChange={setInvoicingOpen}
+          clientId={clientData.id}
+          clientName={clientData.name}
+          paymentTermDays={clientData.billing.paymentTermDays ?? null}
+          onSaved={(days) => {
+            setClientData((prev) => ({
+              ...prev,
+              billing: {
+                ...prev.billing,
+                paymentTermDays: days,
+                customPaymentDays:
+                  days != null && ![0, 15, 30, 45].includes(days) ? days : undefined,
+                paymentTerms:
+                  days == null
+                    ? "Not added"
+                    : days === 0
+                      ? "Immediate"
+                      : days === 15
+                        ? "15 days"
+                        : days === 30
+                          ? "30 days"
+                          : days === 45
+                            ? "45 days"
+                            : "Custom",
+              },
+            }));
+          }}
+        />
+      )}
+
+{/* charts inline below */}
     </div>
   );
 }

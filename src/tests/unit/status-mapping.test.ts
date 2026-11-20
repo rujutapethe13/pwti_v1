@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { mapStatus } from "@/features/client-360/status-mapping";
 
 describe("status-mapping", () => {
-  const cases: [string, string][] = [
+  const cases: [string | null, string][] = [
     ["Done", "Completed"],
     ["Completed", "Completed"],
     ["Complete", "Completed"],

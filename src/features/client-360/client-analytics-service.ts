@@ -1,6 +1,7 @@
 import "server-only";
 import { getLiveJobScope } from "./live-job-scope";
 import type { LiveJobRow } from "./live-job-scope";
+import { mapStatus } from "./status-mapping";
 
 export interface ClientAnalyticsDateRange { from: string; to: string; }
 
@@ -47,7 +48,12 @@ export function aggregateClientAnalytics(clientId: string, jobs: LiveJobRow[], d
     return [...map.entries()].map(([label, total]) => ({ label, count: total })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
   const turnaround = selected.filter((j) => j.received_date && j.upload_date).map((j) => (Date.parse(j.upload_date!) - Date.parse(j.received_date!)) / 86400000).filter(Number.isFinite);
-  const status = count(selected.map((j) => j.status ?? ""), "No status").map((x) => ({ status: x.label, count: x.count }));
+  const statusMap = new Map<string, number>();
+  for (const j of selected) {
+    const bucket = mapStatus(j.status);
+    statusMap.set(bucket, (statusMap.get(bucket) ?? 0) + 1);
+  }
+  const status = [...statusMap.entries()].map(([status, count]) => ({ status, count })).sort((a, b) => b.count - a.count || a.status.localeCompare(b.status));
   const jobType = count(selected.map((j) => j.job_type ?? ""), "No value").map((x) => ({ jobType: x.label, count: x.count }));
   const boardMap = new Map<string, { boardId: string; boardName: string; volume: number }>();
   const skuMap = new Map<string, number>();
@@ -66,7 +72,7 @@ export function aggregateClientAnalytics(clientId: string, jobs: LiveJobRow[], d
   const totalImages = selected.reduce((n, j) => n + (j.image_count ?? 0), 0);
   const studioTurn = studioJobs.filter((j) => j.received_date && j.upload_date).map((j) => (Date.parse(j.upload_date!) - Date.parse(j.received_date!)) / 86400000).filter(Number.isFinite);
   return {
-    kpis: { totalJobs: selected.length, inProgress: selected.filter((j) => j.status_class === "pending").length, done: selected.filter((j) => !!j.upload_date || j.status_class === "completed").length, totalSkus, totalImages, avgTurnaroundDays: turnaround.length ? turnaround.reduce((a, b) => a + b, 0) / turnaround.length : null, shareOfStudioVolume: studioJobs.length ? (selected.length / studioJobs.length) * 100 : 0 },
+    kpis: { totalJobs: selected.length, inProgress: statusMap.get("In progress") ?? 0, done: statusMap.get("Completed") ?? 0, totalSkus, totalImages, avgTurnaroundDays: turnaround.length ? turnaround.reduce((a, b) => a + b, 0) / turnaround.length : null, shareOfStudioVolume: studioJobs.length ? (selected.length / studioJobs.length) * 100 : 0 },
     statusBreakdown: status, jobTypeMix: jobType,
     jobsByBoard: [...boardMap.values()].sort((a, b) => b.volume - a.volume || a.boardName.localeCompare(b.boardName)),
     skuByMonth: [...skuMap.entries()].sort().map(([month, skus]) => ({ month, skus })),
