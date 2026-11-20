@@ -13,7 +13,8 @@ import type {
   UnifiedColumnDefinition,
   Client360Filters,
 } from "./types";
-import { isClientColumn, isJobDateColumn, normalizeStatus, getClientType, DEFAULT_PAGE_SIZE } from "./constants";
+import { isClientColumn, isJobDateColumn, getClientType, DEFAULT_PAGE_SIZE } from "./constants";
+import { mapStatus } from "./status-mapping";
 
 type DatabaseRow = Record<string, unknown>;
 
@@ -673,7 +674,7 @@ function buildEnrichedMatch(args: {
     date: dateValue,
     jobType: jobType || "Unspecified",
     status,
-    statusBucket: normalizeStatus(status),
+    statusBucket: mapStatus(status),
     assignedTo,
     groupId: record.groupId,
     groupName: group?.name ?? "Ungrouped",
@@ -1050,7 +1051,7 @@ function applyFilters(
 
     // Status filter
     if (filters.status?.length) {
-      const normalized = normalizeStatus(match.status);
+      const normalized = mapStatus(match.status);
       if (!filters.status.includes(normalized)) return false;
     }
 
