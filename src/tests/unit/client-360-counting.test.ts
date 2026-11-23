@@ -203,8 +203,8 @@ describe("Client 360 counting — Hokipo across 8 boards", () => {
     }), // matched in Job name
   ];
 
-  it("classifies all 11 rows: 7 counted, 4 needs review, none lost or unexplained", () => {
-    const result = classifyClientJobs(rows, hokipoId, group);
+  it("classifies all 11 rows: 7 counted, 4 needs review, none lost or unexplained", async () => {
+    const result = await classifyClientJobs(rows, hokipoId, group);
 
     expect(result.counted.map((j) => j.record_id).sort()).toEqual(["r1", "r2", "r3", "r4", "r5", "r6", "r7"]);
     expect(result.needsReview.map((n) => n.job.record_id).sort()).toEqual(["r8", "r9", "r10", "r11"].slice().sort());
@@ -222,8 +222,8 @@ describe("Client 360 counting — Hokipo across 8 boards", () => {
     expect(byRecord.get("r11")).toBe("Job name");
   });
 
-  it("reports all 8 boards (September + October needs-review boards included)", () => {
-    const result = classifyClientJobs(rows, hokipoId, group);
+  it("reports all 8 boards (September + October needs-review boards included)", async () => {
+    const result = await classifyClientJobs(rows, hokipoId, group);
     const boards = new Set([
       ...result.counted.map((j) => j.board_id),
       ...result.needsReview.map((n) => n.job.board_id),
@@ -232,8 +232,8 @@ describe("Client 360 counting — Hokipo across 8 boards", () => {
     expect(allBoardIds(rows).length).toBe(8);
   });
 
-  it("keeps September and October blank-client rows consistent (both needs review, neither counted)", () => {
-    const result = classifyClientJobs(rows, hokipoId, group);
+  it("keeps September and October blank-client rows consistent (both needs review, neither counted)", async () => {
+    const result = await classifyClientJobs(rows, hokipoId, group);
     const sept = result.needsReview.filter((n) => n.job.received_date!.startsWith("2026-09"));
     const oct = result.needsReview.filter((n) => n.job.received_date!.startsWith("2026-10"));
     expect(sept.length).toBe(2);

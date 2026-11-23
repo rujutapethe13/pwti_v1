@@ -117,7 +117,7 @@ function matchClientElsewhere(job: Pick<LiveJobRow, "title" | "batch_id">, clien
   return null;
 }
 
-export function classifyClientJobs(jobs: LiveJobRow[], clientId: string, group: ClientGroup): ClientJobClassification {
+export async function classifyClientJobs(jobs: LiveJobRow[], clientId: string, group: ClientGroup): Promise<ClientJobClassification> {
   const clientKey = clientNameKey(group.canonicalName);
   const counted: LiveJobRow[] = [];
   const needsReview: ClientJobClassification["needsReview"] = [];
@@ -224,7 +224,7 @@ async function getClientJobs(clientId: string): Promise<{
   // Resolve alias-group siblings exactly like the profile action so the card,
   // tile and drawer always report the same client job count.
   const group = await resolveClientGroup(orgId, clientId);
-  const classification = classifyClientJobs(scope.jobs, clientId, group);
+  const classification = await classifyClientJobs(scope.jobs, clientId, group);
   const matched = classification.counted;
   const overrides = await loadPaymentTermOverrides(
     orgId,
