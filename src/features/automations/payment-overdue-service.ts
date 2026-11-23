@@ -2,6 +2,7 @@ import type {
   PaymentTerms,
   PaymentJobItem,
   WorkspaceAdminUser,
+  SavedRecipient,
 } from "./types";
 
 /**
@@ -119,6 +120,7 @@ export function evaluateJobOverdue(
 
 /**
  * Default workspace admins (top 3 admins configurable in settings).
+ * @deprecated Use saved recipients instead.
  */
 export const DEFAULT_WORKSPACE_ADMINS: WorkspaceAdminUser[] = [
   {
@@ -150,17 +152,31 @@ export interface ResolvedRecipients {
     email: string;
     roleLabel: string;
   }>;
+  cc: string[];
+  bcc: string[];
   warnings: string[];
 }
 
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function isValidEmail(email: string): boolean {
+  return EMAIL_RE.test(email.trim());
+}
+
+export function parseCommaSeparatedEmails(input: string): string[] {
+  return input
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 /**
- * Resolves and deduplicates recipients for payment overdue alerts:
- * 1. Top 3 workspace admins
- * 2. Board owner
- * 3. Item assignee
+ * Resolves and deduplicates recipients for payment overdue alerts.
+ * Accepts either a saved recipient list (from config) or falls back to
+ * the hardcoded top-3 admins for backward compatibility.
  *
- * If one person fills multiple roles, send only 1 email.
- * If any recipient is missing an email, logs a warning.
+ * Deduplication is case-insensitive across all sources:
+ * saved recipients + custom CC/BCC + board owner + job assignee.
  */
 export function resolveOverdueRecipients(
   job: PaymentJobItem,
@@ -168,47 +184,61 @@ export function resolveOverdueRecipients(
     adminList?: WorkspaceAdminUser[];
     includeBoardOwner?: boolean;
     includeAssignee?: boolean;
+    savedRecipients?: SavedRecipient[];
+    customCcEmails?: string[];
+    customBccEmails?: string[];
   }
 ): ResolvedRecipients {
-  const admins = options?.adminList ?? DEFAULT_WORKSPACE_ADMINS;
   const includeBoardOwner = options?.includeBoardOwner ?? true;
   const includeAssignee = options?.includeAssignee ?? true;
 
   const emailToRecipient = new Map<string, { name: string; email: string; roleLabel: string }>();
+  const ccList: string[] = [];
+  const bccList: string[] = [];
   const warnings: string[] = [];
+  const seenEmails = new Set<string>();
 
-  // 1. Admins
-  admins.slice(0, 3).forEach((adm) => {
-    if (!adm.email) {
-      warnings.push(`Workspace Admin '${adm.name}' has no email address configured.`);
-    } else {
-      const lower = adm.email.toLowerCase().trim();
-      if (!emailToRecipient.has(lower)) {
-        emailToRecipient.set(lower, {
-          name: adm.name,
-          email: adm.email,
-          roleLabel: `Workspace Admin (${adm.role})`,
-        });
+  const addRecipient = (name: string, email: string, roleLabel: string) => {
+    const lower = email.toLowerCase().trim();
+    if (seenEmails.has(lower)) {
+      const existing = emailToRecipient.get(lower);
+      if (existing && !existing.roleLabel.includes(roleLabel)) {
+        existing.roleLabel += `, ${roleLabel}`;
       }
+      return;
     }
-  });
+    seenEmails.add(lower);
+    emailToRecipient.set(lower, { name, email, roleLabel });
+  };
+
+  // 1. Saved recipients (editable list from config) or fallback to top-3 admins
+  if (options?.savedRecipients && options.savedRecipients.length > 0) {
+    options.savedRecipients.forEach((rcp) => {
+      if (!rcp.email) {
+        warnings.push(`Recipient '${rcp.name || rcp.email}' has no email address.`);
+      } else if (!isValidEmail(rcp.email)) {
+        warnings.push(`Recipient '${rcp.name || rcp.email}' has invalid email: ${rcp.email}`);
+      } else {
+        addRecipient(rcp.name || rcp.email.split("@")[0], rcp.email, rcp.role || "Recipient");
+      }
+    });
+  } else {
+    const admins = options?.adminList ?? DEFAULT_WORKSPACE_ADMINS;
+    admins.forEach((adm) => {
+      if (!adm.email) {
+        warnings.push(`Workspace Admin '${adm.name}' has no email address configured.`);
+      } else {
+        addRecipient(adm.name, adm.email, `Workspace Admin (${adm.role})`);
+      }
+    });
+  }
 
   // 2. Board Owner
   if (includeBoardOwner && job.boardOwner) {
     if (!job.boardOwner.email) {
       warnings.push(`Board Owner '${job.boardOwner.name}' has no email address configured.`);
     } else {
-      const lower = job.boardOwner.email.toLowerCase().trim();
-      if (emailToRecipient.has(lower)) {
-        const existing = emailToRecipient.get(lower)!;
-        existing.roleLabel += ", Board Owner";
-      } else {
-        emailToRecipient.set(lower, {
-          name: job.boardOwner.name,
-          email: job.boardOwner.email,
-          roleLabel: "Board Owner",
-        });
-      }
+      addRecipient(job.boardOwner.name, job.boardOwner.email, "Board Owner");
     }
   }
 
@@ -217,22 +247,34 @@ export function resolveOverdueRecipients(
     if (!job.assignee.email) {
       warnings.push(`Job Assignee '${job.assignee.name}' has no email address configured.`);
     } else {
-      const lower = job.assignee.email.toLowerCase().trim();
-      if (emailToRecipient.has(lower)) {
-        const existing = emailToRecipient.get(lower)!;
-        existing.roleLabel += ", Job Assignee";
-      } else {
-        emailToRecipient.set(lower, {
-          name: job.assignee.name,
-          email: job.assignee.email,
-          roleLabel: "Job Assignee",
-        });
-      }
+      addRecipient(job.assignee.name, job.assignee.email, "Job Assignee");
     }
+  }
+
+  // 4. Custom CC / BCC
+  if (options?.customCcEmails) {
+    options.customCcEmails.forEach((email) => {
+      const lower = email.toLowerCase().trim();
+      if (isValidEmail(email) && !seenEmails.has(lower)) {
+        ccList.push(email);
+        seenEmails.add(lower);
+      }
+    });
+  }
+  if (options?.customBccEmails) {
+    options.customBccEmails.forEach((email) => {
+      const lower = email.toLowerCase().trim();
+      if (isValidEmail(email) && !seenEmails.has(lower)) {
+        bccList.push(email);
+        seenEmails.add(lower);
+      }
+    });
   }
 
   return {
     recipients: Array.from(emailToRecipient.values()),
+    cc: ccList,
+    bcc: bccList,
     warnings,
   };
 }

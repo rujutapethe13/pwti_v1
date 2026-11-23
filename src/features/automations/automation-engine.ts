@@ -218,6 +218,9 @@ export function executeAutomationRule(
       const resolved = resolveOverdueRecipients(updatedJob, {
         includeBoardOwner: rule.paymentOverdueConfig?.includeBoardOwner ?? true,
         includeAssignee: rule.paymentOverdueConfig?.includeAssignee ?? true,
+        savedRecipients: rule.paymentOverdueConfig?.savedRecipients,
+        customCcEmails: rule.paymentOverdueConfig?.customCcEmails,
+        customBccEmails: rule.paymentOverdueConfig?.customBccEmails,
       });
 
       warnings.push(...resolved.warnings);
@@ -225,11 +228,18 @@ export function executeAutomationRule(
       resolved.recipients.forEach((rcp) => {
         recipientsSent.push(`${rcp.email} (${rcp.roleLabel})`);
       });
+      resolved.cc.forEach((email) => {
+        recipientsSent.push(`${email} (CC)`);
+      });
+      resolved.bcc.forEach((email) => {
+        recipientsSent.push(`${email} (BCC)`);
+      });
 
+      const totalCount = resolved.recipients.length + resolved.cc.length + resolved.bcc.length;
       actionsExecuted.push(
-        `send_email: Dispatched to ${resolved.recipients.length} deduplicated recipient(s)`
+        `send_email: Dispatched to ${totalCount} deduplicated recipient(s)`
       );
-      appliedSummaries.push(`Email dispatched to ${resolved.recipients.length} recipient(s)`);
+      appliedSummaries.push(`Email dispatched to ${totalCount} recipient(s)`);
     } else if (act.type === "send_notification") {
       actionsExecuted.push(
         `send_notification: In-app notification delivered to board notifications channel`

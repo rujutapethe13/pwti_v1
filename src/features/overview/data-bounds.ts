@@ -1,4 +1,7 @@
+import "server-only";
+
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getLiveJobScope } from "@/features/client-360/live-job-scope";
 
 /** The real received-date span in scope, as `YYYY-MM-DD` or null. */
 export interface DataBounds {
@@ -8,42 +11,30 @@ export interface DataBounds {
 
 export const EMPTY_DATA_BOUNDS: DataBounds = { earliest: null, latest: null };
 
-function toDateKeyOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
 /**
- * Reads the real received-date bounds for a scope, so "All time" can resolve to
- * the data that exists rather than an arbitrary sentinel.
- *
- * Lives here rather than in each of the three Overview services because all
- * three need it and they had already drifted: one took an options object while
- * two took positional arguments, and one re-implemented `toDateKeyOrNull`
- * inline. Any change to the RPC shape or to the error policy now has a single
- * place to change.
+ * Reads the real received-date bounds from the live job scope.
  *
  * A failure here is deliberately non-fatal. The caller keeps whatever range it
  * already resolved, so a bounds read that errors degrades to a wider window
  * rather than an empty dashboard.
  */
 export async function fetchDataBounds(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   organizationId: string,
-  workspaceIds: string[] | null,
+  _workspaceIds: string[] | null,
 ): Promise<DataBounds> {
-  const { data, error } = await supabase.rpc("overview_data_bounds", {
-    p_organization_id: organizationId,
-    p_workspace_ids: workspaceIds,
-  });
-
-  if (error) {
-    console.warn("Could not read Overview data bounds:", error);
+  try {
+    const scope = await getLiveJobScope(organizationId);
+    let earliest: string | null = null;
+    let latest: string | null = null;
+    for (const job of scope.jobs) {
+      if (!job.received_date) continue;
+      if (earliest == null || job.received_date < earliest) earliest = job.received_date;
+      if (latest == null || job.received_date > latest) latest = job.received_date;
+    }
+    return { earliest, latest };
+  } catch (error) {
+    console.warn("Could not read live Overview data bounds:", error);
     return EMPTY_DATA_BOUNDS;
   }
-
-  const root = (data ?? {}) as Record<string, unknown>;
-  return {
-    earliest: toDateKeyOrNull(root.earliest),
-    latest: toDateKeyOrNull(root.latest),
-  };
 }

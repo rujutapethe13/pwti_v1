@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronDown,
   Search,
@@ -57,6 +57,16 @@ export function BoardToolbar({ board, onNewItem, onImport, onExport, importing, 
   const [membersOpen, setMembersOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [automationsOpen, setAutomationsOpen] = useState(false);
+  const [allRowsSelected, setAllRowsSelected] = useState(false);
+
+  useEffect(() => {
+    const handleSelectionChange = (event: Event) => {
+      const detail = (event as CustomEvent<{ allSelected?: boolean }>).detail;
+      setAllRowsSelected(detail?.allSelected ?? false);
+    };
+    window.addEventListener("powerweave:table-selection-change", handleSelectionChange);
+    return () => window.removeEventListener("powerweave:table-selection-change", handleSelectionChange);
+  }, []);
 
   // A view user gets the read-only affordances: no new items, no inline writes,
   // no import, no automations. A `null` access means we could not resolve it at
@@ -161,6 +171,15 @@ export function BoardToolbar({ board, onNewItem, onImport, onExport, importing, 
           <DropdownMenuItem disabled={readOnly}>None</DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 gap-1.5 text-xs text-muted-foreground"
+        onClick={() => window.dispatchEvent(new CustomEvent("powerweave:table-select-all"))}
+      >
+        {allRowsSelected ? "Deselect all" : "Select all"}
+      </Button>
 
       <div className="flex-1" />
 

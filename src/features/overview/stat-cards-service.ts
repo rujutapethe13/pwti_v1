@@ -57,7 +57,12 @@ function computeCoverage(jobs: LiveJobRow[], from: string, to: string): RangeCov
   return { totalRows: jobs.length, datedRows, inRange, beforeRange, afterRange, undated, earliest, latest };
 }
 
-function aggregateWindow(jobs: LiveJobRow[], from: string, to: string): PeriodAggregate {
+function aggregateWindow(
+  jobs: LiveJobRow[],
+  from: string,
+  to: string,
+  completedScope?: LiveJobRow[] | null,
+): PeriodAggregate {
   const receivedInWindow = jobs.filter((j) => isJobReceivedInRange(j, from, to));
   const clients = new Set<string>();
   const boards = new Set<string>();
@@ -85,10 +90,14 @@ function aggregateWindow(jobs: LiveJobRow[], from: string, to: string): PeriodAg
   }
 
   const busiestClient: BusiestClient | null = [...clientCounts.values()].sort((a, b) => b.count - a.count || (a.name ?? "").localeCompare(b.name ?? ""))[0] ?? null;
-  const completedUploaded = completedUploadedJobs(jobs, from, to);
+
+  // Completed is strictly upload-date driven, and only from boards that map an
+  // upload date column. `completedScope` defaults to all jobs when omitted.
+  const scopeForCompleted = completedScope ?? jobs;
+  const completedUploaded = completedUploadedJobs(scopeForCompleted, from, to);
   const jobsCompleted = completedUploaded.length;
   const completedByStatus = receivedInWindow.filter((j) => j.status_class === "completed" || isCompletedUploaded(j)).length;
-  const completedDateAvailable = jobs.some((j) => j.upload_date != null);
+  const completedDateAvailable = scopeForCompleted.some((j) => j.upload_date != null);
 
   return {
     recordsInWindow: receivedInWindow.length,
@@ -109,7 +118,7 @@ function aggregateWindow(jobs: LiveJobRow[], from: string, to: string): PeriodAg
 export async function fetchOverviewStatCards(
   _supabase: SupabaseClient,
   { organizationId, range, boardIds = null }: OverviewStatCardsOptions,
-): Promise<StatCardsResult & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; missingReceivedDateCount: number }> {
+): Promise<StatCardsResult & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; missingReceivedDateCount: number; unlinkedReferenceCount: number }> {
   const scope = await getLiveJobScope(organizationId);
   let jobs = scope.jobs;
   if (boardIds && boardIds.length > 0) {
@@ -117,12 +126,17 @@ export async function fetchOverviewStatCards(
     jobs = jobs.filter((j) => allowed.has(j.board_id));
   }
 
+  // Boards without an upload date mapping never contribute to the Completed
+  // count; they are listed in the footnote instead.
+  const unmappedBoards = new Set(scope.boardsWithoutUploadMapping.map((b) => b.board_id));
+  const mappedJobs = jobs.filter((j) => !unmappedBoards.has(j.board_id));
+
   const bounds = await fetchDataBounds(_supabase, organizationId, null);
   const window = narrowAllTimeRange(range, bounds);
   const prior = priorPeriod(window);
 
-  const current = aggregateWindow(jobs, window.from, window.to);
-  const priorAgg = aggregateWindow(jobs, prior.from, prior.to);
+  const current = aggregateWindow(jobs, window.from, window.to, mappedJobs);
+  const priorAgg = aggregateWindow(jobs, prior.from, prior.to, mappedJobs);
   const currentTopClientPriorCount = current.busiestClient
     ? jobs.filter((j) => isJobReceivedInRange(j, prior.from, prior.to) && (j.client_id ?? (j.client_unmatched ? `unmatched:${j.client_raw ?? j.record_id}` : null)) === current.busiestClient!.clientId).length
     : 0;
@@ -145,5 +159,6 @@ export async function fetchOverviewStatCards(
     todayIST: scope.todayIST,
     boardsWithoutUploadMapping: scope.boardsWithoutUploadMapping,
     missingReceivedDateCount: scope.missingReceivedDate.length,
+    unlinkedReferenceCount: scope.unlinkedReferences.length,
   };
 }

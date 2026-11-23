@@ -40,6 +40,7 @@ import type { EventSubscription, DomainEventPayload } from "../events/event-type
 import type { ColumnDefinition, ColumnValue } from "../types";
 import { toValueText } from "../lib/cell-value";
 import type { DependencyGraphNode, DerivedValue } from "./types";
+import { invalidateClientListCache } from "@/features/client-360/client-list-service";
 
 const columnRepo = new ColumnRepository();
 const cellRepo = new CellRepository();
@@ -272,6 +273,32 @@ export function initializeConnectedDataSubscribers(): () => void {
 
   unsubscribers.push(
     eventBus.subscribe("cell.update:after", cellUpdateSub),
+  );
+
+  // Listen for record/cell changes → invalidate client list cache
+  const clientListInvalidationSub: EventSubscription = {
+    name: "client-list:invalidate",
+    priority: 300,
+    async: true,
+    handler: async () => {
+      invalidateClientListCache();
+    },
+  };
+
+  unsubscribers.push(
+    eventBus.subscribe("record.create:after", clientListInvalidationSub),
+  );
+  unsubscribers.push(
+    eventBus.subscribe("record.update:after", clientListInvalidationSub),
+  );
+  unsubscribers.push(
+    eventBus.subscribe("record.delete:after", clientListInvalidationSub),
+  );
+  unsubscribers.push(
+    eventBus.subscribe("record.archive:after", clientListInvalidationSub),
+  );
+  unsubscribers.push(
+    eventBus.subscribe("cell.update:after", clientListInvalidationSub),
   );
 
   // Listen for relationship changes → invalidate caches

@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { BarChart3, ChevronDown, ChevronUp } from "lucide-react";
@@ -22,6 +22,7 @@ import {
   type StatCardsResult,
 } from "@/features/overview/stat-cards";
 import type { OverviewDrilldownPayload } from "@/features/overview/overview-drilldown-service";
+import { useCurrentUser } from "@/lib/user-context";
 import { cn } from "@/lib/utils";
 
 const SKELETON_CARD_COUNT = 6;
@@ -179,6 +180,8 @@ interface StatCardsSectionProps {
   onSelectCard?: (cardId: StatCardId) => void;
   /** Additive: board-resolved summary to enrich unmapped client/turnaround details */
   resolvedSummary?: OverviewDrilldownPayload["resolvedSummary"] | null;
+  /** Admin flag to show Needs Review / missing date links */
+  isAdmin?: boolean;
 }
 
 /**
@@ -187,7 +190,7 @@ interface StatCardsSectionProps {
  * Fetches `/api/overview/stats` for the selected range and owns its own loading,
  * empty and error states, so a failure in this section is reported here and does
  * not take the rest of the page down with it. Values come only from the database;
- * nothing is substituted when a metric is missing — a card that cannot be
+ * nothing is substituted when a metric is missing â€” a card that cannot be
  * measured says so instead of showing a number.
  *
  * When the selected window is empty but the workspace holds data elsewhere, the
@@ -200,7 +203,10 @@ export function StatCardsSection({
   activeCardId = null,
   onSelectCard,
   resolvedSummary = null,
+  isAdmin = false,
 }: StatCardsSectionProps) {
+  const { user } = useCurrentUser();
+  const isAdminUser = isAdmin || user?.role === "admin" || user?.role === "staff";
   const rangeQuery = useMemo(
     () => timeRangeQueryString(resolveSelectedTimeRange(rangeId, customRange)),
     [rangeId, customRange],
@@ -208,7 +214,7 @@ export function StatCardsSection({
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<StatCardsResult | null>(null);
+  const [data, setData] = useState<(StatCardsResult & { generatedAt?: string; todayIST?: string; boardsWithoutUploadMapping?: Array<{board_id:string;board_name:string}>; missingReceivedDateCount?: number; unlinkedReferenceCount?: number }) | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -259,7 +265,7 @@ export function StatCardsSection({
           unavailable: false,
           value: formatCount(resolvedSummary.busiestClient.count),
           detail: resolvedSummary.busiestClient.name,
-          caption: `Most jobs received by one client · ${resolvedSummary.busiestClient.name}`,
+          caption: `Most jobs received by one client Â· ${resolvedSummary.busiestClient.name}`,
           trend: buildCountTrend(
             resolvedSummary.busiestClient.count,
             resolvedSummary.busiestClient.priorCount,
@@ -288,10 +294,11 @@ export function StatCardsSection({
       if (card.id === "jobsCompleted") {
         return {
           ...card,
+          label: "Completed (uploaded)",
           unavailable: false,
           value: formatCount(resolvedSummary.jobsCompleted),
-          detail: `${resolvedSummary.completedWithUpload} with Uploaded date`,
-          caption: "Jobs with status Done",
+          detail: `${resolvedSummary.completedWithUpload} with upload date`,
+          caption: "Jobs with an upload date in this period",
           trend: buildCountTrend(resolvedSummary.jobsCompleted, resolvedSummary.priorJobsCompleted, { days }),
         };
       }
@@ -348,15 +355,53 @@ export function StatCardsSection({
   }
 
   return (
-    <div className="grid grid-cols-2 gap-5 lg:grid-cols-3">
-      {displayCards.map((card) => (
-        <StatCardTile
-          key={card.id}
-          card={card}
-          isActive={activeCardId === card.id}
-          onSelect={onSelectCard}
-        />
-      ))}
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-5 lg:grid-cols-3">
+        {displayCards.map((card) => (
+          <StatCardTile
+            key={card.id}
+            card={card}
+            isActive={activeCardId === card.id}
+            onSelect={onSelectCard}
+          />
+        ))}
+      </div>
+      {(data && (data.generatedAt || (data.missingReceivedDateCount ?? 0) > 0 || (data.unlinkedReferenceCount ?? 0) > 0 || (data.boardsWithoutUploadMapping?.length ?? 0) > 0 || resolvedSummary?.completedReconciliation)) && (
+        <div className="text-muted-foreground space-y-0.5 px-1 text-[11px] leading-snug">
+          {data.generatedAt ? <p>Data as of {new Date(data.generatedAt).toLocaleString()}</p> : null}
+          {(data.missingReceivedDateCount ?? 0) > 0 && (
+            <p>
+              {isAdminUser ? (
+                <span
+                  onClick={onSelectCard ? () => onSelectCard("jobsReceived") : undefined}
+                  className={cn(
+                    "cursor-pointer underline decoration-dotted underline-offset-1 hover:text-foreground",
+                    !onSelectCard && "cursor-default text-muted-foreground"
+                  )}
+                  title="Open jobs received drilldown"
+                >
+                  {data.missingReceivedDateCount} job(s) have no received date and are excluded from received counts.
+                </span>
+              ) : (
+                <span>{data.missingReceivedDateCount} job(s) have no received date and are excluded from received counts.</span>
+              )}
+            </p>
+          )}
+          {(data.unlinkedReferenceCount ?? 0) > 0 && (
+            <p>{data.unlinkedReferenceCount} unlinked reference{data.unlinkedReferenceCount !== 1 ? "s" : ""} excluded from counts.</p>
+          )}
+          {(data.boardsWithoutUploadMapping?.length ?? 0) > 0 ? <p>No upload date mapping on {data.boardsWithoutUploadMapping!.map((b) => b.board_name).join(", ")}.</p> : null}
+          {resolvedSummary?.completedReconciliation && resolvedSummary.completedReconciliation.total > 0 && (
+            <p>
+              {formatCount(resolvedSummary.completedReconciliation.total)} completed ={" "}
+              {formatCount(resolvedSummary.completedReconciliation.receivedInPeriod)} received in this period +{" "}
+              {formatCount(resolvedSummary.completedReconciliation.receivedEarlier)} received earlier +{" "}
+              {formatCount(resolvedSummary.completedReconciliation.noReceivedDate)} with no received date
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+

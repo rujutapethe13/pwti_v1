@@ -69,16 +69,28 @@ export function Client360AnalyticsDashboard(props: Props) {
   );
   if (error) return <div className="rounded-[16px] border border-[#E3E1D8] bg-white p-6"><p className="text-[#5E6259]">{error}</p><button className="mt-3 h-11 rounded-md bg-[#2F6B3F] px-4 text-white" onClick={() => setRetryKey((v) => v + 1)}>Retry</button></div>;
 
-  const d = data ?? ({ kpis: { totalJobs: 0, inProgress: 0, done: 0, totalSkus: 0, totalImages: 0, avgTurnaroundDays: null, shareOfStudioVolume: 0 }, statusBreakdown: [], jobTypeMix: [], jobsByBoard: [], skuByMonth: [], receivedVsCompletedByMonth: [], turnaroundByMonth: [], studioAvgTurnaroundDays: null, workloadByOwner: [], recentJobs: [], excluded: { noReceivedDate: 0, noUploadDate: 0, brokenLinks: 0 } } as ClientAnalytics);
+  const d = data ?? ({ kpis: { totalJobs: 0, inProgress: 0, done: 0, totalSkus: 0, totalImages: 0, avgTurnaroundDays: null, shareOfStudioVolume: 0 }, statusBreakdown: [], jobTypeMix: [], jobsByBoard: [], skuByMonth: [], receivedVsCompletedByMonth: [], turnaroundByMonth: [], studioAvgTurnaroundDays: null, workloadByOwner: [], recentJobs: [], coverage: { withoutReceivedDate: 0, withoutUploadDate: 0 } } as ClientAnalytics);
   const k = d.kpis;
   const statusTotal = d.statusBreakdown.reduce((n, x) => n + x.count, 0);
   const unknownStatusCount = d.statusBreakdown.find((x) => x.status === "Other")?.count ?? 0;
   const throughput = d.receivedVsCompletedByMonth.map((x) => ({ month: x.month, jobs: x.received, skus: d.skuByMonth.find((s) => s.month === x.month)?.skus ?? 0 }));
   const boardOptions = d.jobsByBoard;
+  const trendFootnote = (d.coverage.withoutReceivedDate > 0 || d.coverage.withoutUploadDate > 0)
+    ? `${d.coverage.withoutReceivedDate} job(s) have no received date and ${d.coverage.withoutUploadDate} have no upload date; excluded from this trend chart only`
+    : null;
+  const throughputFootnote = d.coverage.withoutReceivedDate > 0
+    ? `${d.coverage.withoutReceivedDate} job(s) have no received date; excluded from monthly totals`
+    : null;
+  const turnaroundFootnote = (d.coverage.withoutReceivedDate > 0 || d.coverage.withoutUploadDate > 0)
+    ? "Jobs missing a received or upload date are excluded from turnaround"
+    : null;
+  const key = (value: string | null | undefined) => (value ?? "").trim().toLowerCase().replace(/[\W_]+/g, " ").replace(/\s+/g, " ").trim();
+  const jobTypeTotal = d.jobTypeMix.reduce((n, x) => n + x.count, 0);
+
   const filteredJobs = d.recentJobs.filter((j) => {
     if (!tableFilter) return true;
     if (tableFilter.kind === "status") return mapStatus(j.status) === tableFilter.value;
-    if (tableFilter.kind === "type") return (j.jobType ?? "No value") === tableFilter.value;
+    if (tableFilter.kind === "type") return key(j.jobType) === key(tableFilter.value);
     if (tableFilter.kind === "board") return j.board === tableFilter.value;
     return true;
   });
@@ -121,11 +133,11 @@ export function Client360AnalyticsDashboard(props: Props) {
 
       <div className="grid gap-4" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 520px), 1fr))" }}>
         <Card title="Volume trend" description="Received vs completed jobs" ariaLabel={`Volume trend. Received and completed monthly values: ${d.receivedVsCompletedByMonth.map((x) => `${x.month} received ${x.received}, completed ${x.completed}`).join("; ")}`} empty={!d.receivedVsCompletedByMonth.length}
-          footnotes={<>Received {d.receivedVsCompletedByMonth.reduce((n,x)=>n+x.received,0)}, completed {d.receivedVsCompletedByMonth.reduce((n,x)=>n+x.completed,0)}.</>}>
+          footnotes={trendFootnote ? <div className="space-y-1"><div className="text-[11px] text-[#5E6259]">Received {d.receivedVsCompletedByMonth.reduce((n,x)=>n+x.received,0)}, completed {d.receivedVsCompletedByMonth.reduce((n,x)=>n+x.completed,0)}.</div><div className="text-[11px] text-[#5E6259]">{trendFootnote}</div></div> : <div className="text-[11px] text-[#5E6259]">Received {d.receivedVsCompletedByMonth.reduce((n,x)=>n+x.received,0)}, completed {d.receivedVsCompletedByMonth.reduce((n,x)=>n+x.completed,0)}.</div>}>
           <ResponsiveContainer width="100%" height="100%"><LineChart data={d.receivedVsCompletedByMonth}><CartesianGrid stroke="#E3E1D8" strokeDasharray="3 3" /><XAxis dataKey="month" tick={{ fontSize: 11 }} /><YAxis allowDecimals={false} tick={{ fontSize: 11 }} /><Tooltip /><Line type="monotone" dataKey="received" stroke="#2F6B3F" strokeWidth={2} name="Received" /><Line type="monotone" dataKey="completed" stroke="#B7791F" strokeWidth={2} strokeDasharray="6 4" name="Completed" /></LineChart></ResponsiveContainer>
         </Card>
 
-        <Card title="Monthly production throughput" description="Jobs or SKUs per month" ariaLabel={`Monthly production throughput. ${throughput.map((x)=>`${x.month} ${metric} ${x[metric]}`).join("; ")}`}>
+        <Card title="Monthly production throughput" description="Jobs or SKUs per month" ariaLabel={`Monthly production throughput. ${throughput.map((x)=>`${x.month} ${metric} ${x[metric]}`).join("; ")}`} footnotes={throughputFootnote ? <div className="text-[11px] text-[#5E6259]">{throughputFootnote}</div> : null}>
           <div className="absolute">
             <button className={`h-9 rounded-l-md border px-3 ${metric==="jobs"?"bg-[#2F6B3F] text-white":"bg-white"}`} onClick={()=>setMetric("jobs")}>Jobs</button>
             <button className={`h-9 rounded-r-md border px-3 ${metric==="skus"?"bg-[#2F6B3F] text-white":"bg-white"}`} onClick={()=>setMetric("skus")}>SKUs</button>
@@ -134,18 +146,18 @@ export function Client360AnalyticsDashboard(props: Props) {
         </Card>
 
         <Card title="Status breakdown" description={`${statusTotal} jobs`} ariaLabel={`Status breakdown: ${d.statusBreakdown.map((x)=>`${x.status==="Other"?"No status":x.status} ${x.count}`).join("; ")}`} empty={!d.statusBreakdown.length}>
-          <div className="flex h-full items-center"><div className="relative h-full w-[55%]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.statusBreakdown.map((x)=>({ ...x, status:x.status==="Other"?"No status":x.status }))} dataKey="count" nameKey="status" innerRadius={58} outerRadius={85} onClick={(slice: any)=>setTableFilter({kind:"status",value:slice.status==="No status"?"Other":String(slice.status)})}>{d.statusBreakdown.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[28px] font-semibold">{statusTotal}</div></div><div className="w-[45%] space-y-2">{d.statusBreakdown.map((x,i)=><div key={x.status} className="flex justify-between gap-2 text-[12px]"><span><i className="mr-2 inline-block size-2 rounded-full" style={{background:COLORS[i%COLORS.length]}} />{x.status==="Other"?"No status":x.status}</span><b>{x.count} · {statusTotal?Math.round(x.count/statusTotal*100):0}%</b></div>)}</div></div>
+          <div className="flex h-full items-center"><div className="relative h-full w-[55%]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.statusBreakdown.map((x)=>({ ...x, status:x.status==="Other"?"No status":x.status }))} dataKey="count" nameKey="status" innerRadius={58} outerRadius={85} onClick={(slice: { status: string; count: number })=>setTableFilter({kind:"status",value:slice.status==="No status"?"Other":String(slice.status)})}>{d.statusBreakdown.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer><div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[28px] font-semibold">{statusTotal}</div></div><div className="w-[45%] space-y-2">{d.statusBreakdown.map((x,i)=><div key={x.status} className="flex justify-between gap-2 text-[12px]"><span><i className="mr-2 inline-block size-2 rounded-full" style={{background:COLORS[i%COLORS.length]}} />{x.status==="Other"?"No status":x.status}</span><b>{x.count} · {statusTotal?Math.round(x.count/statusTotal*100):0}%</b></div>)}</div></div>
         </Card>
 
         <Card title="Job type mix" description="Distribution by job type" ariaLabel={`Job type mix: ${d.jobTypeMix.map((x)=>`${x.jobType||"No value"} ${x.count}`).join("; ")}`} empty={!d.jobTypeMix.length}>
-          <div className="flex h-full items-center"><div className="h-full w-[55%]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.jobTypeMix} dataKey="count" nameKey="jobType" innerRadius={58} outerRadius={85} onClick={(slice: any)=>setTableFilter({kind:"type",value:String(slice.jobType)})}>{d.jobTypeMix.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div><div className="w-[45%] space-y-2">{d.jobTypeMix.map((x,i)=><div key={x.jobType} className="flex justify-between gap-2 text-[12px]"><span><i className="mr-2 inline-block size-2 rounded-full" style={{background:COLORS[i%COLORS.length]}} />{x.jobType||"No value"}</span><b>{x.count}</b></div>)}</div></div>
+          <div className="flex h-full items-center"><div className="h-full w-[55%]"><ResponsiveContainer width="100%" height="100%"><PieChart><Pie data={d.jobTypeMix} dataKey="count" nameKey="jobType" innerRadius={58} outerRadius={85} onClick={(slice: { jobType: string; count: number })=>setTableFilter({kind:"type",value:String(slice.jobType)})}>{d.jobTypeMix.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]} />)}</Pie><Tooltip /></PieChart></ResponsiveContainer></div><div className="w-[45%] space-y-2">{d.jobTypeMix.map((x,i)=><div key={x.jobType} className="flex justify-between gap-2 text-[12px]"><span><i className="mr-2 inline-block size-2 rounded-full" style={{background:COLORS[i%COLORS.length]}} />{x.jobType||"No value"}</span><b>{x.count} · {jobTypeTotal?Math.round(x.count/jobTypeTotal*100):0}%</b></div>)}</div></div>
         </Card>
 
         <Card title="Jobs by board" description={`The sum equals Total jobs (${k.totalJobs}).`} ariaLabel={`Jobs by board: ${d.jobsByBoard.map((x)=>`${x.boardName} ${x.volume}`).join("; ")}`} empty={!d.jobsByBoard.length}>
           <ResponsiveContainer width="100%" height="100%"><BarChart layout="vertical" data={d.jobsByBoard}><CartesianGrid stroke="#E3E1D8" horizontal={false} /><XAxis type="number" allowDecimals={false} tick={{fontSize:11}} /><YAxis type="category" dataKey="boardName" width={120} tick={{fontSize:11}} /><Tooltip /><Bar dataKey="volume" name="Jobs" fill="#2F6B3F" label={{position:"right",fill:"#1B1F1A",fontSize:11}} onClick={(slice)=>setTableFilter({kind:"board",value:String(slice.boardName)})} /></BarChart></ResponsiveContainer>
         </Card>
 
-        <Card title="Avg turnaround by month" description="Client and studio average" ariaLabel={`Average turnaround by month: ${d.turnaroundByMonth.map((x)=>`${x.month} ${x.avgDays??"no data"} days`).join("; ")}; studio average ${d.studioAvgTurnaroundDays??"no data"} days`} empty={!d.turnaroundByMonth.length}>
+        <Card title="Avg turnaround by month" description="Client and studio average" ariaLabel={`Average turnaround by month: ${d.turnaroundByMonth.map((x)=>`${x.month} ${x.avgDays??"no data"} days`).join("; ")}; studio average ${d.studioAvgTurnaroundDays??"no data"} days`} empty={!d.turnaroundByMonth.length} footnotes={turnaroundFootnote ? <div className="text-[11px] text-[#5E6259]">{turnaroundFootnote}</div> : null}>
           <ResponsiveContainer width="100%" height="100%"><LineChart data={d.turnaroundByMonth}><CartesianGrid stroke="#E3E1D8" strokeDasharray="3 3" /><XAxis dataKey="month" tick={{fontSize:11}} /><YAxis tick={{fontSize:11}} /><Tooltip /><Line type="monotone" dataKey="avgDays" connectNulls={false} stroke="#2F6B3F" strokeWidth={2} name={`Client ${d.turnaroundByMonth.at(-1)?.avgDays?.toFixed(1)??""}`} /><Line type="monotone" dataKey={() => d.studioAvgTurnaroundDays} stroke="#4B54B5" strokeDasharray="2 4" name={`Studio ${d.studioAvgTurnaroundDays?.toFixed(1)??"—"}d`} /></LineChart></ResponsiveContainer>
         </Card>
 
@@ -157,8 +169,7 @@ export function Client360AnalyticsDashboard(props: Props) {
       <section className="rounded-[16px] border border-[#E3E1D8] bg-white p-[22px] dark:border-white/10 dark:bg-zinc-950">
         <div className="flex items-center justify-between"><div><h2 className="text-[16px] font-semibold">Recent jobs</h2><p className="mt-1 text-[13px] text-[#5E6259]">Latest 10 jobs</p></div><button className="h-11 rounded-md border border-[#E3E1D8] px-4 text-[13px]">View all jobs</button></div>
         {tableFilter && <button className="mt-3 h-9 rounded-full bg-[#E9F0EA] px-3 text-[13px] text-[#2F6B3F]" onClick={()=>setTableFilter(null)}>Clear filter: {tableFilter.value} ×</button>}
-        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead className="border-b border-[#E3E1D8] text-[11px] uppercase text-[#5E6259]"><tr><th className="py-3">Job</th><th>Board</th><th>Job type</th><th>Latest activity</th><th>Status</th></tr></thead><tbody>{filteredJobs.length ? filteredJobs.map((j,i)=><tr key={`${j.name}-${i}`} className="border-b border-[#E3E1D8]"><td className="py-3 font-medium">{j.name}</td><td>{j.board}</td><td>{j.jobType||"No value"}</td><td>{j.uploadDate||j.receivedDate||"—"}</td><td><span className="rounded-full bg-[#E9F0EA] px-2 py-1 text-[#2F6B3F]">{mapStatus(j.status)}</span></td></tr>) : <tr><td colSpan={5} className="py-8 text-center text-[#5E6259]">No data for this client in the selected boards</td></tr>}</tbody></table></div>
-        {(d.excluded.noReceivedDate>0||d.excluded.noUploadDate>0)&&<div className="mt-3 text-[11px] text-[#5E6259]">{d.excluded.noReceivedDate>0&&<div>{d.excluded.noReceivedDate} jobs have no received date and are excluded</div>}{d.excluded.noUploadDate>0&&<div>{d.excluded.noUploadDate} jobs have no upload date and are excluded</div>}</div>}
+        <div className="mt-4 overflow-x-auto"><table className="w-full min-w-[720px] text-left text-[13px]"><thead className="border-b border-[#E3E1D8] text-[11px] uppercase text-[#5E6259]"><tr><th className="py-3">Job</th><th>Board</th><th>Job type</th><th>Latest activity</th><th>Status</th></tr></thead><tbody>        {filteredJobs.length ? filteredJobs.map((j,i)=><tr key={`${j.name}-${i}`} className="border-b border-[#E3E1D8]"><td className="py-3 font-medium">{j.name}</td><td>{j.board}</td><td>{j.jobType||"No value"}</td><td>{j.uploadDate||j.receivedDate||"—"}</td><td><span className="rounded-full bg-[#E9F0EA] px-2 py-1 text-[#2F6B3F]">{mapStatus(j.status)}</span></td></tr>) : <tr><td colSpan={5} className="py-8 text-center text-[#5E6259]">No data for this client in the selected boards</td></tr>}</tbody></table></div>
       </section>
     </div>
   );

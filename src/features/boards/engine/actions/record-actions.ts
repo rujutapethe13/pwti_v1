@@ -98,7 +98,7 @@ export async function bulkUpdateRecords(recordIds: string[], cellValues: Record<
 }
 
 export async function bulkDeleteRecords(recordIds: string[]): Promise<ApiResponse<null>> {
-  const parsed = bulkDeleteSchema.safeParse({ recordIds, permanent: false });
+  const parsed = bulkDeleteSchema.safeParse({ recordIds, permanent: true });
   if (!parsed.success) {
     return { data: null, error: "Invalid input", status: 400 };
   }

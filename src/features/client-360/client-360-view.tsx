@@ -42,6 +42,71 @@ import { Client360PendingWorkView } from "./pending-work-view";
 import { Client360DailyActivityView } from "./daily-activity-view";
 import type { BoardDefinition, ColumnDefinition, BoardRecord, ColumnValue } from "@/features/boards/engine/types";
 
+// Client-side classification for Cross-Board "Counted in Client 360?" column
+function normalizeClientKey(value: string | null | undefined): string {
+  return String(value ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function textTokens(text: string): string[] {
+  return String(text).toLowerCase().split(/\W+/).filter((token) => token.length > 0);
+}
+
+function matchClientElsewhere(
+  title: string | null | undefined,
+  batchId: string | null | undefined,
+  clientKey: string
+): "Job name" | "Batch" | null {
+  if (!clientKey) return null;
+  if (title && textTokens(title).includes(clientKey)) return "Job name";
+  if (batchId && textTokens(batchId).includes(clientKey)) return "Batch";
+  return null;
+}
+
+type Client360Classification = "counted" | "needsReview" | "notCounted";
+
+interface ClassificationResult {
+  classification: Client360Classification;
+  reason: string;
+  matchedVia?: "Job name" | "Batch";
+}
+
+function classifyMatchForClient(
+  match: Client360Match,
+  clientQuery: string
+): ClassificationResult {
+  const clientKey = normalizeClientKey(clientQuery);
+  if (!clientKey) {
+    return { classification: "notCounted", reason: "No client query" };
+  }
+
+  const matchedClientName = normalizeClientKey(match.clientName);
+  
+  // Row has client in Client column matching query (case-insensitive)
+  if (matchedClientName === clientKey) {
+    return { classification: "counted", reason: "Client column matches" };
+  }
+
+  // Row has blank client but matches via job name or batch
+  const batchId = match.cellValueByLabel["batch details (pfm1_no)"] 
+    ?? match.cellValueByLabel["batch"] 
+    ?? match.cellValueByLabel["saleno."] 
+    ?? null;
+  const via = matchClientElsewhere(match.recordTitle, batchId, clientKey);
+  if (via) {
+    return { 
+      classification: "needsReview", 
+      reason: `Needs review: blank client (matched in ${via})`,
+      matchedVia: via
+    };
+  }
+
+  // Row belongs to another client or no client value
+  if (match.clientName && match.clientName.trim()) {
+    return { classification: "notCounted", reason: `Belongs to another client (${match.clientName})` };
+  }
+  return { classification: "notCounted", reason: "No client value" };
+}
+
 const PAGE_SIZE = 50;
 
 interface Client360ViewProps {
@@ -617,11 +682,11 @@ export function Client360View({ initialData, initialQuery }: Client360ViewProps)
         <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
           <div className="overflow-auto">
             <div className="min-w-max">
-              {/* Header */}
+{/* Header */}
               <div
                 className="sticky top-0 z-30 grid border-b border-border bg-white dark:bg-card"
                 style={{
-                  gridTemplateColumns: `180px 180px ${visibleUnifiedColumns.map(() => "180px").join(" ")}`,
+                  gridTemplateColumns: `180px 180px 200px ${visibleUnifiedColumns.map(() => "180px").join(" ")}`,
                 }}
               >
                 <div className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
@@ -630,74 +695,90 @@ export function Client360View({ initialData, initialQuery }: Client360ViewProps)
                 <div className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
                   Board
                 </div>
-                 {visibleUnifiedColumns.map((col) => (
-                   <div
-                     key={col.id}
-                     className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground"
-                   >
-                     <span className="truncate">{col.label}</span>
-                     <span className="ml-1 text-[8px] text-muted-foreground/60 uppercase">{col.type}</span>
-                     <span className="ml-1 text-[8px] text-muted-foreground/60">({col.sourceBoardName})</span>
-                   </div>
-                 ))}
+                <div className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground">
+                  Counted in Client 360?
+                </div>
+                {visibleUnifiedColumns.map((col) => (
+                  <div
+                    key={col.id}
+                    className="flex items-center border-r border-border bg-white dark:bg-card px-3 py-2 text-xs font-medium text-muted-foreground"
+                  >
+                    <span className="truncate">{col.label}</span>
+                    <span className="ml-1 text-[8px] text-muted-foreground/60 uppercase">{col.type}</span>
+                    <span className="ml-1 text-[8px] text-muted-foreground/60">({col.sourceBoardName})</span>
+                  </div>
+                ))}
               </div>
 
               {/* Rows */}
-              {displayMatches.map((match, rowIdx) => (
-                <div
-                  key={`${match.recordId}-${rowIdx}`}
-                  className="grid border-b border-border hover:bg-accent/30 cursor-pointer transition-colors"
-                  style={{
-                    gridTemplateColumns: `180px 180px ${visibleUnifiedColumns.map(() => "180px").join(" ")}`,
-                  }}
-                  onClick={() => handleRowClick(match)}
-                >
-                  <div className="px-3 py-2 border-r border-border text-sm truncate">
-                    {match.workspaceName}
+              {displayMatches.map((match, rowIdx) => {
+                const classification = classifyMatchForClient(match, query);
+                const classificationBadge = classification.classification === "counted" ? (
+                  <Badge variant="default" className="text-xs">Yes</Badge>
+                ) : classification.classification === "needsReview" ? (
+                  <Badge variant="secondary" className="text-xs">No — {classification.reason}</Badge>
+                ) : (
+                  <Badge variant="outline" className="text-xs">No — {classification.reason}</Badge>
+                );
+                return (
+                  <div
+                    key={`${match.recordId}-${rowIdx}`}
+                    className="grid border-b border-border hover:bg-accent/30 cursor-pointer transition-colors"
+                    style={{
+                      gridTemplateColumns: `180px 180px 200px ${visibleUnifiedColumns.map(() => "180px").join(" ")}`,
+                    }}
+                    onClick={() => handleRowClick(match)}
+                  >
+                    <div className="px-3 py-2 border-r border-border text-sm truncate">
+                      {match.workspaceName}
+                    </div>
+                    <div className="px-3 py-2 border-r border-border text-sm truncate">
+                      {match.boardName}
+                    </div>
+                    <div className="px-3 py-2 border-r border-border text-sm">
+                      {classificationBadge}
+                    </div>
+                    {visibleUnifiedColumns.map((col) => {
+                      const sourceColumnIds = col.sourceColumnIds.length > 0
+                        ? col.sourceColumnIds
+                        : [col.id.replace(/^unified-/, "")];
+                      // A unified column can represent the same label/type
+                      // across several boards. The row's cellValues map is
+                      // keyed by the *source* column id of the board the row
+                      // came from, so try every contributing id.
+                      const isMatchedCol = !!match.matchedColumnId && sourceColumnIds.includes(match.matchedColumnId);
+                      const cellText = sourceColumnIds
+                        .map((cid) => match.cellValues[cid] ?? "")
+                        .find((v) => v.length > 0) ?? "";
+                      // Name-based fallback: if ID mapping fails (e.g. an imported
+                      // board's column has a different internal ID), try resolving
+                      // by column label.
+                      const resolvedText = cellText || (match.cellValueByLabel?.[col.label.toLowerCase()] ?? "");
+                      const value: ColumnValue = resolvedText || (isMatchedCol ? (match.cellValue ?? "") : "");
+                      const board = buildBoardObject(match);
+                      const column = buildColumnObject(col, match.boardId);
+                      const record = buildRecordObject(match);
+                      return (
+                        <div
+                          key={col.id}
+                          className={cn(
+                            "px-3 py-2 border-r border-border overflow-hidden",
+                            isMatchedCol && "bg-accent/10",
+                          )}
+                        >
+                          <CellRenderer
+                            board={board}
+                            column={column}
+                            record={record}
+                            value={value}
+                            readOnly
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="px-3 py-2 border-r border-border text-sm truncate">
-                    {match.boardName}
-                  </div>
-                  {visibleUnifiedColumns.map((col) => {
-                    const sourceColumnIds = col.sourceColumnIds.length > 0
-                      ? col.sourceColumnIds
-                      : [col.id.replace(/^unified-/, "")];
-                    // A unified column can represent the same label/type
-                    // across several boards. The row's cellValues map is
-                    // keyed by the *source* column id of the board the row
-                    // came from, so try every contributing id.
-                    const isMatchedCol = !!match.matchedColumnId && sourceColumnIds.includes(match.matchedColumnId);
-                    const cellText = sourceColumnIds
-                      .map((cid) => match.cellValues[cid] ?? "")
-                      .find((v) => v.length > 0) ?? "";
-                    // Name-based fallback: if ID mapping fails (e.g. an imported
-                    // board's column has a different internal ID), try resolving
-                    // by column label.
-                    const resolvedText = cellText || (match.cellValueByLabel?.[col.label.toLowerCase()] ?? "");
-                    const value: ColumnValue = resolvedText || (isMatchedCol ? (match.cellValue ?? "") : "");
-                    const board = buildBoardObject(match);
-                    const column = buildColumnObject(col, match.boardId);
-                    const record = buildRecordObject(match);
-                    return (
-                      <div
-                        key={col.id}
-                        className={cn(
-                          "px-3 py-2 border-r border-border overflow-hidden",
-                          isMatchedCol && "bg-accent/10",
-                        )}
-                      >
-                        <CellRenderer
-                          board={board}
-                          column={column}
-                          record={record}
-                          value={value}
-                          readOnly
-                        />
-                      </div>
-                    );
-                  })}
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

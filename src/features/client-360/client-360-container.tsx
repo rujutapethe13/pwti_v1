@@ -29,19 +29,10 @@ export function Client360Container({ initialData }: Client360ContainerProps) {
   const viewParam = searchParams.get("view");
   const clientParam = searchParams.get("client");
 
-  // Resolve matching real client from URL or search query
-  const resolvedClientId = React.useMemo(() => {
-    const raw = (clientParam || qParam || "").toLowerCase().trim();
-    if (raw.includes("levi")) return "levis";
-    if (raw.includes("safari")) return "safari";
-    if (raw.includes("one8")) return "one8";
-    if (raw.includes("lotto")) return "lotto";
-    if (raw.includes("nasher")) return "nasher-miles";
-    if (raw.includes("upper")) return "uppercase";
-    if (raw.includes("welspun")) return "welspun";
-    if (raw.includes("bio")) return "bioweaves";
-    return "safari";
-  }, [clientParam, qParam]);
+  // Pass the requested name through. The relationship view resolves it
+  // against the live client list and aliases instead of maintaining a
+  // hard-coded client map.
+  const requestedClient = clientParam || qParam || "";
 
   // If view=orders is explicitly requested, use cross-board orders table;
   // otherwise default to single-client 360 intelligence profile
@@ -89,7 +80,7 @@ export function Client360Container({ initialData }: Client360ContainerProps) {
 
       {viewMode === "relationship" ? (
         <RelationshipClient360
-          initialClientId={resolvedClientId}
+          initialClientId={requestedClient}
           onSwitchToStudioOrders={() => setViewMode("orders")}
         />
       ) : (

@@ -199,7 +199,7 @@ export function OverviewDrilldownPanel({
       case "jobsReceived":
         return `Jobs received (${data.range.from} → ${data.range.to})`;
       case "jobsCompleted":
-        return `Jobs completed & status breakdown (${data.range.from} → ${data.range.to})`;
+        return `Completed (uploaded) (${data.range.from} → ${data.range.to})`;
       case "clientsActive":
         return `Active clients & their jobs (${data.resolvedSummary.clientsActive} clients)`;
       case "boardsTouched":
@@ -554,6 +554,9 @@ export function OverviewDrilldownPanel({
                           <th className="px-3 py-2 font-medium">Type of Job</th>
                           <th className="px-3 py-2 font-medium">Status</th>
                           <th className="px-3 py-2 font-medium">Received</th>
+                          {activeTarget === "jobsCompleted" && (
+                            <th className="px-3 py-2 font-medium">Received in period?</th>
+                          )}
                           <th className="px-3 py-2 font-medium">Uploaded / Due</th>
                           <th className="px-3 py-2 font-medium">Turnaround / Badge</th>
                           <th className="px-5 py-2 text-right font-medium">Open</th>
@@ -633,6 +636,15 @@ export function OverviewDrilldownPanel({
                               <td className="px-3 py-2.5 tabular-nums">
                                 {row.received_at ?? "—"}
                               </td>
+                              {activeTarget === "jobsCompleted" && (
+                                <td className="px-3 py-2.5 tabular-nums">
+                                  {row.received_at &&
+                                  row.received_at >= data.range.from &&
+                                  row.received_at <= data.range.to
+                                    ? "Yes"
+                                    : "No"}
+                                </td>
+                              )}
                               <td className="px-3 py-2.5 tabular-nums">
                                 {row.completed_date
                                   ? `Uploaded ${row.completed_date}`

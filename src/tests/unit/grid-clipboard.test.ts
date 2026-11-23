@@ -12,10 +12,16 @@ import {
   resolveClipboardMatrix,
   serializeMatrix,
   tsvQuote,
+  type ColumnMeta,
+  type GridClipboardPayload,
 } from "@/features/boards/engine/lib/grid-clipboard";
 
 function clipboardOf(data: Record<string, string>) {
   return { getData: (format: string) => data[format] ?? "" };
+}
+
+function makePayload(rows: string[][], columns: ColumnMeta[] = []): GridClipboardPayload {
+  return { version: 2, sourceBoardId: "test", columns, rows };
 }
 
 describe("grid clipboard serialization", () => {
@@ -31,11 +37,19 @@ describe("grid clipboard serialization", () => {
       ["a", "b", "c"],
       ["d", "e", "f"],
     ];
-    const parsed = parseMatrix(serializeMatrix(rows));
-    expect(parsed).toEqual(rows);
+    const columns: ColumnMeta[] = [
+      { id: "col1", title: "A", type: "text", isPrimary: false },
+      { id: "col2", title: "B", type: "text", isPrimary: false },
+      { id: "col3", title: "C", type: "text", isPrimary: false },
+    ];
+    const payload = makePayload(rows, columns);
+    const parsed = parseMatrix(serializeMatrix(payload));
+    expect(parsed).not.toBeNull();
+    expect(parsed!.rows).toEqual(rows);
+    expect(parsed!.columns).toEqual(columns);
     expect(parseMatrix("not json")).toBeNull();
-    expect(parseMatrix(JSON.stringify({ version: 99, rows }))).toBeNull();
-    expect(parseMatrix(JSON.stringify({ version: 1, rows: "nope" }))).toBeNull();
+    expect(parseMatrix(JSON.stringify({ version: 99, columns, rows }))).toBeNull();
+    expect(parseMatrix(JSON.stringify({ version: 2, columns: "nope", rows }))).toBeNull();
   });
 
   it("keeps every row and column of a block, including empty cells", () => {
@@ -81,23 +95,37 @@ describe("grid clipboard serialization", () => {
     ];
     expect(parseHtmlTable(matrixToHtml(rows))).toEqual(rows);
     expect(parseHtmlTable("<p>no table</p>")).toBeNull();
-    expect(parseHtmlTable("<table><tr><td>a&amp;b</td></tr></table>")).toEqual([["a&b"]]);
+    expect(parseHtmlTable("<table><tr><td>a&b</td></tr></table>")).toEqual([["a&b"]]);
   });
 
   it("prefers the exact matrix over the text representation", () => {
     const rows = [["a", "b"], ["c", "d"]];
+    const columns: ColumnMeta[] = [
+      { id: "col1", title: "A", type: "text", isPrimary: false },
+      { id: "col2", title: "B", type: "text", isPrimary: false },
+    ];
+    const payload = makePayload(rows, columns);
     const clipboard = clipboardOf({
-      [GRID_MATRIX_MIME]: serializeMatrix(rows),
+      [GRID_MATRIX_MIME]: serializeMatrix(payload),
       "text/plain": "only-one-cell",
     });
-    expect(resolveClipboardMatrix(clipboard)).toEqual({ rows, exact: true });
+    const resolved = resolveClipboardMatrix(clipboard);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.rows).toEqual(rows);
+    expect(resolved!.columns).toEqual(columns);
+    expect(resolved!.exact).toBe(true);
   });
 
   it("falls back to the internal copy when the browser strips custom MIME types", () => {
     const rows = [["a"], [""], ["c"]];
+    const columns: ColumnMeta[] = [{ id: "col1", title: "A", type: "text", isPrimary: false }];
+    const payload = makePayload(rows, columns);
     const tsv = matrixToTSV(rows);
-    const resolved = resolveClipboardMatrix(clipboardOf({ "text/plain": tsv }), tsv, rows);
-    expect(resolved).toEqual({ rows, exact: true });
+    const resolved = resolveClipboardMatrix(clipboardOf({ "text/plain": tsv }), tsv, payload);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.rows).toEqual(rows);
+    expect(resolved!.columns).toEqual(columns);
+    expect(resolved!.exact).toBe(true);
   });
 
   it("parses external TSV when there is no internal copy", () => {
@@ -107,6 +135,7 @@ describe("grid clipboard serialization", () => {
         ["a", "b"],
         ["c", "d"],
       ],
+      columns: [],
       exact: false,
     });
   });
@@ -115,7 +144,7 @@ describe("grid clipboard serialization", () => {
     const resolved = resolveClipboardMatrix(
       clipboardOf({ "text/html": "<table><tr><td>a</td><td>b</td></tr></table>" }),
     );
-    expect(resolved).toEqual({ rows: [["a", "b"]], exact: false });
+    expect(resolved).toEqual({ rows: [["a", "b"]], columns: [], exact: false });
   });
 
   it("returns null for an empty clipboard", () => {

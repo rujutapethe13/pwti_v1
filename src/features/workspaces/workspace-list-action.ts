@@ -18,12 +18,14 @@ export interface WorkspaceSummary {
 export async function listUserWorkspaces(): Promise<WorkspaceSummary[]> {
   const workspaces = await getUserWorkspaces();
 
-  return workspaces.map((ws) => ({
-    id: ws.id,
-    name: ws.name,
-    slug: ws.slug,
-    role: await workspaceRoleLabel(ws.canEdit ? "edit" : ws.canView ? "view" : null),
-    canView: ws.canView,
-    canEdit: ws.canEdit,
-  }));
+  return Promise.all(
+    workspaces.map(async (ws) => ({
+      id: ws.id,
+      name: ws.name,
+      slug: ws.slug,
+      role: await workspaceRoleLabel(ws.canEdit ? "edit" : ws.canView ? "view" : null),
+      canView: ws.canView,
+      canEdit: ws.canEdit,
+    }))
+  );
 }

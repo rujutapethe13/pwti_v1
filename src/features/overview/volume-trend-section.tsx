@@ -3,8 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, RefreshCw, TrendingUp } from "lucide-react";
 import {
-  Area,
-  AreaChart,
+  Bar,
+  BarChart,
   CartesianGrid,
   ReferenceLine,
   ResponsiveContainer,
@@ -31,6 +31,7 @@ import {
   type VolumeMetric,
   type VolumeTrendPayload,
 } from "@/features/overview/volume-trend";
+import { useCurrentUser } from "@/lib/user-context";
 import { cn } from "@/lib/utils";
 
 const METRICS: ReadonlyArray<{
@@ -39,10 +40,10 @@ const METRICS: ReadonlyArray<{
   shortLabel: string;
 }> = [
   { id: "received", label: "Jobs received", shortLabel: "Received" },
-  { id: "completed", label: "Jobs completed", shortLabel: "Completed" },
+  { id: "completed", label: "Completed (uploaded)", shortLabel: "Completed" },
 ];
 
-/** How each bucket size is described in the UI — never inferred from the label. */
+/** How each bucket size is described in the UI â€” never inferred from the label. */
 const GRANULARITY_COPY: Record<VolumeGranularity, string> = {
   day: "daily buckets",
   week: "weekly buckets",
@@ -85,7 +86,7 @@ function fullBucketLabel(key: string, fallback: string): string {
 }
 
 interface ChartDatum {
-  /** Unique bucket key — the x-axis identity, since labels repeat across a range. */
+  /** Unique bucket key â€” the x-axis identity, since labels repeat across a range. */
   key: string;
   /** Short label for the axis tick, e.g. "Thu" or "Sep 21". */
   axisLabel: string;
@@ -117,14 +118,14 @@ function TrendTooltip({
     <div className="border-border bg-card rounded-lg border px-3 py-2 text-xs shadow-md">
       <p className="text-foreground font-medium">
         {point.fullLabel}
-        {point.isToday ? " · today" : ""}
+        {point.isToday ? " Â· today" : ""}
       </p>
       <p className="text-muted-foreground mt-0.5">
         {metricLabel}:{" "}
         <span className="text-foreground font-semibold">{point.value}</span>
       </p>
       <p className="text-muted-foreground">
-        {metric === "received" ? "Completed" : "Received"}: {secondary}
+        {metric === "received" ? "Completed (uploaded)" : "Received"}: {secondary}
       </p>
     </div>
   );
@@ -164,6 +165,8 @@ interface VolumeTrendSectionProps {
   selectedBucketDate?: string | null;
   /** Additive: click callback when a bucket point is clicked on the chart */
   onSelectBucketDate?: (dateKey: string) => void;
+  /** Admin flag to show missing date links */
+  isAdmin?: boolean;
 }
 
 /**
@@ -172,13 +175,13 @@ interface VolumeTrendSectionProps {
  * The default metric is jobs *received*: it is the one every board can answer,
  * because it only needs a job-date column. Jobs *completed* needs a real
  * completion-date column, so the toggle that switches to it is rendered only when
- * the server reports at least one board maps one — otherwise the chart would show
+ * the server reports at least one board maps one â€” otherwise the chart would show
  * a flat zero line that reads as "nothing got done" when it really means "this
  * workspace does not record completion dates".
  *
  * Bucketing follows the window: daily up to a month, weekly to four months,
  * monthly beyond, so a year never tries to draw 365 points. "Today" is marked
- * only when the buckets are days and today falls inside the window — on a weekly
+ * only when the buckets are days and today falls inside the window â€” on a weekly
  * or monthly axis there is no single day to point at.
  *
  * Data comes from `/api/overview/volume-trend`, which groups real snapshot rows
@@ -193,7 +196,10 @@ export function VolumeTrendSection({
   height = 240,
   selectedBucketDate = null,
   onSelectBucketDate,
+  isAdmin = false,
 }: VolumeTrendSectionProps) {
+  const { user } = useCurrentUser();
+  const isAdminUser = isAdmin || user?.role === "admin" || user?.role === "staff";
   const rangeQuery = useMemo(
     () => timeRangeQueryString(resolveSelectedTimeRange(rangeId, customRange)),
     [rangeId, customRange],
@@ -297,8 +303,8 @@ export function VolumeTrendSection({
           </h2>
           <p className="text-muted-foreground mt-1 text-xs">
             {isLoading || !data
-              ? `Loading ${metricLabel.toLowerCase()} · ${rangeLabel}`
-              : `${formatTotal(total)} ${activeMetric === "received" ? "received" : "completed"} · ${rangeLabel} · ${copy}`}
+              ? `Loading ${metricLabel.toLowerCase()} Â· ${rangeLabel}`
+              : `${formatTotal(total)} ${activeMetric === "received" ? "received" : "completed"} Â· ${rangeLabel} Â· ${copy}`}
           </p>
         </div>
 
@@ -362,7 +368,7 @@ export function VolumeTrendSection({
           />
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
+            <BarChart
               data={chartData}
               margin={{ top: 8, right: 8, bottom: 0, left: 0 }}
               onClick={(chartState) => {
@@ -372,20 +378,6 @@ export function VolumeTrendSection({
                 }
               }}
             >
-              <defs>
-                <linearGradient id="volume-trend-fill" x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="0%"
-                    stopColor="hsl(var(--highlight))"
-                    stopOpacity={0.22}
-                  />
-                  <stop
-                    offset="100%"
-                    stopColor="hsl(var(--highlight))"
-                    stopOpacity={0.02}
-                  />
-                </linearGradient>
-              </defs>
               <CartesianGrid
                 strokeDasharray="3 3"
                 stroke="hsl(var(--border))"
@@ -437,32 +429,44 @@ export function VolumeTrendSection({
                   }}
                 />
               )}
-              <Area
-                type="monotone"
-                dataKey="value"
-                stroke="hsl(var(--highlight))"
-                strokeWidth={2}
-                fill="url(#volume-trend-fill)"
-                dot={
-                  chartData.length <= 40 ? { r: 2, fill: "hsl(var(--highlight))" } : false
-                }
-                activeDot={{ r: 4 }}
-                isAnimationActive={false}
-              />
-            </AreaChart>
+              <Bar dataKey="value" fill="hsl(var(--highlight))" radius={[3, 3, 0, 0]} isAnimationActive={false} />
+            </BarChart>
           </ResponsiveContainer>
         )}
       </div>
 
       {!isLoading && !error && data && (
-        <p className="border-border/70 text-muted-foreground mt-5 border-t pt-4 text-[11px] leading-snug">
-          Each point is {BUCKET_COUNT[granularity]} of {rangeLabel}.
-          {todayInRange ? " Today is marked with a dashed line." : ""}
-          {canToggle
-            ? ""
-            : " No board here maps a completion-date column, so completed volume cannot be counted."}
-        </p>
+        <div className="border-border/70 text-muted-foreground mt-5 space-y-1 border-t pt-4 text-[11px] leading-snug">
+          <p>
+            Each bar is {BUCKET_COUNT[granularity]} of {rangeLabel} (IST).
+            {todayInRange ? " Today is marked with a dashed line." : ""}
+            {canToggle
+              ? ""
+              : " No upload/completion date available (no upload date mapping or labeled upload column), so Completed (uploaded) cannot be counted."}
+          </p>
+          {(data as any).generatedAt ? <p>Data as of {new Date((data as any).generatedAt).toLocaleString()}</p> : null}
+          {(data as any).missingReceivedDateCount > 0 && (
+            <p>
+              {isAdminUser && onSelectBucketDate ? (
+                <span
+                  onClick={() => onSelectBucketDate("missing_dates")}
+                  className="cursor-pointer underline decoration-dotted underline-offset-1 hover:text-foreground"
+                  title="Open jobs with missing received dates"
+                >
+                  {(data as any).missingReceivedDateCount} job(s) have no received date and are excluded from received counts.
+                </span>
+              ) : (
+                <span>{(data as any).missingReceivedDateCount} job(s) have no received date and are excluded from received counts.</span>
+              )}
+            </p>
+          )}
+          {Array.isArray((data as any).boardsWithoutUploadMapping) && (data as any).boardsWithoutUploadMapping.length > 0 ? (
+            <p>No upload date mapping on {(data as any).boardsWithoutUploadMapping.map((b: any) => b.board_name).join(", ")} (label-matched upload columns may still be used where present).</p>
+          ) : null}
+        </div>
       )}
     </Card>
   );
 }
+
+

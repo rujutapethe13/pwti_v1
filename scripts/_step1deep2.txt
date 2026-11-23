@@ -1,0 +1,1678 @@
+﻿{
+  "org": "org-1792039761662-m59i0f8",
+  "counts": {
+    "boardsOrg": 15,
+    "boardsActive": 12,
+    "recordsAllOrg": 2007,
+    "recordsActiveInActiveBoards": 324,
+    "snapshotRows": 1700,
+    "distinctSnapshotRecords": 1700,
+    "dupSnapshotRecordKeys": 0,
+    "maxRowsPerRecord": 1
+  },
+  "hiddenTargets": [
+    {
+      "name": "lotto",
+      "id": "e20db933-fa3d-461e-a9e1-0fcbaa10af8a",
+      "needs_confirmation": true,
+      "aliases": [
+        {
+          "t": "LOTTO",
+          "at": "2026-10-26T17:57:56.593885+00:00"
+        },
+        {
+          "t": "Lotto",
+          "at": "2026-10-26T19:32:09.170573+00:00"
+        }
+      ],
+      "created_at": "2026-10-26T17:57:56.593885+00:00"
+    },
+    {
+      "name": "hokipo",
+      "id": "faf4d6a8-9b3a-4f28-ab41-53a473e95249",
+      "needs_confirmation": true,
+      "aliases": [
+        {
+          "t": "Hokipo",
+          "at": "2026-10-26T18:55:14.663189+00:00"
+        },
+        {
+          "t": "HOKIPO",
+          "at": "2026-10-26T18:55:14.663189+00:00"
+        }
+      ],
+      "created_at": "2026-10-26T18:55:14.663189+00:00"
+    },
+    {
+      "name": "uppercase",
+      "id": "01469e9a-0c69-4440-9461-5b2d1be13f9b",
+      "needs_confirmation": true,
+      "aliases": [
+        {
+          "t": "UPPERCASE",
+          "at": "2026-10-26T17:57:56.593885+00:00"
+        },
+        {
+          "t": "Uppercase",
+          "at": "2026-10-26T19:18:14.272364+00:00"
+        }
+      ],
+      "created_at": "2026-10-26T17:57:56.593885+00:00"
+    },
+    {
+      "name": "welspun",
+      "id": "6e5f5f07-405d-4f15-95f3-07e0293343ea",
+      "needs_confirmation": true,
+      "aliases": [
+        {
+          "t": "WELSPUN",
+          "at": "2026-10-26T17:57:56.593885+00:00"
+        },
+        {
+          "t": "Welspun",
+          "at": "2026-10-26T19:18:14.272364+00:00"
+        }
+      ],
+      "created_at": "2026-10-26T17:57:56.593885+00:00"
+    },
+    {
+      "name": "wipro",
+      "id": "8487b465-58ab-4992-84cf-9bca4b0411e0",
+      "needs_confirmation": true,
+      "aliases": [
+        {
+          "t": "Wipro",
+          "at": "2026-10-26T17:57:56.593885+00:00"
+        },
+        {
+          "t": "WIPRO",
+          "at": "2026-10-26T19:11:28.290617+00:00"
+        }
+      ],
+      "created_at": "2026-10-26T17:57:56.593885+00:00"
+    },
+    {
+      "name": "one8",
+      "id": "62717e9b-50d6-48dc-b6cf-1989670cec3a",
+      "needs_confirmation": true,
+      "aliases": [
+        {
+          "t": "One8",
+          "at": "2026-10-26T17:57:56.593885+00:00"
+        },
+        {
+          "t": "ONE8",
+          "at": "2026-10-26T19:11:28.290617+00:00"
+        }
+      ],
+      "created_at": "2026-10-26T17:57:56.593885+00:00"
+    }
+  ],
+  "denyHits": [
+    {
+      "name": "footwear",
+      "id": "63d3f560-36bd-4530-94b5-70a88fb8f571",
+      "needs_confirmation": false
+    },
+    {
+      "name": "bag",
+      "id": "3edcbcf8-15e8-4dec-b37d-7b17306011b5",
+      "needs_confirmation": false
+    },
+    {
+      "name": "trolley bag",
+      "id": "492d4c17-6126-44a4-8893-853442c85942",
+      "needs_confirmation": false
+    },
+    {
+      "name": "flatlay",
+      "id": "9d2cff62-3aa2-4bce-ac23-1ea7a8acc777",
+      "needs_confirmation": false
+    },
+    {
+      "name": "product",
+      "id": "26b96337-c324-4af2-84bb-c0bd3d38b651",
+      "needs_confirmation": false
+    },
+    {
+      "name": "apperals",
+      "id": "37aa0609-09a1-4ecf-9579-9b6aa77be526",
+      "needs_confirmation": false
+    },
+    {
+      "name": "bottle",
+      "id": "ef53ee59-7e12-4575-9d4c-21b8b2bd02af",
+      "needs_confirmation": false
+    },
+    {
+      "name": "backpack",
+      "id": "1661bc1a-64fb-48d4-9a00-e61636b90565",
+      "needs_confirmation": false
+    },
+    {
+      "name": "a",
+      "id": "653dfeff-8ce3-438d-aad6-27fe5c7ce1c3",
+      "needs_confirmation": false
+    }
+  ],
+  "denyAliasHits": [
+    {
+      "alias": "Apperals",
+      "client_id": "37aa0609-09a1-4ecf-9579-9b6aa77be526"
+    },
+    {
+      "alias": "Backpack",
+      "client_id": "1661bc1a-64fb-48d4-9a00-e61636b90565"
+    },
+    {
+      "alias": "Bag",
+      "client_id": "3edcbcf8-15e8-4dec-b37d-7b17306011b5"
+    },
+    {
+      "alias": "Bottle",
+      "client_id": "ef53ee59-7e12-4575-9d4c-21b8b2bd02af"
+    },
+    {
+      "alias": "Flatlay",
+      "client_id": "9d2cff62-3aa2-4bce-ac23-1ea7a8acc777"
+    },
+    {
+      "alias": "Footwear",
+      "client_id": "63d3f560-36bd-4530-94b5-70a88fb8f571"
+    },
+    {
+      "alias": "Product",
+      "client_id": "26b96337-c324-4af2-84bb-c0bd3d38b651"
+    },
+    {
+      "alias": "Trolley Bag",
+      "client_id": "492d4c17-6126-44a4-8893-853442c85942"
+    },
+    {
+      "alias": "A",
+      "client_id": "653dfeff-8ce3-438d-aad6-27fe5c7ce1c3"
+    }
+  ],
+  "allBoardsStatus": [
+    {
+      "name": "March 2026",
+      "id": "761ca4a5-2845-40e9-8455-e56a7eacfa94",
+      "status": "archived",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "April 2026",
+      "id": "9bde082d-ed38-49b7-b4a0-b88d1496ab0f",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "May 2026",
+      "id": "1cfca813-3231-4917-a09b-11930f4d8e01",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "March 2026",
+      "id": "c022f899-f173-4024-a42f-7bb0212bd0ab",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "June 2026",
+      "id": "d8f06aa7-21de-4a39-8657-8ce6b49b8ff8",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "July 2026",
+      "id": "fa2a695c-4d99-47ed-8073-4208107e5817",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "September 2026",
+      "id": "b5bd1a84-47b0-4793-887b-2de1042d9d72",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "February 2026",
+      "id": "37dfe955-3ed1-4bb4-a91d-b1c7c4f22b60",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "August 2026",
+      "id": "efa4927c-e850-4e4f-a826-d8ced606482a",
+      "status": "archived",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "October 2026",
+      "id": "6b128f51-981f-4486-b580-4d6e4c3c16a3",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "August 2026",
+      "id": "b6e96b2b-db2a-4e78-a236-b3dcb0e3cb56",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "Nov 2026",
+      "id": "a67c9ead-968a-492d-b812-4135f46098e4",
+      "status": "archived",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "January 2026",
+      "id": "7b1a0e0e-fb7a-4f53-ae56-8b0b0d2ed8d7",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "Practice",
+      "id": "d95b661a-57e2-442d-bf06-73d72335788b",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    },
+    {
+      "name": "November 2026",
+      "id": "4b0bd58f-ebeb-4f8d-92be-47be50033225",
+      "status": "active",
+      "workspace_id": "ws-1792039761957-9mxqovx"
+    }
+  ],
+  "jobsDataBoards": [],
+  "october": {
+    "id": "6b128f51-981f-4486-b580-4d6e4c3c16a3",
+    "name": "October 2026",
+    "columns": [
+      {
+        "id": "fbcd211a-1bad-4b7d-bbf0-9cfd7df255be",
+        "label": "Item Name",
+        "type": "text",
+        "samples": [
+          "Lotto",
+          "Hokipo",
+          "Levi  Strauss & Co"
+        ]
+      },
+      {
+        "id": "5f4b4720-da61-4f95-941e-04916f742ce4",
+        "label": "Inward Date",
+        "type": "date",
+        "samples": []
+      },
+      {
+        "id": "c96d2e65-7f2e-43f9-bb26-c4f0ce35b8c8",
+        "label": "Receive Date\nPost Production",
+        "type": "date",
+        "samples": [
+          "2026-09-28",
+          "2026-09-25",
+          "2026-09-29"
+        ]
+      },
+      {
+        "id": "d1c56922-fc11-4078-b6b4-fa684f64e402",
+        "label": "Batch Details (PFM1_No)",
+        "type": "text",
+        "samples": [
+          "PFM1_4721",
+          "PFM1_4725",
+          "PFM1_4726"
+        ]
+      },
+      {
+        "id": "9ef322a3-769e-4dff-9bba-91a5542a1367",
+        "label": "Assigned To",
+        "type": "person",
+        "samples": []
+      },
+      {
+        "id": "b4b03e9b-a910-45f1-be98-8ddc173bb2fa",
+        "label": "Type of Job",
+        "type": "text",
+        "samples": [
+          "Shoes",
+          "Curtain",
+          "Trolley Bag"
+        ]
+      },
+      {
+        "id": "c6e8579d-97b3-42c6-8467-e5ac756f86b9",
+        "label": "Comment",
+        "type": "text",
+        "samples": [
+          "Global_Resize",
+          "Bottle  83 & Cap 15"
+        ]
+      },
+      {
+        "id": "3b377abf-38f5-4261-97df-cd9c21a54338",
+        "label": "Status",
+        "type": "status",
+        "samples": [
+          "Done",
+          "Done",
+          "Done"
+        ]
+      },
+      {
+        "id": "5fb7a0fe-f611-428f-9e4a-5319f60f163d",
+        "label": "Date of Upload",
+        "type": "date",
+        "samples": [
+          "2026-10-30",
+          "2026-10-30",
+          "2026-10-30"
+        ]
+      },
+      {
+        "id": "da5d3342-f8fb-4f95-9be3-4f7a31246ece",
+        "label": "No. of SKUS",
+        "type": "number",
+        "samples": [
+          "10",
+          "9",
+          "183"
+        ]
+      },
+      {
+        "id": "76eb16aa-ac90-4b4a-9c3d-a4e341252417",
+        "label": "No. of images",
+        "type": "number",
+        "samples": [
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      {
+        "id": "041cfcb9-9bc3-4036-898c-1a0b64d66e6a",
+        "label": "Invoice Amount",
+        "type": "currency",
+        "samples": [
+          "0",
+          "0",
+          "0"
+        ]
+      },
+      {
+        "id": "12d5c37f-c709-4c89-beb0-c1926e620f72",
+        "label": "Invoice\n Status",
+        "type": "status",
+        "samples": [
+          "Done",
+          "Done",
+          "Done"
+        ]
+      }
+    ]
+  },
+  "otherUnmapped": [],
+  "statusByBoard": {
+    "May 2026": {
+      "active": 30
+    },
+    "April 2026": {
+      "active": 18
+    },
+    "October 2026": {
+      "active": 16
+    },
+    "August 2026": {
+      "active": 86,
+      "archived": 2
+    },
+    "September 2026": {
+      "active": 32,
+      "archived": 12
+    },
+    "board-1792047259966-qpmvnh6": {
+      "archived": 110,
+      "active": 115
+    },
+    "board-1792039790753-5o1nfgh": {
+      "active": 201
+    },
+    "June 2026": {
+      "active": 25
+    },
+    "March 2026": {
+      "active": 30,
+      "archived": 30
+    },
+    "July 2026": {
+      "active": 30
+    },
+    "3ba6c406-7b1e-4c25-ba01-6144da60d5ff": {
+      "archived": 117,
+      "active": 240
+    },
+    "f38771a6-69e5-491a-b9bd-9cf35f116fe2": {
+      "archived": 352,
+      "active": 39
+    },
+    "b768cfeb-3c4f-451a-aa58-1d5e79d318e2": {
+      "archived": 117,
+      "active": 39
+    },
+    "60370ba1-f6e6-4a3c-acb4-d9158e32b6e1": {
+      "archived": 180,
+      "active": 45
+    },
+    "February 2026": {
+      "active": 45
+    },
+    "Nov 2026": {
+      "active": 39
+    },
+    "November 2026": {
+      "active": 11
+    },
+    "January 2026": {
+      "active": 39
+    },
+    "Practice": {
+      "archived": 2,
+      "active": 5
+    }
+  },
+  "snapSafari": [
+    {
+      "name": "safari select",
+      "id": "bcdee70a-bc02-437a-aafc-0d6c69d8e54f",
+      "rows": 2,
+      "needs_confirmation": false
+    },
+    {
+      "name": "safari",
+      "id": "929d4094-f94d-4897-a567-fcc4e2fc6e5d",
+      "rows": 122,
+      "needs_confirmation": false
+    }
+  ],
+  "snapLevis": [
+    {
+      "name": "levis",
+      "id": "993faa0f-9ebc-4acb-8327-50a88906ceed",
+      "rows": 132,
+      "needs_confirmation": false
+    },
+    {
+      "name": "levis strauss & co",
+      "id": "5aee6f28-e191-46ba-ba89-d381d4d8a3c3",
+      "rows": 17,
+      "needs_confirmation": false
+    },
+    {
+      "name": "levi's",
+      "id": "ea704ab4-dcd5-4deb-9741-b4c6a69faab7",
+      "rows": 27,
+      "needs_confirmation": false
+    }
+  ],
+  "recSafari": 46,
+  "recLevis": 73,
+  "safBoards": {
+    "April 2026": 4,
+    "August 2026": 4,
+    "September 2026": 6,
+    "February 2026": 7,
+    "January 2026": 6,
+    "November 2026": 2,
+    "March 2026": 5,
+    "May 2026": 5,
+    "June 2026": 2,
+    "July 2026": 5
+  },
+  "levBoards": {
+    "August 2026": 14,
+    "June 2026": 9,
+    "March 2026": 8,
+    "July 2026": 11,
+    "February 2026": 11,
+    "January 2026": 6,
+    "May 2026": 4,
+    "April 2026": 2,
+    "September 2026": 8
+  },
+  "det": [
+    {
+      "board": "April 2026",
+      "boardId": "9bde082d-ed38-49b7-b4a0-b88d1496ab0f",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "89fc14ec-1ce6-4be2-8ac9-7228d8ea7bb2",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "df882620-9976-4d59-a070-e555f1865bd6",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "03b81b62-d4f0-495b-8b3f-18d2f7c8dcf0",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "93013d92-5803-4604-98b8-462117bf6434",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "df882620-9976-4d59-a070-e555f1865bd6",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "03b81b62-d4f0-495b-8b3f-18d2f7c8dcf0",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "1d724ca0-2078-49dc-90a0-b5946329de90"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "93013d92-5803-4604-98b8-462117bf6434",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "9471d966-9a80-4047-af16-478ef145dcc8"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "518c6cd4-c6f6-4ea0-9f1a-1a849ea9040e"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "8eebfdaa-4f73-4930-9249-069bf03dfc26"
+        }
+      }
+    },
+    {
+      "board": "May 2026",
+      "boardId": "1cfca813-3231-4917-a09b-11930f4d8e01",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "0206d3a2-855a-4efa-a94e-8da4ab5049ba",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "1e97af12-2fb4-4254-9543-00dc499c21ec",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "4fa57298-5444-44b6-984f-ec0962ad17a9",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "48ecad29-77ad-4a5a-a20c-9fbd8ac02d9e",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "1e97af12-2fb4-4254-9543-00dc499c21ec",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "4fa57298-5444-44b6-984f-ec0962ad17a9",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "a06b262b-d38f-429a-9fee-94d029c90a50"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "48ecad29-77ad-4a5a-a20c-9fbd8ac02d9e",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "5d93f84b-24bf-42da-9da3-70bf45ecaac5"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "e057dfb8-bbcc-4ba9-bce3-de14272599ba"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "cce17eb4-32a3-44b1-b008-a2290fc6f655"
+        }
+      }
+    },
+    {
+      "board": "March 2026",
+      "boardId": "c022f899-f173-4024-a42f-7bb0212bd0ab",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "19d34f28-4de2-47ca-9082-19bb7ae21888",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "2eedce94-4c91-4a08-8581-3ff7e22ee469",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "8ebd2d0f-3f97-4726-80d6-5f8b54777b9e",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "231c44b0-3a30-4d92-ba55-23927551382a",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "2eedce94-4c91-4a08-8581-3ff7e22ee469",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "8ebd2d0f-3f97-4726-80d6-5f8b54777b9e",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "0c5c498c-06e8-4a25-8e24-d7839575c56d"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "231c44b0-3a30-4d92-ba55-23927551382a",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "f3be41aa-3882-46bf-805e-900bb9d1bd1a"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "c2d8eefc-c5bf-43bc-8378-daacc499eda8"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "352ab2c8-7070-4c7a-996f-261115e134dd"
+        }
+      }
+    },
+    {
+      "board": "June 2026",
+      "boardId": "d8f06aa7-21de-4a39-8657-8ce6b49b8ff8",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "c3afbacb-ac4e-401f-bb7b-84d397945657",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "2aeeeb20-fce4-4c8b-97e6-d69f1bf1b8e1",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "a81e6cc4-da7c-4070-9018-75e06667fb9f",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "127a6b7b-3851-4728-a6b6-fd5079501ada",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "2aeeeb20-fce4-4c8b-97e6-d69f1bf1b8e1",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "a81e6cc4-da7c-4070-9018-75e06667fb9f",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "5d83e9ad-8037-4332-91dd-9651f188d61c"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "127a6b7b-3851-4728-a6b6-fd5079501ada",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "b97aafea-1c77-4fa6-a8a7-2549473e76c0"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "21142bf0-2818-46a6-8caa-1706eb36bf45"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "67f8bf3a-ebc5-468d-a1cb-27f51c4306ef"
+        }
+      }
+    },
+    {
+      "board": "July 2026",
+      "boardId": "fa2a695c-4d99-47ed-8073-4208107e5817",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "1592c98b-1c4f-4279-ac8c-c8886e91b640",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "ea6153fe-f415-4125-9df6-f9ecc2900772",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "6f0293b3-0567-4c87-a401-32d68f505edc",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "a6908803-069a-44dd-84ee-aa62ece84273",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "ea6153fe-f415-4125-9df6-f9ecc2900772",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "6f0293b3-0567-4c87-a401-32d68f505edc",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "f4b71594-3b8e-41b3-945c-f34d22d7a591"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "a6908803-069a-44dd-84ee-aa62ece84273",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "782dba94-d6fb-470d-905a-93799e0ff444"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "4e95c089-3889-4ded-9b2d-b27c5ca1d634"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "f5c152c4-fc82-4fd4-ad50-d4a62b75ad72"
+        }
+      }
+    },
+    {
+      "board": "September 2026",
+      "boardId": "b5bd1a84-47b0-4793-887b-2de1042d9d72",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client name",
+          "columnId": "07770caf-edc1-4fd6-80b9-ae6b01b21dbd",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "8810f0d4-bb54-4dc3-9fb3-974db87bae8a",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "82018449-da5d-434a-983f-0a3747145eb3",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "c5a345cb-1b1d-4de7-b897-81ac96365673",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "8810f0d4-bb54-4dc3-9fb3-974db87bae8a",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "82018449-da5d-434a-983f-0a3747145eb3",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "92b7ea31-68dd-4c41-a867-756245a26bf1"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "c5a345cb-1b1d-4de7-b897-81ac96365673",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "326e05af-f268-4104-aa0c-47c2e94b456a"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "bd5a2817-5bdf-4d13-9f02-e8169c1e47c7"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "053fc592-5281-4ef0-9274-399e8d4aedb7"
+        }
+      }
+    },
+    {
+      "board": "February 2026",
+      "boardId": "37dfe955-3ed1-4bb4-a91d-b1c7c4f22b60",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "97c82647-a076-417f-955b-82c93eb86acb",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "a53cf109-28d8-4814-b44f-78bc0145f1f6",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "f526e5a0-d888-4ac2-9b4b-0871cde241d1",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "3d0f1d73-56ac-4888-b550-05dd88b7de1f",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "a53cf109-28d8-4814-b44f-78bc0145f1f6",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "f526e5a0-d888-4ac2-9b4b-0871cde241d1",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "c4bd0887-24d6-4cbf-b47e-0f4784225d3d"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "3d0f1d73-56ac-4888-b550-05dd88b7de1f",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "809f34a1-2009-43e9-9786-06bb968f92f5"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "f425d9cc-dcfb-418a-b054-3acca50e829f"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "970b8c13-5dd0-4358-8d04-b13a7619b23b"
+        }
+      }
+    },
+    {
+      "board": "October 2026",
+      "boardId": "6b128f51-981f-4486-b580-4d6e4c3c16a3",
+      "mapped": {
+        "client": null,
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "c96d2e65-7f2e-43f9-bb26-c4f0ce35b8c8",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "3b377abf-38f5-4261-97df-cd9c21a54338",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "da5d3342-f8fb-4f95-9be3-4f7a31246ece",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "c96d2e65-7f2e-43f9-bb26-c4f0ce35b8c8",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "3b377abf-38f5-4261-97df-cd9c21a54338",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "d1c56922-fc11-4078-b6b4-fa684f64e402"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "da5d3342-f8fb-4f95-9be3-4f7a31246ece",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "5fb7a0fe-f611-428f-9e4a-5319f60f163d"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "041cfcb9-9bc3-4036-898c-1a0b64d66e6a"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "9ef322a3-769e-4dff-9bba-91a5542a1367"
+        }
+      }
+    },
+    {
+      "board": "August 2026",
+      "boardId": "b6e96b2b-db2a-4e78-a236-b3dcb0e3cb56",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "3e7fbf76-6efe-400d-abd1-00d2304f159b",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "4589abc3-a708-472d-984a-586fe82c459f",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "f403395b-178b-477e-9a0b-3fed3f72bf01",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "16db2822-b66a-4f57-a71f-83fe53363a7d",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "4589abc3-a708-472d-984a-586fe82c459f",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "f403395b-178b-477e-9a0b-3fed3f72bf01",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "14e141eb-5f3a-4d26-ade1-69c1d343d9c2"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "16db2822-b66a-4f57-a71f-83fe53363a7d",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "08d9c405-e23f-45e4-a457-6c6558d3b3bb"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "7ed6117e-fbcc-4204-8bff-e36999b2875a"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "e3ecae6d-05cf-4798-9e5d-463ea8d07ef8"
+        }
+      }
+    },
+    {
+      "board": "January 2026",
+      "boardId": "7b1a0e0e-fb7a-4f53-ae56-8b0b0d2ed8d7",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "0eda7f61-ecfe-4a19-bafc-9075daac18ec",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "02211ad1-94dd-439c-86a7-16978aefcdb1",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "e537d506-0e5b-4817-a272-a3764e17ad1d",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "9c7b7afd-30c4-441b-bab2-96b3520b8356",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "02211ad1-94dd-439c-86a7-16978aefcdb1",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "e537d506-0e5b-4817-a272-a3764e17ad1d",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "548b6660-3359-480f-af13-0e2aed3b092e"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "9c7b7afd-30c4-441b-bab2-96b3520b8356",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "ab266d16-cbab-4b86-bbdd-79001d5fcf7b"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "39d50b26-57b7-48a8-880f-682d4c55f0cc"
+        },
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "efe0df45-fd97-4b03-ac9e-dc6f352be20f"
+        }
+      }
+    },
+    {
+      "board": "Practice",
+      "boardId": "d95b661a-57e2-442d-bf06-73d72335788b",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client / Company \n Name",
+          "columnId": "96d32990-7caa-41a4-b2be-66486675c5e7",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "7540dcf8-7112-443c-b9b2-b31ade65ac44",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "fcbb6870-b354-4e1c-bd20-c6a0a27a71a8",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "d48d4db4-6af5-4608-9761-aa37468e3673",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": null,
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Receive Date\nPost Production",
+          "columnId": "7540dcf8-7112-443c-b9b2-b31ade65ac44",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "fcbb6870-b354-4e1c-bd20-c6a0a27a71a8",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.5
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "7f45425f-edb7-4fef-abe0-1b088b3598d0"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "d48d4db4-6af5-4608-9761-aa37468e3673",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of Upload",
+          "type": "date",
+          "id": "369f3d38-4428-41ad-8e7c-25c6187bd5e9"
+        },
+        "invoice_amount": {
+          "label": "Invoice Amount",
+          "type": "currency",
+          "id": "dfa2315a-f5e0-42f2-9239-378cded149c1"
+        },
+        "invoice_status": null,
+        "assignee_owner": null
+      }
+    },
+    {
+      "board": "November 2026",
+      "boardId": "4b0bd58f-ebeb-4f8d-92be-47be50033225",
+      "mapped": {
+        "client": {
+          "field": "client",
+          "column": "Client/Company Name",
+          "columnId": "2a6e3033-95ee-4d61-bb42-fe952bfeae98",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_date": {
+          "field": "job_date",
+          "column": "Inward Date",
+          "columnId": "4a0dd15f-e67f-436b-a750-2e6ea5e4b392",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "receive_date": null,
+        "due_date": null,
+        "status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "ea9149da-19a2-4c1e-9c6b-792d23499a96",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "job_status": null,
+        "volume": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "5fe447fa-b6ee-40c7-b594-81e83b89000c",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "job_type": {
+          "field": "job_type",
+          "column": "Job Type",
+          "columnId": "e28ddf6c-f1bc-4350-a165-372aa30fa118",
+          "type": "text",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "batch_job_id": null,
+        "image_count": null,
+        "upload_date": null,
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": null
+      },
+      "detect": {
+        "receive_date": {
+          "field": "job_date",
+          "column": "Inward Date",
+          "columnId": "4a0dd15f-e67f-436b-a750-2e6ea5e4b392",
+          "type": "date",
+          "source": "auto_detected",
+          "confidence": 0.85
+        },
+        "job_status": {
+          "field": "status",
+          "column": "Status",
+          "columnId": "ea9149da-19a2-4c1e-9c6b-792d23499a96",
+          "type": "status",
+          "source": "auto_detected",
+          "confidence": 0.9
+        },
+        "batch_job_id": {
+          "label": "Batch Details (PFM1_No)",
+          "type": "text",
+          "id": "d7893930-c533-4e10-b299-6bb32ed578de"
+        },
+        "image_count": {
+          "field": "volume",
+          "column": "No. of SKUS",
+          "columnId": "5fe447fa-b6ee-40c7-b594-81e83b89000c",
+          "type": "number",
+          "source": "auto_detected",
+          "confidence": 0.8
+        },
+        "upload_date": {
+          "label": "Date of upload",
+          "type": "date",
+          "id": "96752bf9-0336-4fff-b0ab-3bb74c15addb"
+        },
+        "invoice_amount": null,
+        "invoice_status": null,
+        "assignee_owner": {
+          "label": "Assigned To",
+          "type": "person",
+          "id": "3709fe2a-a2ff-4d05-9095-47702119b275"
+        }
+      }
+    }
+  ]
+}

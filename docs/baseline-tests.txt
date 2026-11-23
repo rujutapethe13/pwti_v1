@@ -1,0 +1,77 @@
+ FAIL  src/tests/unit/workspace-switcher.test.tsx [ src/tests/unit/workspace-switcher.test.tsx ]
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > GET /api/overview/daily-lists > fails with 500 when the 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > today's jobs > queries jobs received today or due today, 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > today's jobs > includes a completed job received today
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > overdue > queries due dates before today that are still 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > overdue > sorts the most overdue first
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > upcoming > queries tomorrow through the 7th day ahead, 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > list items > carries the item name, its board, its 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > list items > reports a board with no due-date field so a 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > list items > falls back to the record id when the title is 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > list items > links by board id when the board has no slug
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > list items > flags a truncated list instead of presenting 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > independence from the range selector > ignores 
+ FAIL  src/tests/integration/overview-daily-lists.test.ts > independence from the range selector > refreshes the 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > aggregates the selected window 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > narrows all time to the bounds 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > fetches data bounds for coverage 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > refreshes a stale snapshot before 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > returns six cards whose trends 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > reports the empty state when the 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > surfaces a real error instead of 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > never invents a percentage when 
+ FAIL  src/tests/integration/overview-stat-cards.test.ts > GET /api/overview/stats > falls back to the default preset 
+ FAIL  src/tests/integration/overview-time-range.test.ts > GET /api/overview time range > scopes every snapshot 
+ FAIL  src/tests/integration/overview-time-range.test.ts > GET /api/overview time range > falls back to the default 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > aggregates the window 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > passes the database 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > refreshes a stale 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > keeps untyped records 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > discards a group with 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > fails loudly rather 
+ FAIL  src/tests/integration/overview-volume-breakdown.test.ts > GET /api/overview/breakdown > honours explicit bounds 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > filters and groups in 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > uses daily buckets for a 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > asks SQL for weekly 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > lands Sunday-keyed 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > does not silently 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > asks SQL for monthly 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > refreshes a stale 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > offers the completed 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > returns the coverage 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > narrows all time to the 
+ FAIL  src/tests/integration/overview-volume-trend.test.ts > GET /api/overview/volume-trend > fails loudly rather than 
+ FAIL  src/tests/unit/board-title-column-header.test.tsx > board title column header > renders the title column label, 
+ FAIL  src/tests/unit/board-title-column-header.test.tsx > board title column header > falls back to the board's title 
+ FAIL  src/tests/unit/board-title-column-header.test.tsx > board title column header > renames the title column 
+ FAIL  src/tests/unit/boards-hub-access.test.ts > GET /api/boards-hub > lists every workspace and board regardless of 
+ FAIL  src/tests/unit/boards-hub-access.test.ts > GET /api/boards-hub > returns only minimum listing fields and never 
+ FAIL  src/tests/unit/boards-hub-access.test.ts > GET /api/boards-hub > marks a restricted board the caller cannot 
+ FAIL  src/tests/unit/boards-hub-access.test.ts > GET /api/boards-hub > marks a restricted board in the caller's 
+ FAIL  src/tests/unit/chart-option-resolver.test.ts > getLabel (chart-widget dashboard pie/donut legend) > hides 
+ FAIL  src/tests/unit/chart-option-resolver.test.ts > getLabel (chart-widget dashboard pie/donut legend) > returns (no 
+ FAIL  src/tests/unit/chart-option-resolver.test.ts > getLabel (chart-widget dashboard pie/donut legend) > returns 
+ FAIL  src/tests/unit/chart-option-resolver.test.ts > getLabel (chart-widget dashboard pie/donut legend) > returns 
+ FAIL  src/tests/unit/chart-option-resolver.test.ts > getLabel (chart-widget dashboard pie/donut legend) > hides 
+ FAIL  src/tests/unit/chart-option-resolver.test.ts > getLabel (chart-widget dashboard pie/donut legend) > never 
+ FAIL  src/tests/unit/client-360-dropdown-selection.test.tsx > Client 360 dropdown selection > selects the first 
+ FAIL  src/tests/unit/client-360-dropdown-selection.test.tsx > Client 360 dropdown selection > selects a middle client 
+ FAIL  src/tests/unit/client-360-dropdown-selection.test.tsx > Client 360 dropdown selection > selects a client after 
+ FAIL  src/tests/unit/column-scope-direct-readers.test.ts > Shared-scope column readers > client-360 search only 
+ FAIL  src/tests/unit/daily-activity-action.test.ts > fetchClient360DailyActivityAction > returns the real error 
+ FAIL  src/tests/unit/daily-activity-action.test.ts > fetchClient360DailyActivityAction > handles non-Error throws
+ FAIL  src/tests/unit/email-alerts.test.ts > email helpers > labels payment terms for the billing UI
+ FAIL  src/tests/unit/overview-volume-breakdown-section.test.tsx > VolumeBreakdownSection > renders a legend row per 
+ FAIL  src/tests/unit/overview-volume-breakdown-section.test.tsx > VolumeBreakdownSection > says so when no board maps 
+ FAIL  src/tests/unit/overview-volume-breakdown-section.test.tsx > VolumeBreakdownSection > uses the singular job type 
+ FAIL  src/tests/unit/overview-volume-breakdown-section.test.tsx > VolumeBreakdownSection > surfaces a failure with a 
+ FAIL  src/tests/unit/overview-volume-breakdown-section.test.tsx > VolumeBreakdownSection > refetches on demand
+ FAIL  src/tests/unit/overview-volume-breakdown.test.ts > toBreakdownSlices > rolls only sub-five-percent types into 
+ FAIL  src/tests/unit/overview-volume-breakdown.test.ts > formatPercent > drops a trailing zero so whole shares read 
+ FAIL  src/tests/unit/overview-volume-breakdown.test.ts > formatPercent > never renders NaN
+ FAIL  src/tests/unit/overview-volume-trend-chart.test.tsx > VolumeTrendSection chart > draws one area and a today 
+ FAIL  src/tests/unit/overview-volume-trend-chart.test.tsx > VolumeTrendSection chart > drops the today marker when 
+ FAIL  src/tests/unit/overview-volume-trend-section.test.tsx > VolumeTrendSection > totals the received series and 
+ FAIL  src/tests/unit/overview-volume-trend-section.test.tsx > VolumeTrendSection > switches to the completed series 
+ FAIL  src/tests/unit/overview-volume-trend-section.test.tsx > VolumeTrendSection > hides the completed toggle when no 
+ FAIL  src/tests/unit/overview-volume-trend-section.test.tsx > VolumeTrendSection > surfaces a failure with a retry, 

@@ -174,6 +174,10 @@ export interface AutomationRule {
     includeAssignee: boolean;
     emailSubject: string;
     emailBody: string;
+    savedRecipients: SavedRecipient[];
+    customCcEmails: string[];
+    customBccEmails: string[];
+    emailFrom: string;
   };
 }
 
@@ -222,6 +226,13 @@ export interface WorkspaceAdminUser {
   email: string;
   avatarUrl?: string;
   isPinned?: boolean;
+}
+
+export interface SavedRecipient {
+  id: string;
+  name: string;
+  role: string;
+  email: string;
 }
 
 export type AutomationAuditLog = AutomationRunLog;

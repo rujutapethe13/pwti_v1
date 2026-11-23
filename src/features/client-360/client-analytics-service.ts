@@ -24,14 +24,14 @@ export interface ClientAnalytics {
   studioAvgTurnaroundDays: number | null;
   workloadByOwner: Array<{ owner: string; count: number }>;
   recentJobs: Array<{ name: string; board: string; jobType: string | null; receivedDate: string | null; uploadDate: string | null; status: string | null }>;
-  excluded: { noReceivedDate: number; noUploadDate: number; brokenLinks: number };
+  coverage: { withoutReceivedDate: number; withoutUploadDate: number };
 }
 
 const EMPTY: ClientAnalytics = {
   kpis: { totalJobs: 0, inProgress: 0, done: 0, totalSkus: 0, totalImages: 0, avgTurnaroundDays: null, shareOfStudioVolume: 0 },
   statusBreakdown: [], jobTypeMix: [], jobsByBoard: [], skuByMonth: [], receivedVsCompletedByMonth: [],
   turnaroundByMonth: [], studioAvgTurnaroundDays: null, workloadByOwner: [], recentJobs: [],
-  excluded: { noReceivedDate: 0, noUploadDate: 0, brokenLinks: 0 },
+  coverage: { withoutReceivedDate: 0, withoutUploadDate: 0 },
 };
 
 const key = (value: string | null | undefined) => (value ?? "").trim().toLowerCase().replace(/[\W_]+/g, " ").replace(/\s+/g, " ").trim();
@@ -40,12 +40,21 @@ const inRange = (date: string | null, range?: ClientAnalyticsDateRange | null) =
 
 export function aggregateClientAnalytics(clientId: string, jobs: LiveJobRow[], dateRange?: ClientAnalyticsDateRange | null): ClientAnalytics {
   if (!clientId) return EMPTY;
-  const selected = jobs.filter((job) => job.client_id === clientId && (!dateRange || inRange(job.received_date, dateRange) || inRange(job.upload_date, dateRange)));
+  const selected = jobs.filter((job) => job.client_id === clientId);
   const studioJobs = jobs.filter((job) => !dateRange || inRange(job.received_date, dateRange) || inRange(job.upload_date, dateRange));
   const count = (values: string[], empty: string) => {
-    const map = new Map<string, number>();
-    for (const value of values) { const label = value.trim() || empty; map.set(label, (map.get(label) ?? 0) + 1); }
-    return [...map.entries()].map(([label, total]) => ({ label, count: total })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+    const map = new Map<string, { count: number; display: string }>();
+    for (const value of values) {
+      const normalized = key(value);
+      const label = normalized || empty;
+      const existing = map.get(label);
+      if (existing) {
+        existing.count++;
+      } else {
+        map.set(label, { count: 1, display: value.trim() || empty });
+      }
+    }
+    return [...map.entries()].map(([_label, { count, display }]) => ({ label: display, count })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
   };
   const turnaround = selected.filter((j) => j.received_date && j.upload_date).map((j) => (Date.parse(j.upload_date!) - Date.parse(j.received_date!)) / 86400000).filter(Number.isFinite);
   const statusMap = new Map<string, number>();
@@ -62,10 +71,10 @@ export function aggregateClientAnalytics(clientId: string, jobs: LiveJobRow[], d
   for (const j of selected) {
     const board = boardMap.get(j.board_id) ?? { boardId: j.board_id, boardName: j.board_name, volume: 0 };
     board.volume++; boardMap.set(j.board_id, board);
-    if (j.sku_count != null && j.received_date) skuMap.set(monthKey(j.received_date), (skuMap.get(monthKey(j.received_date)) ?? 0) + j.sku_count);
-    if (j.received_date) { const m = monthKey(j.received_date); const v = receivedMap.get(m) ?? { received: 0, completed: 0 }; v.received++; receivedMap.set(m, v); }
-    if (j.upload_date) { const m = monthKey(j.upload_date); const v = receivedMap.get(m) ?? { received: 0, completed: 0 }; v.completed++; receivedMap.set(m, v); }
-    if (j.received_date && j.upload_date) { const m = monthKey(j.upload_date); const days = (Date.parse(j.upload_date) - Date.parse(j.received_date)) / 86400000; if (Number.isFinite(days)) (turnMap.get(m) ?? (turnMap.set(m, []), turnMap.get(m)!)).push(days); }
+    if (j.sku_count != null && j.received_date && inRange(j.received_date, dateRange)) skuMap.set(monthKey(j.received_date), (skuMap.get(monthKey(j.received_date)) ?? 0) + j.sku_count);
+    if (j.received_date && inRange(j.received_date, dateRange)) { const m = monthKey(j.received_date); const v = receivedMap.get(m) ?? { received: 0, completed: 0 }; v.received++; receivedMap.set(m, v); }
+    if (j.upload_date && inRange(j.upload_date, dateRange)) { const m = monthKey(j.upload_date); const v = receivedMap.get(m) ?? { received: 0, completed: 0 }; v.completed++; receivedMap.set(m, v); }
+    if (j.received_date && j.upload_date && inRange(j.upload_date, dateRange)) { const m = monthKey(j.upload_date); const days = (Date.parse(j.upload_date) - Date.parse(j.received_date)) / 86400000; if (Number.isFinite(days)) (turnMap.get(m) ?? (turnMap.set(m, []), turnMap.get(m)!)).push(days); }
   }
   const owner = count(selected.map((j) => j.assignee ?? ""), "Unassigned").map((x) => ({ owner: x.label, count: x.count }));
   const totalSkus = selected.reduce((n, j) => n + (j.sku_count ?? 0), 0);
@@ -81,7 +90,7 @@ export function aggregateClientAnalytics(clientId: string, jobs: LiveJobRow[], d
     studioAvgTurnaroundDays: studioTurn.length ? studioTurn.reduce((a, b) => a + b, 0) / studioTurn.length : null,
     workloadByOwner: owner,
     recentJobs: [...selected].sort((a, b) => String(b.received_date ?? "").localeCompare(String(a.received_date ?? ""))).slice(0, 10).map((j) => ({ name: j.title, board: j.board_name, jobType: j.job_type, receivedDate: j.received_date, uploadDate: j.upload_date, status: j.status })),
-    excluded: { noReceivedDate: selected.filter((j) => !j.received_date).length, noUploadDate: selected.filter((j) => !j.upload_date).length, brokenLinks: 0 },
+    coverage: { withoutReceivedDate: selected.filter((j) => !j.received_date).length, withoutUploadDate: selected.filter((j) => !j.upload_date).length },
   };
 }
 

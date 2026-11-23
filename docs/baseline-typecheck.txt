@@ -1,0 +1,47 @@
+src/app/(app)/workspaces/[id]/overview/page.tsx(51,8): error TS2741: Property 'error' is missing in type '{ workspace: { id: string; name: string; slug: string; role: string; }; }' but required in type 'SectionProps'.
+src/app/(app)/workspaces/[id]/overview/page.tsx(53,8): error TS2741: Property 'error' is missing in type '{ totalPending: number; }' but required in type 'SectionProps'.
+src/app/(app)/workspaces/[id]/overview/page.tsx(61,14): error TS2741: Property 'error' is missing in type '{ boards: OverviewBoard[]; }' but required in type 'SectionProps'.
+src/app/(app)/workspaces/[id]/overview/page.tsx(70,14): error TS2741: Property 'error' is missing in type '{ members: OverviewMember[]; }' but required in type 'SectionProps'.
+src/app/(app)/workspaces/[id]/overview/page.tsx(80,14): error TS2741: Property 'error' is missing in type '{ activity: OverviewActivity[]; }' but required in type 'SectionProps'.
+src/app/api/attachments/upload/route.ts(72,30): error TS2339: Property 'code' does not exist on type 'StorageError'.
+src/app/api/triggers/route.ts(27,41): error TS2345: Argument of type '{ name: any; description: any; enabled: boolean; scopeMode: any; scopeWorkspaces: any; scopeBoards: any; runMode: any; conditions: any; actions: any; emailSettings: { enabled: boolean; toType: any; to: any; ... 5 more ...; frequencyHours: number; }; }' is not assignable to parameter of type 'Omit<Trigger, "id" | "createdAt" | "updatedAt"> & { id?: string | undefined; }'.
+src/app/api/triggers/send-test/route.ts(23,71): error TS2353: Object literal may only specify known properties, and 'text' does not exist in type 'SendEmailInput'.
+src/app/api/triggers/send-test/route.ts(29,53): error TS2339: Property 'id' does not exist on type '{ ok: boolean; error?: string | undefined; }'.
+src/components/shared/engine-board-page.tsx(1797,9): error TS2322: Type '{ children: Element; boardId: string; cellValues: Map<string, ColumnValue>; columns: ColumnDefinition[]; groups: Group[]; records: BoardRecord[]; }' is not assignable to type 'IntrinsicAttributes & MirrorDataProviderProps'.
+src/components/triggers/manual-trigger-button.tsx(66,9): error TS2304: Cannot find name 'toast'.
+src/components/triggers/manual-trigger-button.tsx(69,9): error TS2304: Cannot find name 'toast'.
+src/components/triggers/manual-trigger-button.tsx(72,7): error TS2304: Cannot find name 'toast'.
+src/components/triggers/trigger-editor.tsx(220,58): error TS2322: Type 'string' is not assignable to type 'TriggerRunMode'.
+src/components/triggers/trigger-editor.tsx(240,16): error TS2304: Cannot find name 'CardDescription'.
+src/components/triggers/trigger-editor.tsx(240,71): error TS2304: Cannot find name 'CardDescription'.
+src/components/triggers/trigger-editor.tsx(270,21): error TS2322: Type 'string[]' is not assignable to type 'string'.
+src/components/triggers/trigger-editor.tsx(293,16): error TS2304: Cannot find name 'CardDescription'.
+src/components/triggers/trigger-editor.tsx(293,83): error TS2304: Cannot find name 'CardDescription'.
+src/components/triggers/trigger-editor.tsx(300,60): error TS2322: Type 'string' is not assignable to type '"AND" | "OR"'.
+src/components/triggers/trigger-editor.tsx(301,19): error TS2322: Type '{ children: Element[]; value: "AND" | "OR"; onValueChange: (v: string) => void; className: string; }' is not assignable to type 'IntrinsicAttributes & SelectProps'.
+src/components/triggers/trigger-editor.tsx(313,23): error TS2322: Type '{ children: Element[]; value: any; onValueChange: (v: string) => void; className: string; }' is not assignable to type 'IntrinsicAttributes & SelectProps'.
+src/components/triggers/trigger-editor.tsx(338,23): error TS2322: Type '{ children: Element[]; value: any; onValueChange: (v: string) => void; className: string; }' is not assignable to type 'IntrinsicAttributes & SelectProps'.
+src/components/triggers/trigger-editor.tsx(400,27): error TS2322: Type '{ config: { toType: string; to: string[]; toField: string; cc: string[]; subject: string; body: string; format: EmailFormat; frequencyHours: number; }; id: string; type: string; enabled: boolean; label: string; }[]' is not assignable to type '{ id: string; type: string; enabled: boolean; label: string; config: { toType: "field" | "static"; to: string[]; toField: string; cc: string[]; subject: string; body: string; format: EmailFormat; frequencyHours: number; }; }[]'.
+src/components/triggers/trigger-editor.tsx(405,23): error TS2322: Type '{ children: Element[]; value: "field" | "static"; onValueChange: (v: string) => void; className: string; }' is not assignable to type 'IntrinsicAttributes & SelectProps'.
+src/components/triggers/trigger-editor.tsx(508,27): error TS2322: Type '{ config: { format: string; toType: "field" | "static"; to: string[]; toField: string; cc: string[]; subject: string; body: string; frequencyHours: number; }; id: string; type: string; enabled: boolean; label: string; }[]' is not assignable to type '{ id: string; type: string; enabled: boolean; label: string; config: { toType: "field" | "static"; to: string[]; toField: string; cc: string[]; subject: string; body: string; format: EmailFormat; frequencyHours: number; }; }[]'.
+src/components/triggers/triggers-screen.tsx(204,30): error TS2304: Cannot find name 'Copy2'.
+src/features/automations/board-automation-executor.ts(128,7): error TS2367: This comparison appears to be unintentional because the types '"status_change" | "item_created" | "item_moved_group" | "item_archived_deleted" | "person_assigned" | "date_arrives" | "recurring_schedule" | "subitem_event" | "comment_posted" | "button_clicked" | "dependency_change" | "date_inputted" | "payment_overdue"' and '"value_change"' have no overlap.
+src/features/client-360/daily-activity-action.ts(60,26): error TS2304: Cannot find name 'ActivityTasksResponse'.
+src/features/client-360/daily-activity-action.ts(62,24): error TS2552: Cannot find name 'fetchActivityTasks'. Did you mean 'fetchActivity'?
+src/features/client-360/daily-activity-view.tsx(121,46): error TS2304: Cannot find name 'ActivityTasksResponse'.
+src/features/client-360/daily-activity-view.tsx(265,8): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(326,45): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(347,32): error TS7006: Parameter 'day' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(377,45): error TS7006: Parameter 'it' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(452,56): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(546,29): error TS7006: Parameter 'day' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(1169,15): error TS2322: Type '{ data: any; selectedDate: string; mode: ActivityMode; card: ActiveKpiCard; defaultOnlyMine: boolean; onClose: () => void; }' is not assignable to type 'IntrinsicAttributes & { data: ActivityData; selectedDate: string; mode: "received" | "due"; card: string; }'.
+src/features/client-360/daily-activity-view.tsx(1276,53): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(1286,26): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/features/client-360/daily-activity-view.tsx(1329,30): error TS7006: Parameter 'd' implicitly has an 'any' type.
+src/features/client-360/relationship-client-360.tsx(191,41): error TS2339: Property 'excludedValues' does not exist on type '{ data: { id: string; name: string; aliases: string[]; jobs: number; boardCount: number; }[] | null; error: string | null; status: number; jobsWithoutClient: number; possibleDuplicates: { canonicalName: string; similarTo: string; similarity: number; }[]; }'.
+src/features/client-360/relationship-client-360.tsx(192,44): error TS2339: Property 'totalClients' does not exist on type '{ data: { id: string; name: string; aliases: string[]; jobs: number; boardCount: number; }[] | null; error: string | null; status: number; jobsWithoutClient: number; possibleDuplicates: { canonicalName: string; similarTo: string; similarity: number; }[]; }'.
+src/features/triggers/engine.ts(238,89): error TS2353: Object literal may only specify known properties, and 'text' does not exist in type 'SendEmailInput'.
+src/features/triggers/engine.ts(456,169): error TS2353: Object literal may only specify known properties, and 'text' does not exist in type 'SendEmailInput'.
+src/features/workspaces/workspace-list-action.ts(25,11): error TS1308: 'await' expressions are only allowed within async functions and at the top levels of modules.
+src/tests/unit/automations-and-overdue.test.ts(260,13): error TS2352: Conversion of type 'PaymentJobItem | undefined' to type 'Record<string, unknown>' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.

@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { ColumnDefinition, ColumnValue } from "../../types";
 import {
+  findOptionForValue,
   getColumnOptions,
   isOptionColumnType,
   resolveOptionDisplay,
@@ -424,7 +425,7 @@ export function AdvancedFilterPanel({
         const col = getColumn(filter.columnId);
         if (!col) return true;
         const cellValue = cellValues.get(`${record.id}:${filter.columnId}`);
-        return evaluateFilter(cellValue, filter.operator, filter.value, col.type);
+        return evaluateFilter(cellValue, filter.operator, filter.value, col);
       });
     }).length;
   }, [filters, records, cellValues, getColumn]);
@@ -812,37 +813,13 @@ function FilterRow({ filter, index, columns, conditions, valueOptions, onUpdate,
   );
 }
 
-// ── Filter Evaluation Logic ─────────────────────────────────
-
-function evaluateFilter(
-  cellValue: ColumnValue | undefined,
+function matchesText(
+  cellValue: ColumnValue,
   operator: string,
   filterValue: ColumnValue,
-  columnType: string,
-  records?: Array<{ id: string; title: string }>,
-  recordId?: string
 ): boolean {
-  // Handle Client Name pseudo-column
-  if (operator === "__client_name") {
-    const record = records?.find((r) => r.id === recordId);
-    if (!record) return false;
-    const values = Array.isArray(filterValue) ? filterValue : [filterValue];
-    return values.some((v) => String(v).toLowerCase() === record.title.toLowerCase());
-  }
-
-  if (operator === "is_empty") return cellValue == null || cellValue === "";
-  if (operator === "not_empty") return cellValue != null && cellValue !== "";
-
-  if (cellValue == null) return false;
-
   const cellStr = String(cellValue).toLowerCase();
   const filterStr = String(filterValue).toLowerCase();
-
-  // Date-specific operators
-  if (columnType === "date" || columnType === "timeline") {
-    return evaluateDateFilter(cellValue, operator, filterValue);
-  }
-
   switch (operator) {
     case "is":
     case "eq":
@@ -866,17 +843,71 @@ function evaluateFilter(
       return Number(cellValue) >= Number(filterValue);
     case "lte":
       return Number(cellValue) <= Number(filterValue);
-    case "is_one_of": {
-      const values = Array.isArray(filterValue) ? filterValue : [filterValue];
-      return values.some((v) => String(v).toLowerCase() === cellStr);
-    }
-    case "is_true":
-      return cellValue === true || cellValue === "true";
-    case "is_false":
-      return cellValue === false || cellValue === "false";
+    case "is_one_of":
+      return Array.isArray(filterValue)
+        ? filterValue.some((v) => String(v).toLowerCase() === cellStr)
+        : cellStr === filterStr;
     default:
       return true;
   }
+}
+
+// ── Filter Evaluation Logic ─────────────────────────────────
+
+function evaluateFilter(
+  cellValue: ColumnValue | undefined,
+  operator: string,
+  filterValue: ColumnValue,
+  column: ColumnDefinition | null | undefined,
+  records?: Array<{ id: string; title: string }>,
+  recordId?: string
+): boolean {
+  // Handle Client Name pseudo-column
+  if (operator === "__client_name") {
+    const record = records?.find((r) => r.id === recordId);
+    if (!record) return false;
+    const values = Array.isArray(filterValue) ? filterValue : [filterValue];
+    return values.some((v) => String(v).toLowerCase() === record.title.toLowerCase());
+  }
+
+  if (operator === "is_empty") return cellValue == null || cellValue === "";
+  if (operator === "not_empty") return cellValue != null && cellValue !== "";
+  if (operator === "is_true") return cellValue === true || cellValue === "true";
+  if (operator === "is_false") return cellValue === false || cellValue === "false";
+
+  if (cellValue == null) return false;
+
+  if (column && isOptionColumnType(column.type)) {
+    const matched = findOptionForValue(getColumnOptions(column), cellValue);
+    const matchedId = matched?.id ?? null;
+    const matchedLabel = matched?.label ?? null;
+    switch (operator) {
+      case "is":
+      case "eq":
+        return filterValue === matchedId || filterValue === matchedLabel || String(cellValue) === String(filterValue);
+      case "is_not":
+      case "neq":
+        return (
+          filterValue !== matchedId &&
+          filterValue !== matchedLabel &&
+          String(cellValue) !== String(filterValue)
+        );
+      case "is_one_of": {
+        const values = Array.isArray(filterValue) ? filterValue : [filterValue];
+        return values.some((v) => v === matchedId || v === matchedLabel || String(cellValue) === String(v));
+      }
+      default:
+        return matchesText(cellValue, operator, filterValue);
+    }
+  }
+
+  // Date-specific operators
+  if (column && (column.type === "date" || column.type === "timeline")) {
+    return evaluateDateFilter(cellValue, operator, filterValue);
+  }
+
+  // Fallback: generic comparison.
+  return matchesText(cellValue, operator, filterValue);
 }
 
 function evaluateDateFilter(

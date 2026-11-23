@@ -57,6 +57,10 @@ const columns: ColumnDefinition[] = [
 
 const records: BoardRecord[] = [
   { id: "rec-1", organizationId: "org-1", workspaceId: "ws-1", boardId: "board-1", groupId: "group-1", title: "SAFARI", status: "active", version: 1, archivedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } as unknown as BoardRecord,
+  { id: "rec-2", organizationId: "org-1", workspaceId: "ws-1", boardId: "board-1", groupId: "group-1", title: "Row 2", status: "active", version: 1, archivedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } as unknown as BoardRecord,
+  { id: "rec-3", organizationId: "org-1", workspaceId: "ws-1", boardId: "board-1", groupId: "group-1", title: "Row 3", status: "active", version: 1, archivedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } as unknown as BoardRecord,
+  { id: "rec-4", organizationId: "org-1", workspaceId: "ws-1", boardId: "board-1", groupId: "group-1", title: "Row 4", status: "active", version: 1, archivedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } as unknown as BoardRecord,
+  { id: "rec-5", organizationId: "org-1", workspaceId: "ws-1", boardId: "board-1", groupId: "group-1", title: "Row 5", status: "active", version: 1, archivedAt: null, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" } as unknown as BoardRecord,
 ];
 
 const groups: Group[] = [
@@ -135,5 +139,15 @@ describe("header multi-select", () => {
     click("col-a");
     fireEvent.mouseDown(document.body);
     expect(selectedIds()).toEqual([]);
+  });
+
+  it("table header select-all selects 5 rows and toggles back to 0", () => {
+    renderTable();
+    const selectAll = screen.getByRole("checkbox", { name: "Select all" });
+    fireEvent.click(selectAll);
+    expect(screen.getByText("5 items selected")).toBeTruthy();
+
+    fireEvent.click(selectAll);
+    expect(screen.queryByText("5 items selected")).toBeNull();
   });
 });

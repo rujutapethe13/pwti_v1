@@ -96,21 +96,26 @@ async function fetchAllBoards(): Promise<
   }
 
   const supabase = await createServiceClient();
-  const { data, error } = await supabase
-    .from("boards")
-    .select("id, name, slug, workspace_id, status")
-    .neq("status", "archived")
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch boards for client-360:", error);
-    return boardsCache ? boardsCache.data : [];
+  const allRows: DatabaseRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("boards")
+      .select("id, name, slug, workspace_id, status")
+      .neq("status", "archived")
+      .order("created_at", { ascending: true })
+      .range(from, from + 999);
+    if (error) {
+      console.error("Failed to fetch boards for client-360:", error);
+      return boardsCache ? boardsCache.data : [];
+    }
+    allRows.push(...((data ?? []) as DatabaseRow[]));
+    if (!data || data.length < 1000) break;
   }
 
-  const result = (data ?? []).map((row) => ({
+  const result = allRows.map((row) => ({
     id: asString(row.id),
     name: asString(row.name),
-    slug: asString(row.slug, row.id),
+    slug: asString(String(row.slug ?? row.id)),
     workspace_id: asString(row.workspace_id),
     status: asString(row.status, "active"),
   }));
@@ -228,20 +233,25 @@ async function fetchColumnsForBoards(boardIds: string[]): Promise<BoardColumns[]
 async function fetchRecordsForBoards(boardIds: string[]): Promise<BoardRecords[]> {
   if (boardIds.length === 0) return [];
   const supabase = await createServiceClient();
-  const { data, error } = await supabase
-    .from("records")
-    .select("*")
-    .in("board_id", boardIds)
-    .neq("status", "archived")
-    .order("created_at", { ascending: true });
-
-  if (error) {
-    console.error("Failed to fetch records for client-360:", error);
-    return [];
+  const allRows: DatabaseRow[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from("records")
+      .select("*")
+      .in("board_id", boardIds)
+      .neq("status", "archived")
+      .order("created_at", { ascending: true })
+      .range(from, from + 999);
+    if (error) {
+      console.error("Failed to fetch records for client-360:", error);
+      return [];
+    }
+    allRows.push(...((data ?? []) as DatabaseRow[]));
+    if (!data || data.length < 1000) break;
   }
 
   const byBoard = new Map<string, BoardRecords>();
-  for (const row of (data ?? []) as DatabaseRow[]) {
+  for (const row of allRows) {
     const boardId = asString(row.board_id ?? row.boardId);
     if (!byBoard.has(boardId)) {
       byBoard.set(boardId, { boardId, records: [] });
@@ -320,15 +330,21 @@ async function fetchCellValuesForBoards(boardIds: string[]): Promise<BoardCellVa
     chunks.push(boardIds.slice(i, i + 50));
   }
 
-  const results = await Promise.all(
-    chunks.map((chunk) =>
-      supabase
+  const results = await Promise.all(chunks.map(async (chunk) => {
+    const rows: DatabaseRow[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
         .from("cell_values")
         .select("*")
         .in("board_id", chunk)
         .order("updated_at", { ascending: false })
-    )
-  );
+        .range(from, from + 999);
+      if (error) return { data: null, error };
+      rows.push(...((data ?? []) as DatabaseRow[]));
+      if (!data || data.length < 1000) break;
+    }
+    return { data: rows, error: null };
+  }));
 
   const byBoard = new Map<string, BoardCellValues>();
   for (const { data, error } of results) {

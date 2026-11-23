@@ -63,6 +63,13 @@ export interface OverviewDrilldownPayload {
     turnaroundSample: number;
     turnaroundExcluded: number;
     completedWithUpload: number;
+    /** Completed jobs split by where their received date falls relative to the window. */
+    completedReconciliation: {
+      total: number;
+      receivedInPeriod: number;
+      receivedEarlier: number;
+      noReceivedDate: number;
+    };
     priorJobsReceived: number;
     priorJobsCompleted: number;
     priorBoardsTouched: number;
@@ -161,6 +168,11 @@ export async function fetchOverviewDrilldown(
     jobs = jobs.filter((j) => allowed.has(j.board_id));
   }
 
+  // Completed is driven only by boards that map an upload date column. Boards
+  // without a mapping are excluded from the count and listed in the footnote.
+  const unmappedBoards = new Set(scope.boardsWithoutUploadMapping.map((b) => b.board_id));
+  const mappedJobs = jobs.filter((j) => !unmappedBoards.has(j.board_id));
+
   const allItems = jobs.map((j) => toItem(j, todayIST, user));
   const periodJobs = jobs.filter((j) => isJobReceivedInRange(j, window.from, window.to));
   const periodItems = periodJobs.map((j) => toItem(j, todayIST, user)).sort((a, b) => (b.received_at ?? "").localeCompare(a.received_at ?? ""));
@@ -204,11 +216,18 @@ export async function fetchOverviewDrilldown(
     return d >= 0 ? d : null;
   }).filter((v): v is number => v != null);
 
-  const currentCompleted = completedUploadedJobs(jobs, window.from, window.to);
-  const priorCompleted = completedUploadedJobs(jobs, priorWin.from, priorWin.to);
+  const currentCompleted = completedUploadedJobs(mappedJobs, window.from, window.to);
+  const priorCompleted = completedUploadedJobs(mappedJobs, priorWin.from, priorWin.to);
   const jobsCompleted = currentCompleted.length;
   const priorJobsCompleted = priorCompleted.length;
   const completedWithUpload = jobsCompleted;
+
+  const completedReceivedInPeriod = currentCompleted.filter((j) =>
+    isJobReceivedInRange(j, window.from, window.to),
+  ).length;
+  const completedNoReceivedDate = currentCompleted.filter((j) => !j.received_date).length;
+  const completedReceivedEarlier =
+    jobsCompleted - completedReceivedInPeriod - completedNoReceivedDate;
 
   const typeCounts = new Map<string, number>();
   for (const j of periodJobs) {
@@ -249,6 +268,12 @@ export async function fetchOverviewDrilldown(
       turnaroundSample: turnaroundVals.length,
       turnaroundExcluded: periodJobs.length - turnaroundVals.length,
       completedWithUpload,
+      completedReconciliation: {
+        total: jobsCompleted,
+        receivedInPeriod: completedReceivedInPeriod,
+        receivedEarlier: completedReceivedEarlier,
+        noReceivedDate: completedNoReceivedDate,
+      },
       priorJobsReceived: priorJobs.length,
       priorJobsCompleted,
       priorBoardsTouched: new Set(priorJobs.map((j) => j.board_id)).size,

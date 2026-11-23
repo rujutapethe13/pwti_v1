@@ -1,9 +1,8 @@
-import "server-only";
+﻿import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getLiveJobScope, isJobReceivedInRange, isJobUploadedInRange, type LiveJobRow } from "@/features/client-360/live-job-scope";
 import { fetchDataBounds } from "@/features/overview/data-bounds";
-
-import { checkAndRefreshSnapshotIfNeeded } from "@/features/client-360/daily-activity-service";
 import {
   buildVolumeBuckets,
   pickVolumeGranularity,
@@ -21,202 +20,101 @@ import type { VolumeTrendPayload } from "@/features/overview/volume-trend";
 export interface VolumeTrendOptions {
   organizationId: string;
   range: ResolvedTimeRange;
-  /** Restricts the query to specific workspaces. Null means all in the org. */
   workspaceIds?: string[] | null;
-  /** Overridable so tests can pin "today"; defaults to the real clock. */
+  boardIds?: string[] | null;
   today?: Date;
 }
 
-interface ServerBucket {
-  key: string;
-  jobs: number;
+function toDateKeyIST(date: Date): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
-function toCount(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : 0;
-}
-
-function toBoolean(value: unknown): boolean {
-  return value === true || value === "true" || value === 1;
-}
-
-function toDateKeyOrNull(value: unknown): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-function parseBuckets(value: unknown): ServerBucket[] {
-  if (!Array.isArray(value)) return [];
-  const buckets: ServerBucket[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    if (typeof record.key !== "string" || record.key.length === 0) continue;
-    buckets.push({ key: record.key, jobs: toCount(record.jobs) });
+function bucketKeyForDate(dayKey: string, granularity: VolumeGranularity): string {
+  const d = new Date(`${dayKey}T00:00:00Z`);
+  if (granularity === "month") return dayKey.slice(0, 7);
+  if (granularity === "week") {
+    const day = d.getUTCDay();
+    d.setUTCDate(d.getUTCDate() - day);
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const da = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${da}`;
   }
-  return buckets;
+  return dayKey;
 }
 
-function parseCoverage(value: unknown): RangeCoverage {
-  if (!value || typeof value !== "object") return EMPTY_COVERAGE;
-  const record = value as Record<string, unknown>;
-  return {
-    totalRows: toCount(record.total_rows),
-    datedRows: toCount(record.dated_rows),
-    inRange: toCount(record.in_range),
-    beforeRange: toCount(record.before_range),
-    afterRange: toCount(record.after_range),
-    undated: toCount(record.undated),
-    earliest: toDateKeyOrNull(record.earliest),
-    latest: toDateKeyOrNull(record.latest),
-  };
-}
-
-/** Local-midnight `YYYY-MM-DD` for a date, matching the snapshot's date keys. */
-function toDateKey(date: Date): string {
-  return [
-    date.getFullYear(),
-    String(date.getMonth() + 1).padStart(2, "0"),
-    String(date.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
-/**
- * Rebuilds a full, zero-filled bucket series from the buckets the database
- * grouped.
- *
- * The server returns only buckets that hold data, so the axis still has to be
- * built here — otherwise a quiet fortnight would collapse the chart instead of
- * showing a flat run of zeros. Buckets are matched by the same key function the
- * server used, so day, week and month axes all line up.
- */
-function toZeroFilledSeries(
-  serverBuckets: ServerBucket[],
-  from: string,
-  to: string,
-  granularity: VolumeGranularity,
-): VolumeBucket[] {
-  const axis = buildVolumeBuckets(
-    new Date(`${from}T00:00:00`),
-    new Date(`${to}T00:00:00`),
-    granularity,
-  );
-
+function toZeroFilled(from: string, to: string, granularity: VolumeGranularity, counts: Map<string, number>): VolumeBucket[] {
+  const axis = buildVolumeBuckets(new Date(`${from}T00:00:00`), new Date(`${to}T00:00:00`), granularity);
   const totals = new Map<string, number>();
-  for (const bucket of serverBuckets) {
-    totals.set(bucket.key, (totals.get(bucket.key) ?? 0) + bucket.jobs);
-  }
-
-  for (const [key, bucket] of axis) {
-    bucket.jobs = totals.get(key) ?? 0;
-  }
-
-  const buckets = Array.from(axis.values());
-
-  // Any server bucket the axis does not contain would otherwise vanish with no
-  // error at all. That is exactly how a week-key convention mismatch between SQL
-  // and this file turned a populated chart into a flat zero line. Surface the
-  // orphan instead of dropping its value.
-  const orphaned = [...totals.keys()].filter((key) => !axis.has(key));
-  if (orphaned.length > 0) {
-    console.warn(
-      `Overview volume trend: ${orphaned.length} server bucket(s) fall outside the ` +
-        `${granularity} axis and would be dropped, e.g. ${orphaned.slice(0, 3).join(", ")}`,
-    );
-    for (const key of orphaned) {
-      buckets.push({ key, label: key, jobs: totals.get(key) ?? 0 });
-    }
-    buckets.sort((a, b) => a.key.localeCompare(b.key));
-  }
-
-  return buckets;
+  for (const [key, value] of counts.entries()) totals.set(key, (totals.get(key) ?? 0) + value);
+  for (const [key, bucket] of axis) bucket.jobs = totals.get(key) ?? 0;
+  return Array.from(axis.values());
 }
 
-/**
- * Fetches the two bucket series (received + completed) for a range.
- *
- * The range filter AND the bucketing both happen in the database: the window is
- * applied to the real `job_date` / `completed_date` DATE columns and grouped
- * with `date_trunc`. Nothing is parsed or grouped from strings in the browser,
- * which is what previously made a 1-year range build 366 buckets client-side and
- * left the chart empty whenever the underlying dates were not ISO.
- *
- * The received series is always returned. The completed series is returned only
- * when the organization maps a real completion-date column somewhere, and
- * `completedDateAvailable` says so — the client hides the toggle otherwise rather
- * than drawing a flat line that means "no data", not "no completions".
- */
+function computeCoverage(jobs: LiveJobRow[], from: string, to: string): RangeCoverage {
+  let datedRows = 0;
+  let inRange = 0;
+  let beforeRange = 0;
+  let afterRange = 0;
+  let undated = 0;
+  let earliest: string | null = null;
+  let latest: string | null = null;
+  for (const job of jobs) {
+    if (!job.received_date) { undated += 1; continue; }
+    datedRows += 1;
+    const d = job.received_date;
+    if (earliest == null || d < earliest) earliest = d;
+    if (latest == null || d > latest) latest = d;
+    if (d >= from && d <= to) inRange += 1;
+    else if (d < from) beforeRange += 1;
+    else afterRange += 1;
+  }
+  return { totalRows: jobs.length, datedRows, inRange, beforeRange, afterRange, undated, earliest, latest };
+}
+
 export async function fetchVolumeTrend(
-  supabase: SupabaseClient,
-  { organizationId, range, workspaceIds = null, today = new Date() }: VolumeTrendOptions,
-): Promise<VolumeTrendPayload> {
-  // Records written moments ago only reach the snapshot on refresh; without it
-  // the chart would under-report today's volume.
-  console.log("[TEMP-LOG] fetchVolumeTrend — org:", organizationId, "range:", JSON.stringify(range), "workspaceIds:", workspaceIds);
-  await checkAndRefreshSnapshotIfNeeded(supabase);
-
-  const bounds = await fetchDataBounds(supabase, organizationId, workspaceIds);
-  console.log("[TEMP-LOG] volume-trend data bounds:", JSON.stringify(bounds));
-
-  const window =
-    range.id === "all"
-      ? narrowAllTimeRange(range, bounds)
-      : range;
-
-  const granularity = pickVolumeGranularity(window.days);
-  console.log("[TEMP-LOG] volume-trend narrowed window:", JSON.stringify(window), "granularity:", granularity);
-
-  const { data, error } = await supabase.rpc("overview_volume_trend", {
-    p_organization_id: organizationId,
-    p_workspace_ids: workspaceIds,
-    p_from: window.from,
-    p_to: window.to,
-    p_granularity: granularity,
-  });
-
-  if (error) {
-    console.error("[TEMP-LOG] overview_volume_trend RPC error:", error.message);
-    throw new Error(
-      `Failed to fetch volume trend data: ${error.message || String(error)}`,
-    );
+  _supabase: SupabaseClient,
+  { organizationId, range, boardIds = null, today = new Date() }: VolumeTrendOptions,
+): Promise<VolumeTrendPayload & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; boardsWithoutUploadDate: Array<{ board_id: string; board_name: string }>; missingReceivedDateCount: number }> {
+  const scope = await getLiveJobScope(organizationId);
+  let jobs = scope.jobs;
+  if (boardIds && boardIds.length > 0) {
+    const allowed = new Set(boardIds);
+    jobs = jobs.filter((j) => allowed.has(j.board_id));
   }
 
-  console.log("[TEMP-LOG] overview_volume_trend raw result:", JSON.stringify(data));
-  const root = (data ?? {}) as Record<string, unknown>;
+  const bounds = await fetchDataBounds(_supabase, organizationId, null);
+  const window = range.id === "all" ? narrowAllTimeRange(range, bounds) : range;
+  const granularity = pickVolumeGranularity(window.days);
 
-  const received = toZeroFilledSeries(
-    parseBuckets(root.received),
-    window.from,
-    window.to,
-    granularity,
-  );
-  const completed = toZeroFilledSeries(
-    parseBuckets(root.completed),
-    window.from,
-    window.to,
-    granularity,
-  );
+  const receivedCounts = new Map<string, number>();
+  const completedCounts = new Map<string, number>();
+  for (const job of jobs) {
+    if (isJobReceivedInRange(job, window.from, window.to)) {
+      const key = bucketKeyForDate(job.received_date!, granularity);
+      receivedCounts.set(key, (receivedCounts.get(key) ?? 0) + 1);
+    }
+    if (isJobUploadedInRange(job, window.from, window.to)) {
+      const key = bucketKeyForDate(job.upload_date!, granularity);
+      completedCounts.set(key, (completedCounts.get(key) ?? 0) + 1);
+    }
+  }
 
-  console.log("[TEMP-LOG] volume-trend received buckets:", JSON.stringify(received));
-  console.log("[TEMP-LOG] volume-trend completed buckets:", JSON.stringify(completed));
-  console.log("[TEMP-LOG] volume-trend completedDateAvailable:", toBoolean(root.completed_date_available));
-  console.log("[TEMP-LOG] volume-trend coverage:", JSON.stringify(parseCoverage(root.coverage)));
+  const received = toZeroFilled(window.from, window.to, granularity, receivedCounts);
+  const completed = toZeroFilled(window.from, window.to, granularity, completedCounts);
+  const coverage = computeCoverage(jobs, window.from, window.to);
+  const completedDateAvailable = jobs.some((j) => j.upload_date != null) || scope.boardsWithUploadDate.length > 0;
 
   return {
-    range: {
-      id: window.id,
-      label: window.label,
-      from: window.from,
-      to: window.to,
-      days: window.days,
-      granularity,
-      today: toDateKey(today),
-    },
+    range: { id: window.id, label: window.label, from: window.from, to: window.to, days: window.days, granularity, today: toDateKeyIST(today) },
     received,
     completed,
-    completedDateAvailable: toBoolean(root.completed_date_available),
-    coverage: parseCoverage(root.coverage),
+    completedDateAvailable,
+    coverage,
+    generatedAt: scope.generatedAt,
+    todayIST: scope.todayIST,
+    boardsWithoutUploadMapping: scope.boardsWithoutUploadMapping,
+    boardsWithoutUploadDate: scope.boardsWithoutUploadDate,
+    missingReceivedDateCount: scope.missingReceivedDate.length,
   };
 }
-
-

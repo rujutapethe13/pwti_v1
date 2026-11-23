@@ -1,0 +1,12 @@
+﻿const fs=require('fs');
+let raw=fs.readFileSync('scripts/_step1deep2.txt','utf8');
+if(raw.charCodeAt(0)===0xFEFF) raw=raw.slice(1);
+const d=JSON.parse(raw);
+console.log('===COUNTS==='); console.log(JSON.stringify(d.counts,null,2));
+console.log('===HIDDEN==='); console.log(JSON.stringify(d.hiddenTargets,null,2));
+console.log('===DENY==='); console.log(JSON.stringify({denyHits:d.denyHits,denyAliasHits:d.denyAliasHits},null,2));
+console.log('===BOARDS==='); console.log(JSON.stringify({allBoardsStatus:d.allBoardsStatus,jobsDataBoards:d.jobsDataBoards},null,2));
+console.log('===OCT==='); console.log(JSON.stringify(d.october,null,2));
+console.log('===OTHER_UNMAPPED==='); console.log(JSON.stringify(d.otherUnmapped,null,2));
+console.log('===STATUS_BY_BOARD==='); console.log(JSON.stringify(d.statusByBoard,null,2));
+console.log('===SAFLEV==='); console.log(JSON.stringify({snapSafari:d.snapSafari,snapLevis:d.snapLevis,recSafari:d.recSafari,recLevis:d.recLevis,safBoards:d.safBoards,levBoards:d.levBoards},null,2));

@@ -287,6 +287,8 @@ export const JOB_TYPE_COLUMN_NAME_HINTS = [
   "specialty",
 ];
 
+export const JOB_COLUMN_NAME_HINTS = ["job"];
+
 /** Column types eligible to hold a job-type value. */
 export const JOB_TYPE_COLUMN_TYPES = [
   "dropdown",
@@ -307,6 +309,18 @@ export function isJobTypeColumn(column: { label: string; type: string; settings?
   if (labelLower.includes("status")) return false;
   if (!JOB_TYPE_COLUMN_TYPES.includes(column.type)) return false;
   return JOB_TYPE_COLUMN_NAME_HINTS.some((hint) => labelLower.includes(hint));
+}
+
+/**
+ * Returns true when a column is a "Job" column — a column labeled "Job" that
+ * contains the job category/name (e.g. "Banner", "Video"). This is distinct
+ * from "Job Type" which describes the kind of work (e.g. "Retouching").
+ */
+export function isJobColumn(column: { label: string; type: string; settings?: Record<string, unknown> }): boolean {
+  const labelLower = column.label.toLowerCase();
+  if (labelLower.includes("status")) return false;
+  if (!JOB_TYPE_COLUMN_TYPES.includes(column.type)) return false;
+  return JOB_COLUMN_NAME_HINTS.some((hint) => labelLower === hint || labelLower.startsWith(hint + " ") || labelLower.endsWith(" " + hint) || labelLower.includes(" " + hint + " "));
 }
 export const DEFAULT_PAGE_SIZE = 50;
 export const SEARCH_DEBOUNCE_MS = 200;

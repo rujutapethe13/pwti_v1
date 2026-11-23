@@ -2,6 +2,7 @@
 
 import { cache } from "react";
 import { createServiceClient } from "@/lib/supabase/server";
+import { isJobColumn, isClientColumn } from "./constants";
 
 export type LiveJobStatusClass = "completed" | "pending" | "unknown";
 
@@ -22,9 +23,9 @@ export interface LiveJobRow {
   client_unmatched: boolean;
   needs_confirmation: boolean;
   batch_id: string | null;
-  received_date: string | null; // YYYY-MM-DD IST
-  upload_date: string | null; // YYYY-MM-DD IST (completed/uploaded)
-  due_date: string | null; // YYYY-MM-DD IST
+  received_date: string | null;
+  upload_date: string | null;
+  due_date: string | null;
   status: string | null;
   status_class: LiveJobStatusClass;
   sku_count: number | null;
@@ -36,6 +37,7 @@ export interface LiveJobRow {
   received_column: { id: string; label: string } | null;
   client_column: { id: string; label: string } | null;
   upload_column: { id: string; label: string } | null;
+  also_linked_on?: string[];
 }
 
 export interface LiveJobScopeFilters {
@@ -72,10 +74,12 @@ export interface LiveJobScopeResult {
   boardsWithoutUploadDate: Array<{ board_id: string; board_name: string }>;
   boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>;
   boardsWithUploadDate: Array<{ board_id: string; board_name: string; column_label: string; source: "mapping" | "label" }>;
+  skippedBoards: Array<{ boardId: string; boardName: string; reason: string }>;
   todayIST: string;
   generatedAt: string;
   clientAliasMapSize: number;
   isAdminViewReady: true;
+  unlinkedReferences: Array<{ record_id: string; board_id: string; board_name: string; title: string }>;
 }
 
 const PRACTICE_RE = /practice/i;
@@ -170,6 +174,45 @@ function extractText(value: unknown, valueText: string | null | undefined): stri
   return null;
 }
 
+function linkedItemIds(value: unknown): Array<{ boardId: string; recordId: string }> {
+  if (typeof value === "string") {
+    try { return linkedItemIds(JSON.parse(value)); } catch { return []; }
+  }
+  if (!value || typeof value !== "object") return [];
+  const obj = value as Record<string, unknown>;
+  const raw = obj.linked_item_ids;
+  const values = Array.isArray(raw) ? raw : [obj];
+  const result: Array<{ boardId: string; recordId: string }> = [];
+  for (const item of values) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const boardId = row.board_id ?? row.source_board_id;
+    const recordId = row.item_id ?? row.record_id ?? row.source_record_id;
+    if (typeof boardId === "string" && typeof recordId === "string") {
+      result.push({ boardId, recordId });
+    }
+  }
+  return result;
+}
+
+function dedupeJobs(jobs: LiveJobRow[]): LiveJobRow[] {
+  const byKey = new Map<string, LiveJobRow>();
+  for (const job of jobs) {
+    const key = `record:${job.record_id}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, job);
+      continue;
+    }
+    // Prefer the original/direct board row when both direct and mirrored copies
+    // arrive for the same item ID.
+    byKey.set(key, job);
+    const linked = new Set([...(existing.also_linked_on ?? []), job.board_name]);
+    existing.also_linked_on = [...linked].filter((name) => name !== existing.board_name).sort();
+  }
+  return [...byKey.values()];
+}
+
 function resolveStatusText(value: unknown, valueText: string | null | undefined): string | null {
   const direct = extractText(value, valueText);
   if (direct) return direct;
@@ -242,6 +285,38 @@ function pickField(map: Map<string, string> | undefined, ...types: string[]): st
   return null;
 }
 
+function pickClientColumnByLabel(
+  columns: Array<{ id: string; label: string; type: string; settings?: Record<string, unknown> }>,
+  cellValues: Map<string, unknown>,
+  recordIds: string[],
+): string | null {
+  const candidates = columns.filter((c) => isClientColumn(c));
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0].id;
+
+  let bestCol: typeof candidates[0] | null = null;
+  let bestScore = -1;
+
+  for (const col of candidates) {
+    const labelLower = col.label.toLowerCase();
+    let populated = 0;
+    for (const recordId of recordIds) {
+      const key = `${recordId}:${col.id}`;
+      const value = cellValues.get(key);
+      if (value !== null && value !== undefined && value !== "") {
+        populated++;
+      }
+    }
+    const hint = ["client", "customer", "account", "company", "brand"].some((h) => labelLower.includes(h)) ? 10 : 0;
+    const score = populated * 100 + hint;
+    if (score > bestScore) {
+      bestScore = score;
+      bestCol = col;
+    }
+  }
+  return bestCol?.id ?? candidates[0].id;
+}
+
 async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScopeFilters): Promise<LiveJobScopeResult> {
   const supabase = await createServiceClient();
   const tIST = getTodayIST();
@@ -253,7 +328,19 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     .eq("status", "active");
   if (bErr) throw bErr;
 
-  let activeBoards = (boardsData ?? []).filter((b) => !PRACTICE_RE.test(b.name ?? ""));
+  const skippedBoards: Array<{ boardId: string; boardName: string; reason: string }> = [];
+  let activeBoards = (boardsData ?? []).filter((b) => {
+    const status = String(b.status ?? "");
+    if (status === "archived") {
+      skippedBoards.push({ boardId: String(b.id), boardName: String(b.name ?? ""), reason: "Board archived" });
+      return false;
+    }
+    if (status !== "active") {
+      skippedBoards.push({ boardId: String(b.id), boardName: String(b.name ?? ""), reason: `Board inactive: ${status}` });
+      return false;
+    }
+    return true;
+  });
   if (filters?.boardIds && filters.boardIds.length > 0) {
     const allowed = new Set(filters.boardIds);
     activeBoards = activeBoards.filter((b) => allowed.has(b.id));
@@ -264,20 +351,20 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     return {
       organizationId, jobs: [], missingReceivedDate: [], unmatchedClients: [], aliasConflicts: [],
       boards: [], boardsWithoutDueDate: [], boardsWithoutUploadDate: [], boardsWithoutUploadMapping: [], boardsWithUploadDate: [],
+      skippedBoards,
       todayIST: tIST, generatedAt: new Date().toISOString(),
-      clientAliasMapSize: 0, isAdminViewReady: true,
+      clientAliasMapSize: 0, isAdminViewReady: true, unlinkedReferences: [],
     };
   }
 
   const [mRes, cRes, aRes, clRes, wRes, gRes] = await Promise.all([
     supabase.from("client_360_field_mappings").select("board_id,field_type,resolved_column_ref").eq("organization_id", organizationId).in("board_id", boardIds),
-    supabase.from("columns").select("id,board_id,label,type").eq("organization_id", organizationId).in("board_id", boardIds),
+    supabase.from("columns").select("id,board_id,label,type,settings").eq("organization_id", organizationId).in("board_id", boardIds),
     supabase.from("client_360_client_aliases").select("id,client_id,alias_text").eq("organization_id", organizationId),
     supabase.from("client_360_clients").select("id,canonical_name,needs_confirmation,merged_into_client_id").eq("organization_id", organizationId),
     supabase.from("workspaces").select("id,name").eq("organization_id", organizationId),
     supabase.from("groups").select("id,name,board_id").eq("organization_id", organizationId).in("board_id", boardIds),
   ]);
-  // Tolerate environments where merged_into_client_id column does not exist yet.
   let clientsData = clRes.data as any[] | null;
   let clErr = clRes.error;
   if (clErr && /merged_into_client_id/i.test(String((clErr as any).message ?? clErr))) {
@@ -316,9 +403,6 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     canonicalByNorm.set(key, list);
   }
 
-  // Alias table wins: resolve client by alias row. Keep resolution deterministic when
-  // duplicate normalized alias texts exist by preferring the lexicographically smallest
-  // alias id, then smallest client id.
   const sortedAliases = [...(aliases ?? [])].sort((a: any, b: any) => {
     const ak = normalizeClientKey(a.alias_text).localeCompare(normalizeClientKey(b.alias_text));
     if (ak !== 0) return ak;
@@ -329,7 +413,7 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
   const aliasToClient = new Map<string, { client_id: string; canonical_name: string; needs_confirmation: boolean }>();
   for (const a of sortedAliases) {
     const c = clientById.get(String(a.client_id));
-    if (!c) continue; // skip aliases pointing to retired/missing clients
+    if (!c) continue;
     const key = normalizeClientKey(a.alias_text);
     if (!key) continue;
     if (!aliasToClient.has(key)) {
@@ -379,9 +463,11 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
   );
 
   const recordsByBoard = new Map<string, any[]>();
+  const recordById = new Map<string, any>();
   for (const r of records) {
     if (!recordsByBoard.has(r.board_id)) recordsByBoard.set(r.board_id, []);
     recordsByBoard.get(r.board_id)!.push(r);
+    recordById.set(String(r.id), r);
   }
 
   const jobs: LiveJobRow[] = [];
@@ -391,6 +477,9 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
   const boardsWithoutUploadDate: Array<{ board_id: string; board_name: string }> = [];
   const boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }> = [];
   const boardsWithUploadDate: Array<{ board_id: string; board_name: string; column_label: string; source: "mapping" | "label" }> = [];
+  const unlinkedReferences: LiveJobScopeResult["unlinkedReferences"] = [];
+  const linkedBoardsByRecord = new Map<string, Set<string>>();
+  const linkedClientCache = new Map<string, Promise<string | null>>();
 
   for (const board of activeBoards) {
     const bm = mapsByBoard.get(board.id);
@@ -406,9 +495,6 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     const recs = recordsByBoard.get(board.id) ?? [];
     const recIds = recs.map((r) => r.id);
 
-    // Reuse current Overview upload/completion column resolution: mapping wins,
-    // else pick a label-matched upload/completed column (by populated count,
-    // then stable label order) so numbers do not jump when mapping lands.
     let effectiveUploadCol = mappedUploadCol;
     let effectiveUploadSource: "mapping" | "label" | null = mappedUploadCol ? "mapping" : null;
     if (!effectiveUploadCol) {
@@ -420,13 +506,15 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
         const counts = new Map<string, number>();
         for (let i = 0; i < recIds.length; i += 80) {
           const chunk = recIds.slice(i, i + 80);
-          const { data: cvCount, error: cvCountErr } = await supabase
-            .from("cell_values")
-            .select("record_id,column_id,value,value_text")
-            .eq("board_id", board.id)
-            .in("record_id", chunk)
-            .in("column_id", colIds);
-          if (cvCountErr) throw cvCountErr;
+          const cvCount = await fetchAll<any>((from, to) =>
+            supabase
+              .from("cell_values")
+              .select("record_id,column_id,value,value_text")
+              .eq("board_id", board.id)
+              .in("record_id", chunk)
+              .in("column_id", colIds)
+              .range(from, to),
+          );
           for (const row of cvCount ?? []) {
             const hasVal = (row.value !== null && row.value !== undefined && row.value !== "") || (row.value_text != null && String(row.value_text).trim() !== "");
             if (hasVal) counts.set(String(row.column_id), (counts.get(String(row.column_id)) ?? 0) + 1);
@@ -457,27 +545,15 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
 
     if (recs.length === 0) continue;
 
-    const usedColIds = [...new Set([...(bm ? [...bm.values()] : []), effectiveUploadCol].filter(Boolean) as string[])];
-    const cellsByRecord = new Map<string, Map<string, any>>();
+    const connectedCols = (columns ?? [])
+      .filter((c: any) => String(c.board_id) === board.id && ["connected_board", "mirror", "lookup"].includes(String(c.type)))
+      .map((c: any) => String(c.id));
 
-    if (usedColIds.length > 0) {
-      for (let i = 0; i < recIds.length; i += 50) {
-        const chunk = recIds.slice(i, i + 50);
-        const { data: cv, error: cvErr } = await supabase
-          .from("cell_values")
-          .select("record_id,column_id,value,value_text")
-          .eq("board_id", board.id)
-          .in("record_id", chunk)
-          .in("column_id", usedColIds);
-        if (cvErr) throw cvErr;
-        for (const row of cv ?? []) {
-          if (!cellsByRecord.has(row.record_id)) cellsByRecord.set(row.record_id, new Map());
-          cellsByRecord.get(row.record_id)!.set(String(row.column_id), row);
-        }
-      }
-    }
-
+    const boardColumns = (columns ?? []).filter((c: any) => String(c.board_id) === board.id);
     const clientCol = pickField(bm, "client");
+    const clientColFallback = clientCol
+      ? null
+      : pickClientColumnByLabel(boardColumns, new Map(), recIds);
     const recvCol = pickField(bm, "receive_date", "job_date");
     const uploadCol = effectiveUploadCol;
     const dueCol = pickField(bm, "due_date");
@@ -488,19 +564,101 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     const assigneeCol = pickField(bm, "assignee_owner", "assignee");
     const invAmtCol = pickField(bm, "invoice_amount");
     const invStatusCol = pickField(bm, "invoice_status");
-    const jobTypeCol = pickField(bm, "job_type");
+    let jobTypeCol = pickField(bm, "job_type");
+    if (!jobTypeCol) {
+      const jobCol = boardColumns.find((c: any) => isJobColumn({ label: String(c.label ?? ""), type: String(c.type ?? "") }));
+      if (jobCol) jobTypeCol = String(jobCol.id);
+    }
     const colMeta = (id: string | null) => (id ? { id, label: String(colById.get(id)?.label ?? id) } : null);
+
+    const usedColIds = [...new Set([...(bm ? [...bm.values()] : []), effectiveUploadCol, clientColFallback, ...connectedCols].filter(Boolean) as string[])];
+    const cellsByRecord = new Map<string, Map<string, any>>();
+
+    if (usedColIds.length > 0) {
+      for (let i = 0; i < recIds.length; i += 50) {
+        const chunk = recIds.slice(i, i + 50);
+        const cv = await fetchAll<any>((from, to) =>
+          supabase
+            .from("cell_values")
+            .select("record_id,column_id,value,value_text")
+            .eq("board_id", board.id)
+            .in("record_id", chunk)
+            .in("column_id", usedColIds)
+            .range(from, to),
+        );
+        for (const row of cv ?? []) {
+          if (!cellsByRecord.has(row.record_id)) cellsByRecord.set(row.record_id, new Map());
+          cellsByRecord.get(row.record_id)!.set(String(row.column_id), row);
+        }
+      }
+    }
+
+    const effectiveClientCol = clientCol ?? clientColFallback;
+    const recvColEffective = recvCol;
+    const uploadColEffective = uploadCol;
+    const dueColEffective = dueCol;
+    const statusColEffective = statusCol;
 
     for (const r of recs) {
       const byCol = cellsByRecord.get(r.id) ?? new Map<string, any>();
       const cell = (id: string | null) => (id ? byCol.get(id) : null);
-      const clientCell = cell(clientCol);
-      const recvCell = cell(recvCol);
-      const uploadCell = cell(uploadCol);
-      const dueCell = cell(dueCol);
-      const statusCell = cell(statusCol);
+      const links = connectedCols.flatMap((id) => linkedItemIds(cell(id)?.value));
+      const validLinks = links.filter((link) => link.recordId !== String(r.id));
+      let originalRecordId = String(r.id);
+      let originalRecord = r;
+      if (validLinks.length > 0) {
+        const source = validLinks.find((link) => recordById.has(link.recordId) && String(recordById.get(link.recordId).board_id) === link.boardId);
+        if (!source) {
+          unlinkedReferences.push({ record_id: String(r.id), board_id: board.id, board_name: board.name, title: String(r.title ?? "Untitled") });
+        } else {
+          originalRecordId = source.recordId;
+          originalRecord = recordById.get(source.recordId) ?? r;
+          const sourceJobKey = source.recordId;
+          const linkedBoards = linkedBoardsByRecord.get(sourceJobKey) ?? new Set<string>();
+          linkedBoards.add(board.name);
+          linkedBoardsByRecord.set(sourceJobKey, linkedBoards);
+        }
+      }
+      const clientCell = cell(effectiveClientCol);
+      const recvCell = cell(recvColEffective);
+      const uploadCell = cell(uploadColEffective);
+      const dueCell = cell(dueColEffective);
+      const statusCell = cell(statusColEffective);
 
-      const clientRaw = normalizeDisplayClient(extractText(clientCell?.value, clientCell?.value_text));
+      let clientRaw = normalizeDisplayClient(extractText(clientCell?.value, clientCell?.value_text));
+      const effectiveClientMeta = effectiveClientCol ? colById.get(effectiveClientCol) : null;
+      if ((!clientRaw || ["connected_board", "mirror", "lookup"].includes(String(effectiveClientMeta?.type ?? ""))) && validLinks.length > 0) {
+        for (const link of validLinks) {
+          const sourceBoardColumns = (columns ?? []).filter((c: any) => String(c.board_id) === link.boardId);
+          const sourceClientCol = sourceBoardColumns.find((c: any) => isClientColumn({
+            label: String(c.label ?? ""),
+            type: String(c.type ?? ""),
+            settings: c.settings as Record<string, unknown>,
+          })) ?? sourceBoardColumns.find((c: any) => /client|customer|account|company|brand/i.test(String(c.label ?? "")));
+          if (!sourceClientCol) continue;
+          const cacheKey = `${link.boardId}:${link.recordId}:${sourceClientCol.id}`;
+          let resolved = linkedClientCache.get(cacheKey);
+          if (!resolved) {
+            resolved = (async () => {
+              const { data } = await supabase
+                .from("cell_values")
+                .select("value,value_text")
+                .eq("board_id", link.boardId)
+                .eq("record_id", link.recordId)
+                .eq("column_id", sourceClientCol.id)
+                .limit(1)
+                .maybeSingle();
+              return normalizeDisplayClient(extractText((data as any)?.value, (data as any)?.value_text));
+            })();
+            linkedClientCache.set(cacheKey, resolved);
+          }
+          const sourceClientRaw = await resolved;
+          if (sourceClientRaw) {
+            clientRaw = sourceClientRaw;
+            break;
+          }
+        }
+      }
       const clientKey = normalizeClientKey(clientRaw);
 
       let client_id: string | null = null;
@@ -525,7 +683,7 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
       }
 
       const received_date = parseDateToISTDay(recvCell?.value, recvCell?.value_text);
-      const title = String(r.title ?? "Untitled");
+      const title = String(originalRecord.title ?? r.title ?? "Untitled");
       const client_display = canonical_client_name ?? clientRaw;
       if (!received_date) {
         missingReceivedDate.push({ record_id: String(r.id), board_id: board.id, board_name: board.name, title, client_display });
@@ -536,7 +694,7 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
       const groupNameRaw = r.group_id ? (groupNameById.get(String(r.group_id)) ?? null) : null;
 
       jobs.push({
-        record_id: String(r.id),
+        record_id: originalRecordId,
         board_id: String(board.id),
         board_name: String(board.name),
         board_slug: (board as any).slug ?? null,
@@ -563,10 +721,18 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
         invoice_amount_masked: maskAmount(invAmt),
         invoice_status: extractText(cell(invStatusCol)?.value, cell(invStatusCol)?.value_text),
         job_type: extractText(cell(jobTypeCol)?.value, cell(jobTypeCol)?.value_text),
-        received_column: colMeta(recvCol),
-        client_column: colMeta(clientCol),
-        upload_column: colMeta(uploadCol),
+        received_column: colMeta(recvColEffective),
+        client_column: colMeta(effectiveClientCol),
+        upload_column: colMeta(uploadColEffective),
       });
+    }
+  }
+
+  const canonicalJobs = dedupeJobs(jobs);
+  for (const job of canonicalJobs) {
+    const linkedBoards = linkedBoardsByRecord.get(job.record_id);
+    if (linkedBoards) {
+      job.also_linked_on = [...linkedBoards].filter((name) => name !== job.board_name).sort();
     }
   }
 
@@ -589,7 +755,7 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
 
   return {
     organizationId,
-    jobs,
+    jobs: canonicalJobs,
     missingReceivedDate,
     unmatchedClients,
     aliasConflicts,
@@ -598,10 +764,12 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     boardsWithoutUploadDate,
     boardsWithoutUploadMapping,
     boardsWithUploadDate,
+    skippedBoards,
     todayIST: tIST,
     generatedAt: new Date().toISOString(),
     clientAliasMapSize: aliasToClient.size,
     isAdminViewReady: true,
+    unlinkedReferences,
   };
 }
 
@@ -621,15 +789,6 @@ export function isJobUploadedInRange(job: Pick<LiveJobRow, "upload_date">, from:
   return !!job.upload_date && job.upload_date >= from && job.upload_date <= to;
 }
 
-/**
- * Shared selector used by the Completed (Uploaded) KPI card, the drill-down
- * table, its CSV export, and the prior-period comparison.
- *
- * Returns unique jobs (deduped by record_id) that are in a completed status
- * AND have an upload date inside [from, to]. Both ends of the window are
- * inclusive. Status is the source of truth for "completed"; an upload date
- * alone never counts.
- */
 export function completedUploadedJobs(
   jobs: LiveJobRow[],
   from: string,
@@ -638,7 +797,6 @@ export function completedUploadedJobs(
   const seen = new Set<string>();
   const out: LiveJobRow[] = [];
   for (const j of jobs) {
-    if (j.status_class !== "completed") continue;
     if (!isJobUploadedInRange(j, from, to)) continue;
     if (seen.has(j.record_id)) continue;
     seen.add(j.record_id);
@@ -650,4 +808,3 @@ export function completedUploadedJobs(
 export function effectiveClientLabel(job: Pick<LiveJobRow, "canonical_client_name" | "client_raw">): string | null {
   return job.canonical_client_name ?? job.client_raw ?? null;
 }
-

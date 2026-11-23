@@ -704,6 +704,15 @@ export const INITIAL_AUTOMATION_RULES: AutomationRule[] = [
       includeAssignee: true,
       emailSubject: DEFAULT_OVERDUE_EMAIL_SUBJECT,
       emailBody: DEFAULT_OVERDUE_EMAIL_BODY,
+      savedRecipients: DEFAULT_WORKSPACE_ADMINS.map((a) => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        email: a.email,
+      })),
+      customCcEmails: [],
+      customBccEmails: [],
+      emailFrom: "sysadmin@powerpowerweavestudio.com",
     },
   },
   {

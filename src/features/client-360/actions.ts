@@ -13,6 +13,8 @@ import type { PermissionScope } from "@/features/boards/engine/types";
 import type { Client360Profile, DealProject, TimelineActivity, NextBestAction } from "./relationship-types";
 import { getAllClientsFromBoards } from "./client-list-service";
 import type { ClientAnalytics, ClientAnalyticsDateRange } from "./client-analytics-service";
+import type { LiveJobRow } from "./live-job-scope";
+import { resolveClientGroup } from "./client-group";
 
 const CLIENT_ALIAS_GROUPS: Record<string, string[]> = {
   "nasher miles": ["nasher mile", "nasher miles"], bioweaves: ["bioweave", "bioweaves"],
@@ -419,7 +421,7 @@ function paymentTermLabel(days: number | null): string {
 
 export async function getClient360RelationshipProfileAction(
   clientId: string,
-): Promise<{ data: (Client360Profile & { _liveMeta?: { generatedAt: string; unmatchedClients: any[]; aliasConflicts: any[]; boardsWithoutUploadDate: any[]; missingReceivedDateCount: number } }) | null; error: string | null; status: number }> {
+): Promise<{ data: (Client360Profile & { _liveMeta?: { generatedAt: string; unmatchedClients: any[]; aliasConflicts: any[]; boardsWithoutUploadDate: any[]; missingReceivedDateCount: number; boardsScanned: number; itemsFound: number; skippedCount: number; skippedReasons: string[] } }) | null; error: string | null; status: number }> {
   try {
     const organizationId = await getUserOrganizationId();
     if (!organizationId || !clientId) return { data: null, error: "Unable to determine client", status: 400 };
@@ -451,10 +453,18 @@ export async function getClient360RelationshipProfileAction(
       : (names[names.length - 1] ?? requested.canonical_name);
 
     const { getLiveJobScope } = await import("./live-job-scope");
+    const { classifyClientJobs } = await import("./card-data");
     const scope = await getLiveJobScope(organizationId);
-    const jobs = virtualClientName
-      ? scope.jobs.filter((j) => normalizeClient(j.client_raw ?? "") === normalizeClient(virtualClientName))
-      : scope.jobs.filter((j) => j.client_id && ids.has(j.client_id));
+    let classification: Awaited<ReturnType<typeof classifyClientJobs>>;
+    let jobs: LiveJobRow[];
+    if (virtualClientName) {
+      jobs = scope.jobs.filter((j) => normalizeClient(j.client_raw ?? "") === normalizeClient(virtualClientName));
+      classification = { counted: jobs, needsReview: [], notCounted: [] };
+    } else {
+      const group = await resolveClientGroup(organizationId, clientId);
+      classification = await classifyClientJobs(scope.jobs, clientId, group);
+      jobs = classification.counted;
+    }
 
     const { data: activityRows, error: activityError } = await supabase
       .from("activity_logs")
@@ -535,6 +545,13 @@ export async function getClient360RelationshipProfileAction(
         aliasConflicts: scope.aliasConflicts,
         boardsWithoutUploadDate: scope.boardsWithoutUploadDate,
         missingReceivedDateCount: scope.missingReceivedDate.length,
+        boardsScanned: scope.boards.length,
+        itemsFound: scope.jobs.length,
+        skippedCount: scope.skippedBoards.length + scope.unlinkedReferences.length + scope.unmatchedClients.reduce((sum, group) => sum + group.count, 0),
+        skippedReasons: [
+          ...scope.skippedBoards.map((board) => board.reason),
+          ...scope.unlinkedReferences.map(() => "Unlinked mirror reference"),
+        ],
       },
     };
     return { data: profile, error: null, status: 200 };

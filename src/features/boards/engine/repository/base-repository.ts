@@ -152,7 +152,7 @@ export abstract class BaseRepository<T extends { id: string }> {
     const client = await this.getClient(options);
     const now = new Date().toISOString();
 
-    const { data: row, error } = await client
+    const { data: row, error, count } = await client
       .from(this.tableName)
       .update({ status: "archived", archived_at: now, updated_at: now })
       .eq(this.primaryKey, id)
@@ -171,13 +171,16 @@ export abstract class BaseRepository<T extends { id: string }> {
   async hardDelete(id: string, options?: RepositoryOptions): Promise<ApiResponse<null>> {
     const client = await this.getClient(options);
 
-    const { error } = await client
+    const { error, count } = await client
       .from(this.tableName)
-      .delete()
+      .delete({ count: "exact" })
       .eq(this.primaryKey, id);
 
     if (error) {
       return { data: null, error: error.message, status: 500 };
+    }
+    if (!count) {
+      return { data: null, error: "Record not found", status: 404 };
     }
 
     return { data: null, error: null, status: 200 };

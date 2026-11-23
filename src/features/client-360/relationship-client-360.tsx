@@ -154,6 +154,7 @@ export function RelationshipClient360({
   const [possibleDuplicates, setPossibleDuplicates] = React.useState<Array<{ canonicalName: string; similarTo: string; similarity: number }>>([]);
   const [excludedValues, setExcludedValues] = React.useState<Array<{ name: string; reason: string }>>([]);
   const [totalClientsFound, setTotalClientsFound] = React.useState(0);
+  const [dataCheck, setDataCheck] = React.useState<{ boards: number; items: number; skipped: number; reasons: string[] } | null>(null);
 
   // Sync clientData when initialClientId or selectedClientId changes
   React.useEffect(() => {
@@ -196,6 +197,13 @@ export function RelationshipClient360({
         const meta = (profileResult.data as typeof profileResult.data & { _liveMeta?: { generatedAt?: string } })._liveMeta;
         setClientData(profileResult.data);
         if (meta?.generatedAt) setLastSyncTime(`Data as of ${new Date(meta.generatedAt).toLocaleString()}`);
+        const liveMeta = (profileResult.data as any)._liveMeta;
+        if (liveMeta) setDataCheck({
+          boards: liveMeta.boardsScanned ?? 0,
+          items: liveMeta.itemsFound ?? 0,
+          skipped: liveMeta.skippedCount ?? 0,
+          reasons: liveMeta.skippedReasons ?? [],
+        });
       }
       setIsLoadingLiveData(false);
     }
@@ -977,6 +985,13 @@ className={cn(
           </Button>
         </div>
       </div>
+
+      {dataCheck && (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Data check: {dataCheck.boards} boards scanned · {dataCheck.items} items found · {dataCheck.skipped} skipped
+          {dataCheck.reasons.length > 0 ? ` (${Array.from(new Set(dataCheck.reasons)).join(", ")})` : ""}
+        </p>
+      )}
 
       {/* ── Main Sticky Header: Client Title, Financials, Actions ── */}
       <header className="border-b border-border bg-card px-4 py-5 sm:px-6 lg:px-8">

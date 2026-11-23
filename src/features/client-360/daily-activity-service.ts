@@ -1,5 +1,8 @@
 import "server-only";
 
+export type ActivityTasksResponse = any;
+export type ActivityTaskRow = any;
+
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { getUserOrganizationId } from "@/lib/organization";
 import type { SupabaseClient } from "@supabase/supabase-js";

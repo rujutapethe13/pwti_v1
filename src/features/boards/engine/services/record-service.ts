@@ -350,9 +350,11 @@ export const RecordService = {
 
     if (input.permanent) {
       await cellRepo.clearRecord(input.recordId);
-      await recordRepo.hardDelete(input.recordId);
+      const result = await recordRepo.hardDelete(input.recordId);
+      if (result.error) return result;
     } else {
-      await recordRepo.softDelete(input.recordId);
+      const result = await recordRepo.softDelete(input.recordId);
+      if (result.error) return { data: null, error: result.error, status: result.status };
     }
 
     await eventBus.publish(createEvent("record.delete:after", actorUserId, existing.data, existing.data as unknown as Record<string, unknown>, null));

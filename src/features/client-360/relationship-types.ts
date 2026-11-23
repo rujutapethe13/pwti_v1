@@ -84,7 +84,7 @@ export interface Invoice {
   jobBookedDate?: string;
   dueDate: string;
   paymentDueDate?: string;
-  paymentTerms?: "Immediate" | "15 days" | "30 days" | "45 days" | "Custom";
+  paymentTerms?: "Immediate" | "7 days" | "15 days" | "30 days" | "45 days" | "60 days" | "Net 7" | "Net 15" | "Net 30" | "Net 45" | "Net 60" | "Custom" | "Not added";
   amount: number;
   paidAmount?: number;
   status: "Paid" | "Pending" | "Overdue" | "Draft";
@@ -98,8 +98,10 @@ export interface ClientBillingInfo {
   arr: number;
   mrr: number;
   lifetimeValue: number;
-  paymentTerms: "Immediate" | "15 days" | "30 days" | "45 days" | "Custom";
+  paymentTerms: "Immediate" | "7 days" | "15 days" | "30 days" | "45 days" | "60 days" | "Net 7" | "Net 15" | "Net 30" | "Net 45" | "Net 60" | "Custom" | "Not added";
   customPaymentDays?: number;
+  /** Stored client setting (client_360_clients.payment_term_days); null = no invoice reminders. */
+  paymentTermDays?: number | null;
   paymentMethod: string;
   billingFrequency: "Monthly" | "Quarterly" | "Annual";
   currency: string;
@@ -205,7 +207,7 @@ export interface Client360Profile {
     role: string;
   };
   lifecycleStage: LifecycleStage;
-  health: ClientHealthScore;
+  health?: ClientHealthScore;
   financials: {
     lifetimeValue: number;
     arr: number;
@@ -240,6 +242,7 @@ export interface Client360Profile {
     twitter?: string;
   };
   dataSources: DataSourceSync[];
+  canViewBilling?: boolean;
 }
 
 export type UserViewRole = "Admin" | "Sales" | "Support" | "Finance" | "Viewer";

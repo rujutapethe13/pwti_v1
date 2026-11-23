@@ -19,7 +19,9 @@ interface Chainable {
   gte: ReturnType<typeof vi.fn>;
   lte: ReturnType<typeof vi.fn>;
   ilike: ReturnType<typeof vi.fn>;
+  or: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
+  limit: ReturnType<typeof vi.fn>;
   order: ReturnType<typeof vi.fn>;
   maybeSingle: ReturnType<typeof vi.fn>;
   then: (resolve: (value: unknown) => void, reject?: (reason: unknown) => void) => void;
@@ -82,10 +84,14 @@ function makeChain(baseRows: AnyRow[]): Chainable {
       recorded.push({ col, op: "ilike", val });
       return chain;
     }),
+    // The production query uses PostgREST's OR expression; the fixture data
+    // is filtered by the service's in-memory matching after this call.
+    or: vi.fn(() => chain),
     in: vi.fn((col: string, val: unknown) => {
       recorded.push({ col, op: "in", val });
       return chain;
     }),
+    limit: vi.fn(() => chain),
     order: vi.fn(() => chain),
     maybeSingle: vi.fn(() => Promise.resolve({ data: resolve()[0] ?? null, error: null })),
     then: (resolveFn: (value: unknown) => void, rejectFn?: (reason: unknown) => void) => {

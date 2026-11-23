@@ -74,6 +74,7 @@ import type {
   AutomationCategory,
   PaymentJobItem,
   WorkspaceAdminUser,
+  SavedRecipient,
   TriggerType,
   ActionType,
   ConditionOperator,
@@ -89,7 +90,8 @@ import {
   DEFAULT_OVERDUE_EMAIL_SUBJECT,
   DEFAULT_OVERDUE_EMAIL_BODY,
   interpolateMergeFields,
-  resolveOverdueRecipients,
+  isValidEmail,
+  parseCommaSeparatedEmails,
 } from "./payment-overdue-service";
 import { executeAutomationRule } from "./automation-engine";
 import { applyAutomationToBoard } from "./actions";
@@ -376,7 +378,11 @@ export function AutomationCenterModal({
   const [selectedLog, setSelectedLog] = React.useState<AutomationRunLog | null>(null);
 
   // Overdue Settings state
-  const [workspaceAdmins, setWorkspaceAdmins] = React.useState<WorkspaceAdminUser[]>(DEFAULT_WORKSPACE_ADMINS);
+  const [savedRecipients, setSavedRecipients] = React.useState<SavedRecipient[]>([
+    { id: "r-1", name: "Rujuta Pethe", role: "Studio Lead & Account Director", email: "rujutapethe@gmail.com" },
+    { id: "r-2", name: "Finance Lead", role: "VP of Operations & Finance", email: "finance@photofactory.com" },
+    { id: "r-3", name: "Studio Admin", role: "Head of Studio Operations", email: "admin@photofactory.com" },
+  ]);
   const [gracePeriod, setGracePeriod] = React.useState(0);
   const [reminderCadence, setReminderCadence] = React.useState(7);
   const [escalationCadence, setEscalationCadence] = React.useState(14);
@@ -384,9 +390,23 @@ export function AutomationCenterModal({
   const [includeAssignee, setIncludeAssignee] = React.useState(true);
   const [overdueSubject, setOverdueSubject] = React.useState(DEFAULT_OVERDUE_EMAIL_SUBJECT);
   const [overdueBody, setOverdueBody] = React.useState(DEFAULT_OVERDUE_EMAIL_BODY);
+  const [customCcInput, setCustomCcInput] = React.useState("");
+  const [customBccInput, setCustomBccInput] = React.useState("");
+  const [emailFrom, setEmailFrom] = React.useState("sysadmin@powerpowerweavestudio.com");
+  const [savedConfirmation, setSavedConfirmation] = React.useState(false);
+
+  // Recipient form state
+  const [showAddForm, setShowAddForm] = React.useState(false);
+  const [editingRecipientId, setEditingRecipientId] = React.useState<string | null>(null);
+  const [formName, setFormName] = React.useState("");
+  const [formRole, setFormRole] = React.useState("");
+  const [formEmail, setFormEmail] = React.useState("");
+  const [formEmailError, setFormEmailError] = React.useState("");
 
   // Test Email Modal
   const [testEmailOpen, setTestEmailOpen] = React.useState(false);
+  const [testEmailOverride, setTestEmailOverride] = React.useState("");
+  const [testEmailSending, setTestEmailSending] = React.useState(false);
 
   // Custom Builder State (monday.com plain-language recipe)
   const [builderTriggerType, setBuilderTriggerType] = React.useState<TriggerType>("date_arrives");
@@ -407,6 +427,140 @@ export function AutomationCenterModal({
   const [isTitleManual, setIsTitleManual] = React.useState(false);
   const [builderRuleName, setBuilderRuleName] = React.useState("When Date of Upload changes from empty to a valid date, change Status to Done");
   const [builderDryRun, setBuilderDryRun] = React.useState(false);
+
+  // ── Recipient management helpers ──────────────────────────────
+  const resetRecipientForm = () => {
+    setFormName("");
+    setFormRole("");
+    setFormEmail("");
+    setFormEmailError("");
+    setShowAddForm(false);
+    setEditingRecipientId(null);
+  };
+
+  const handleAddOrUpdateRecipient = () => {
+    const email = formEmail.trim();
+    if (!email) {
+      setFormEmailError("Email is required");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setFormEmailError("Invalid email format");
+      return;
+    }
+    const lower = email.toLowerCase();
+    const duplicate = savedRecipients.find(
+      (r) => r.email.toLowerCase().trim() === lower && r.id !== editingRecipientId
+    );
+    if (duplicate) {
+      setFormEmailError("Already added");
+      return;
+    }
+    if (editingRecipientId) {
+      setSavedRecipients((prev) =>
+        prev.map((r) =>
+          r.id === editingRecipientId
+            ? { ...r, name: formName.trim(), role: formRole.trim(), email }
+            : r
+        )
+      );
+      toast.success("Recipient updated");
+    } else {
+      setSavedRecipients((prev) => [
+        ...prev,
+        {
+          id: `r-${Date.now()}`,
+          name: formName.trim(),
+          role: formRole.trim(),
+          email,
+        },
+      ]);
+      toast.success("Recipient added");
+    }
+    resetRecipientForm();
+  };
+
+  const handleEditRecipient = (rcp: SavedRecipient) => {
+    setEditingRecipientId(rcp.id);
+    setFormName(rcp.name);
+    setFormRole(rcp.role);
+    setFormEmail(rcp.email);
+    setFormEmailError("");
+    setShowAddForm(true);
+  };
+
+  const handleRemoveRecipient = (id: string) => {
+    setSavedRecipients((prev) => prev.filter((r) => r.id !== id));
+    toast.success("Recipient removed");
+  };
+
+  const handlePickFromMembers = (admin: WorkspaceAdminUser) => {
+    const lower = admin.email.toLowerCase().trim();
+    const exists = savedRecipients.some((r) => r.email.toLowerCase().trim() === lower);
+    if (exists) {
+      toast.info(`${admin.name} is already in the recipient list`);
+      return;
+    }
+    setSavedRecipients((prev) => [
+      ...prev,
+      { id: `r-${Date.now()}`, name: admin.name, role: admin.role, email: admin.email },
+    ]);
+    toast.success(`Added ${admin.name}`);
+  };
+
+  const handleSaveOverdueSettings = () => {
+    const ccEmails = parseCommaSeparatedEmails(customCcInput);
+    const bccEmails = parseCommaSeparatedEmails(customBccInput);
+
+    const overdueConfig = {
+      gracePeriodDays: gracePeriod,
+      repeatReminderDays: reminderCadence,
+      escalateDays: escalationCadence,
+      timezone: "America/New_York",
+      topAdminEmails: savedRecipients.map((r) => r.email),
+      includeBoardOwner: includeOwner,
+      includeAssignee: includeAssignee,
+      emailSubject: overdueSubject,
+      emailBody: overdueBody,
+      savedRecipients,
+      customCcEmails: ccEmails,
+      customBccEmails: bccEmails,
+      emailFrom,
+    };
+
+    const effectiveBoardId = boardId ?? "default";
+    const rules = getBoardAutomations(effectiveBoardId);
+    const updatedRules = rules.map((r) =>
+      r.trigger.type === "payment_overdue"
+        ? { ...r, paymentOverdueConfig: overdueConfig }
+        : r
+    );
+
+    const hasOverdueRule = updatedRules.some((r) => r.trigger.type === "payment_overdue");
+    if (!hasOverdueRule) {
+      updatedRules.push({
+        id: `rule-overdue-${Date.now()}`,
+        boardId: effectiveBoardId,
+        name: "Send Overdue Payment Alert",
+        description: "Automatically sends overdue payment alert emails",
+        category: "Payments & Finance",
+        enabled: true,
+        owner: { id: "system", name: "System", email: "sysadmin@powerpowerweavestudio.com" },
+        createdAt: new Date().toISOString(),
+        runCount: 0,
+        trigger: { type: "payment_overdue", label: "Payment is overdue" },
+        conditions: [],
+        actions: [{ id: `act-${Date.now()}`, type: "send_email", label: "Send overdue alert email" }],
+        safeguards: { maxDailyRuns: 100, dailyRunsCount: 0, dryRun: false, loopPreventionKey: "" },
+        paymentOverdueConfig: overdueConfig,
+      });
+    }
+
+    saveBoardAutomations(effectiveBoardId, updatedRules);
+    setSavedConfirmation(true);
+    toast.success("Overdue trigger settings saved");
+    setTimeout(() => setSavedConfirmation(false), 3000);
+  };
 
   // Auto-sync builder title with recipe whenever tokens change, unless user typed a custom title
   React.useEffect(() => {
@@ -2080,28 +2234,171 @@ export function AutomationCenterModal({
                   </Badge>
                 </div>
 
-                <div className="space-y-3">
-                  <div className="text-xs font-medium text-foreground">
-                    Top 3 Workspace Admins (Pick by role or pin specific people)
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    {workspaceAdmins.map((adm, i) => (
-                      <div
-                        key={adm.id}
-                        className="p-2.5 rounded-md border border-border bg-card flex flex-col justify-between"
+                {/* Editable recipient list */}
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs font-medium text-foreground">
+                      Recipients ({savedRecipients.length})
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="outline" size="sm" className="h-7 text-[11px] gap-1">
+                            <Users className="size-3" />
+                            Pick from workspace members
+                            <ChevronDown className="size-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="w-64">
+                          <DropdownMenuLabel className="text-[10px]">Workspace Admins</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {DEFAULT_WORKSPACE_ADMINS.map((admin) => (
+                            <DropdownMenuItem
+                              key={admin.id}
+                              onClick={() => handlePickFromMembers(admin)}
+                              className="flex items-center justify-between text-xs"
+                            >
+                              <div>
+                                <span className="font-medium">{admin.name}</span>
+                                <span className="text-muted-foreground ml-1 text-[10px]">{admin.role}</span>
+                              </div>
+                              <span className="text-[10px] text-primary">{admin.email}</span>
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-[11px] gap-1"
+                        onClick={() => {
+                          resetRecipientForm();
+                          setShowAddForm(true);
+                        }}
                       >
-                        <div>
-                          <div className="flex items-center justify-between text-xs font-semibold">
-                            <span>{adm.name}</span>
-                            <Badge variant="outline" className="text-[9px]">Admin #{i + 1}</Badge>
-                          </div>
-                          <p className="text-[11px] text-muted-foreground truncate">{adm.role}</p>
-                          <p className="text-[10px] text-primary truncate mt-1">{adm.email}</p>
-                        </div>
-                      </div>
-                    ))}
+                        <Plus className="size-3" />
+                        Add Recipient
+                      </Button>
+                    </div>
                   </div>
 
+                  {/* Recipient cards */}
+                  {savedRecipients.length === 0 && !showAddForm && (
+                    <div className="text-center py-4 text-xs text-muted-foreground border border-dashed border-border rounded-md">
+                      No recipients yet. Add one above or pick from workspace members.
+                    </div>
+                  )}
+                  {savedRecipients.map((rcp, i) => (
+                    <div
+                      key={rcp.id}
+                      className="p-2.5 rounded-md border border-border bg-card flex items-center justify-between"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="size-7 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-semibold text-primary shrink-0">
+                          {(rcp.name || rcp.email).charAt(0).toUpperCase()}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold truncate">
+                            {rcp.name || rcp.email.split("@")[0]}
+                            {rcp.role && (
+                              <span className="text-muted-foreground font-normal ml-1.5 text-[10px]">
+                                {rcp.role}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[10px] text-primary truncate">{rcp.email}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => handleEditRecipient(rcp)}
+                          title="Edit recipient"
+                        >
+                          <Edit2 className="size-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 text-red-500 hover:text-red-600"
+                          onClick={() => handleRemoveRecipient(rcp.id)}
+                          title="Remove recipient"
+                        >
+                          <XCircle className="size-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {/* Inline add/edit form */}
+                  {showAddForm && (
+                    <div className="p-3 rounded-md border border-primary/30 bg-primary/5 space-y-2">
+                      <div className="text-xs font-semibold text-foreground">
+                        {editingRecipientId ? "Edit Recipient" : "Add New Recipient"}
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-muted-foreground">Name (optional)</label>
+                          <Input
+                            value={formName}
+                            onChange={(e) => setFormName(e.target.value)}
+                            placeholder="e.g. Rujuta Pethe"
+                            className="h-7 text-xs"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-muted-foreground">Role (optional)</label>
+                          <Input
+                            value={formRole}
+                            onChange={(e) => setFormRole(e.target.value)}
+                            placeholder="e.g. Studio Admin"
+                            className="h-7 text-xs"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-muted-foreground">
+                          Email <span className="text-red-500">*</span>
+                        </label>
+                        <Input
+                          value={formEmail}
+                          onChange={(e) => {
+                            setFormEmail(e.target.value);
+                            setFormEmailError("");
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleAddOrUpdateRecipient();
+                          }}
+                          placeholder="name@company.com"
+                          className="h-7 text-xs"
+                        />
+                        {formEmailError && (
+                          <p className="text-[10px] text-red-500">{formEmailError}</p>
+                        )}
+                      </div>
+                      <div className="flex justify-end gap-1.5">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-[11px]"
+                          onClick={resetRecipientForm}
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          size="sm"
+                          className="h-6 text-[11px]"
+                          onClick={handleAddOrUpdateRecipient}
+                        >
+                          {editingRecipientId ? "Update" : "Add"}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Quick-add toggles */}
                   <div className="pt-2 flex flex-col sm:flex-row gap-4 text-xs">
                     <label className="flex items-center gap-2 cursor-pointer">
                       <Switch checked={includeOwner} onCheckedChange={setIncludeOwner} />
@@ -2111,6 +2408,44 @@ export function AutomationCenterModal({
                       <Switch checked={includeAssignee} onCheckedChange={setIncludeAssignee} />
                       <span>Include Job Assignee (Producer / Lead)</span>
                     </label>
+                  </div>
+
+                  {/* Custom CC / BCC */}
+                  <div className="pt-2 space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-muted-foreground">
+                          Custom CC emails (comma-separated)
+                        </label>
+                        <Input
+                          value={customCcInput}
+                          onChange={(e) => setCustomCcInput(e.target.value)}
+                          placeholder="cc1@company.com, cc2@company.com"
+                          className="h-7 text-xs"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-muted-foreground">
+                          Custom BCC emails (comma-separated)
+                        </label>
+                        <Input
+                          value={customBccInput}
+                          onChange={(e) => setCustomBccInput(e.target.value)}
+                          placeholder="bcc1@company.com"
+                          className="h-7 text-xs"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* From address */}
+                  <div className="pt-1 space-y-1">
+                    <label className="text-[10px] text-muted-foreground">From Address (verified domain)</label>
+                    <Input
+                      value={emailFrom}
+                      onChange={(e) => setEmailFrom(e.target.value)}
+                      className="h-7 text-xs font-mono"
+                    />
                   </div>
                 </div>
               </Card>
@@ -2234,9 +2569,15 @@ export function AutomationCenterModal({
               </Card>
 
               <div className="flex justify-end gap-2">
+                {savedConfirmation && (
+                  <span className="flex items-center gap-1 text-xs text-green-600">
+                    <Check className="size-3.5" />
+                    Saved
+                  </span>
+                )}
                 <Button
                   size="sm"
-                  onClick={() => toast.success("Overdue trigger settings updated successfully")}
+                  onClick={handleSaveOverdueSettings}
                   className="h-8 text-xs"
                 >
                   Save Settings
@@ -2263,7 +2604,16 @@ export function AutomationCenterModal({
               <div className="rounded-md border border-border p-3 bg-muted/20 space-y-1.5 font-sans">
                 <div className="text-muted-foreground">
                   <span className="font-semibold text-foreground">To: </span>
-                  {workspaceAdmins.map((a) => a.email).join(", ")}, {sampleOverdueJob.assignee.email}
+                  {testEmailOverride
+                    ? testEmailOverride
+                    : savedRecipients.map((a) => a.email).join(", ") || "(no recipients)"}
+                  {!testEmailOverride && includeAssignee && sampleOverdueJob.assignee.email && (
+                    <span>, {sampleOverdueJob.assignee.email}</span>
+                  )}
+                </div>
+                <div className="text-muted-foreground">
+                  <span className="font-semibold text-foreground">From: </span>
+                  {emailFrom}
                 </div>
                 <div className="text-muted-foreground">
                   <span className="font-semibold text-foreground">Subject: </span>
@@ -2276,6 +2626,19 @@ export function AutomationCenterModal({
                     )}
                   </span>
                 </div>
+              </div>
+
+              {/* Test email override input */}
+              <div className="space-y-1">
+                <label className="text-[10px] text-muted-foreground">
+                  Send test to a specific address instead (optional)
+                </label>
+                <Input
+                  value={testEmailOverride}
+                  onChange={(e) => setTestEmailOverride(e.target.value)}
+                  placeholder="Leave blank to send to all recipients above"
+                  className="h-7 text-xs"
+                />
               </div>
 
               {/* HTML Mail Body Card */}
@@ -2308,14 +2671,57 @@ export function AutomationCenterModal({
               </Button>
               <Button
                 size="sm"
-                onClick={() => {
-                  toast.success("Test email sent to s.jenkins@powerweave.studio!");
-                  setTestEmailOpen(false);
+                disabled={testEmailSending}
+                onClick={async () => {
+                  const to = testEmailOverride.trim()
+                    ? [testEmailOverride.trim()]
+                    : savedRecipients.map((r) => r.email);
+                  if (!testEmailOverride.trim() && to.length === 0) {
+                    toast.error("No recipients to send test email to");
+                    return;
+                  }
+                  setTestEmailSending(true);
+                  try {
+                    const subject = interpolateMergeFields(
+                      overdueSubject,
+                      sampleOverdueJob,
+                      "Team",
+                      sampleOverdueJob.daysOverdue ?? 13
+                    );
+                    const body = interpolateMergeFields(
+                      overdueBody,
+                      sampleOverdueJob,
+                      "Rujuta Pethe",
+                      sampleOverdueJob.daysOverdue ?? 13
+                    );
+                    const resp = await fetch("/api/triggers/send-test", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        to,
+                        from: emailFrom,
+                        subject: `[TEST] ${subject}`,
+                        body,
+                        html: `<div style="font-family: sans-serif; font-size: 14px; line-height: 1.6; white-space: pre-wrap;">${body.replace(/\n/g, "<br>")}</div>`,
+                      }),
+                    });
+                    if (!resp.ok) {
+                      const err = await resp.json().catch(() => ({}));
+                      toast.error(err.error || "Failed to send test email");
+                    } else {
+                      toast.success(`Test email sent to ${to.length} recipient(s)`);
+                      setTestEmailOpen(false);
+                    }
+                  } catch (err) {
+                    toast.error("Failed to send test email");
+                  } finally {
+                    setTestEmailSending(false);
+                  }
                 }}
                 className="h-8 gap-1.5 text-xs"
               >
                 <Send className="size-3.5" />
-                Send Test Email Now
+                {testEmailSending ? "Sending..." : "Send Test Email Now"}
               </Button>
             </div>
           </DialogContent>

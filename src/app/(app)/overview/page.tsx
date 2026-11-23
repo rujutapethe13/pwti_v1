@@ -42,7 +42,7 @@ import {
   type TimeRangeId,
 } from "@/features/overview/time-range";
 import { useWorkspace } from "@/lib/workspace-context";
-import { useUser } from "@/lib/user-context";
+import { useUser, useCurrentUser } from "@/lib/user-context";
 import { BoardSelector, type OverviewBoard } from "@/features/overview/board-selector";
 import { Skeleton } from "@/components/shared/skeleton";
 
@@ -228,7 +228,11 @@ function OverviewPage() {
   const [rangeId, setRangeId] = useState<TimeRangeId>(DEFAULT_TIME_RANGE_ID);
   const [customRange, setCustomRange] = useState<CustomRange | null>(null);
   const { settings } = useUser();
+  const { user: currentUser } = useCurrentUser();
   const timeZone = settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+  // Admin check for Overview special features
+  const isAdmin = currentUser?.role === "admin" || currentUser?.role === "staff";
 
   // Seed the greeting with the last known first name so returning visitors see
   // a name on first paint (never a dummy), then reconcile with the real profile.
@@ -449,6 +453,7 @@ function OverviewPage() {
         }
         onSelectCard={ENABLE_OVERVIEW_DRILLDOWN ? handleSelectStatCard : undefined}
         resolvedSummary={drilldownData?.resolvedSummary ?? null}
+        isAdmin={isAdmin}
       />
 
       {/* ── Inline Drilldown Panel (opens below the 6 KPI cards, pushing Volume trend down) ── */}
@@ -479,6 +484,7 @@ function OverviewPage() {
         onSelectBucketDate={
           ENABLE_OVERVIEW_DRILLDOWN ? handleSelectBucketDate : undefined
         }
+        isAdmin={isAdmin}
       />
 
       {/* ── Volume breakdown by job type (own states) ── */}

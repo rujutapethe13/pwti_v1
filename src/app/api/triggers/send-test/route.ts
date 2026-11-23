@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sendEmail } from "@/lib/notify";
+import { sendEmail } from "@/lib/email";
 
 /**
- * Sends a sample trigger email to the configured NOTIFY_EMAIL ("me").
- * Server-only: RESEND_API_KEY is never exposed to the client.
+ * Sends a sample trigger email. Server-only: RESEND_API_KEY is never exposed to the client.
  */
 export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
@@ -19,10 +18,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       <p>This is a sample email from your custom trigger system.</p>
       <p>If you received it, email sending is working.</p>
     `;
+    const from = body.from || "sysadmin@powerpowerweavestudio.com";
 
-    const result = await sendEmail({ to: [String(to)], subject, html, text: "Trigger test email from Powerweave Studio OS" });
+    const result = await sendEmail({
+      to: Array.isArray(to) ? to : [String(to)],
+      from,
+      subject,
+      html,
+      text: "Trigger test email from Powerweave Studio OS",
+    });
 
-    if (!result.ok) {
+    if (!result.success) {
       return NextResponse.json({ error: result.error }, { status: 502 });
     }
 

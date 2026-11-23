@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
@@ -62,7 +62,7 @@ function BreakdownTooltip({ active, payload }: SliceTooltipEntry) {
         {formatPercent(slice.percentage)} of volume
       </p>
       <p className="text-muted-foreground">
-        {formatVolume(slice.volume)} volume (one per job row) · {formatVolume(slice.jobs)}{" "}
+        {formatVolume(slice.volume)} volume (one per job row) Â· {formatVolume(slice.jobs)}{" "}
         {slice.jobs === 1 ? "job" : "jobs"}
       </p>
     </div>
@@ -240,12 +240,12 @@ export function VolumeBreakdownSection({
 
   const summary =
     isLoading || !breakdown
-      ? `Loading type of job breakdown · ${rangeLabel}`
-      : `${formatVolume(breakdown.totalVolume)} volume · ${breakdown.categoryCount} ${
+      ? `Loading type of job breakdown Â· ${rangeLabel}`
+      : `${formatVolume(breakdown.totalVolume)} volume Â· ${breakdown.categoryCount} ${
           breakdown.categoryCount === 1 ? "job type" : "job types"
         }${boardCount !== undefined
-      ? ` · ${boardCount} board${boardCount === 1 ? "" : "s"}`
-          : ""} · ${rangeLabel}`;
+      ? ` Â· ${boardCount} board${boardCount === 1 ? "" : "s"}`
+          : ""} Â· ${rangeLabel}`;
 
   return (
     <Card className={cn("border-border/60 p-6 shadow-none", className)}>
@@ -441,8 +441,8 @@ export function VolumeBreakdownSection({
                       {item.job_name}
                     </p>
                     <p className="text-muted-foreground mt-0.5 text-[11px]">
-                      {item.client ?? "—"} · {item.board_name} · Received{" "}
-                      {item.received_at ?? "—"}
+                      {item.client ?? "â€”"} Â· {item.board_name} Â· Received{" "}
+                      {item.received_at ?? "â€”"}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -476,6 +476,7 @@ export function VolumeBreakdownSection({
         <div className="border-border/70 mt-5 space-y-1.5 border-t pt-4">
           {breakdown.grouping.available ? (
             <>
+              {(data as any)?.generatedAt ? <p className="text-muted-foreground text-[11px] leading-snug">Data as of {new Date((data as any).generatedAt).toLocaleString()}</p> : null}
               <p className="text-muted-foreground text-[11px] leading-snug">
                  Shares are of the {formatVolume(breakdown.totalVolume)} volume received
                  between {data?.range.from} and {data?.range.to}.
@@ -505,3 +506,4 @@ export function VolumeBreakdownSection({
     </Card>
   );
 }
+

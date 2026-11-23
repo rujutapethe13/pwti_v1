@@ -55,6 +55,10 @@ export async function middleware(request: NextRequest) {
   const isPublicRoute =
     pathname === "/auth/callback" ||
     pathname === "/api/boot-id" ||
+    // Cron routes are called by Vercel's scheduler with no user session. They
+    // authenticate themselves with a CRON_SECRET bearer check, so the session
+    // gate must let them through.
+    pathname.startsWith("/api/cron/") ||
     pathname.startsWith("/forgot-password") ||
     pathname.startsWith("/reset-password");
   const isApiRoute = pathname.startsWith("/api");

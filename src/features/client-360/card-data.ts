@@ -110,10 +110,16 @@ function textTokens(text: string): string[] {
  * another column (job name / batch). Those rows are candidates for review:
  * shown, matched column named, but not counted until confirmed.
  */
-function matchClientElsewhere(job: Pick<LiveJobRow, "title" | "batch_id">, clientKey: string): "Job name" | "Batch" | null {
+function matchClientElsewhere(
+  job: Pick<LiveJobRow, "title" | "batch_id">,
+  clientKey: string,
+  knownBatchIds: Set<string>
+): "Job name" | "Batch" | null {
   if (!clientKey) return null;
   if (textTokens(job.title ?? "").includes(clientKey)) return "Job name";
   if (job.batch_id && textTokens(job.batch_id).includes(clientKey)) return "Batch";
+  // Also match if the batch_id is known to belong to this client (from other counted jobs or job-name matches)
+  if (job.batch_id && knownBatchIds.has(job.batch_id)) return "Batch";
   return null;
 }
 
@@ -123,17 +129,32 @@ export async function classifyClientJobs(jobs: LiveJobRow[], clientId: string, g
   const needsReview: ClientJobClassification["needsReview"] = [];
   const notCounted: NotCountedRow[] = [];
   const ids = group.ids;
+  
+  // First pass: identify counted jobs and collect their batch_ids
+  // Also collect batch_ids from jobs that match via Job name (title contains client)
+  const knownBatchIds = new Set<string>();
+  const jobNameMatched: LiveJobRow[] = [];
+  
   for (const job of jobs) {
-    // Rows with the client in the Client column are always counted, matched
-    // case-insensitively (HOKIPO / Hokipo / hokipo are one client), even when
-    // the alias registry has not yet resolved a client_id. A missing upload or
-    // received date never removes a job from the totals.
     const rawKey = clientNameKey(job.client_raw);
     if ((job.client_id && ids.has(job.client_id)) || rawKey === clientKey) {
       counted.push(job);
-      continue;
+      if (job.batch_id) knownBatchIds.add(job.batch_id);
+    } else if (textTokens(job.title ?? "").includes(clientKey)) {
+      // This job matches via Job name - it will be needsReview, but its batch_id is known
+      jobNameMatched.push(job);
+      if (job.batch_id) knownBatchIds.add(job.batch_id);
     }
-    const via = matchClientElsewhere(job, clientKey);
+  }
+  
+  // Second pass: classify remaining jobs
+  for (const job of jobs) {
+    // Skip already counted jobs
+    if (counted.some(c => c.record_id === job.record_id)) continue;
+    // Skip already job-name-matched jobs (they'll be added as needsReview)
+    if (jobNameMatched.some(j => j.record_id === job.record_id)) continue;
+    
+    const via = matchClientElsewhere(job, clientKey, knownBatchIds);
     if (via) {
       needsReview.push({ job, matchedVia: via });
       continue;
@@ -146,6 +167,12 @@ export async function classifyClientJobs(jobs: LiveJobRow[], clientId: string, g
       reason: job.client_id ? "Belongs to another client" : job.client_raw ? "No matching client" : "No client value",
     });
   }
+  
+  // Add job-name-matched jobs to needsReview
+  for (const job of jobNameMatched) {
+    needsReview.push({ job, matchedVia: "Job name" });
+  }
+  
   return { counted, needsReview, notCounted };
 }
 

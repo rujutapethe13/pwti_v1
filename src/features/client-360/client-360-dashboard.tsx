@@ -18,6 +18,7 @@ import {
   ChevronUp,
   FileText,
   ArrowRight,
+  AlertTriangle,
 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,68 @@ import { createClient360ItemAction } from "@/features/client-360/actions";
 import type { Client360Match, Client360SearchResult } from "@/features/client-360/types";
 import { formatDate } from "@/features/client-360/date-format";
 import { Client360DailyActivityView } from "./daily-activity-view";
+
+// Client-side classification for "X of Y rows not counted" list
+function normalizeClientKey(value: string | null | undefined): string {
+  return String(value ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function textTokens(text: string): string[] {
+  return String(text).toLowerCase().split(/\W+/).filter((token) => token.length > 0);
+}
+
+function matchClientElsewhere(
+  title: string | null | undefined,
+  batchId: string | null | undefined,
+  clientKey: string
+): "Job name" | "Batch" | null {
+  if (!clientKey) return null;
+  if (title && textTokens(title).includes(clientKey)) return "Job name";
+  if (batchId && textTokens(batchId).includes(clientKey)) return "Batch";
+  return null;
+}
+
+type Client360Classification = "counted" | "needsReview" | "notCounted";
+
+interface ClassificationResult {
+  classification: Client360Classification;
+  reason: string;
+  matchedVia?: "Job name" | "Batch";
+}
+
+function classifyMatchForClient(
+  match: Client360Match,
+  clientQuery: string
+): ClassificationResult {
+  const clientKey = normalizeClientKey(clientQuery);
+  if (!clientKey) {
+    return { classification: "notCounted", reason: "No client query" };
+  }
+
+  const matchedClientName = normalizeClientKey(match.clientName);
+  
+  if (matchedClientName === clientKey) {
+    return { classification: "counted", reason: "Client column matches" };
+  }
+
+  const batchId = match.cellValueByLabel["batch details (pfm1_no)"] 
+    ?? match.cellValueByLabel["batch"] 
+    ?? match.cellValueByLabel["saleno."] 
+    ?? null;
+  const via = matchClientElsewhere(match.recordTitle, batchId, clientKey);
+  if (via) {
+    return { 
+      classification: "needsReview", 
+      reason: `Needs review: blank client (matched in ${via})`,
+      matchedVia: via
+    };
+  }
+
+  if (match.clientName && match.clientName.trim()) {
+    return { classification: "notCounted", reason: `Belongs to another client (${match.clientName})` };
+  }
+  return { classification: "notCounted", reason: "No client value" };
+}
 
 function mapStatusToPill(status: string): Parameters<typeof StatusPill>[0]["status"] {
   const s = status.toLowerCase().trim();
@@ -442,9 +505,60 @@ export function Client360Dashboard({ initialQuery, initialData }: Client360Dashb
                 </div>
               </CardContent>
             </Card>
-          </div>
+</div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Rows not counted in Client 360 */}
+              {(() => {
+                const classifications = result.matches.map((m) => classifyMatchForClient(m, clientName));
+                const notCounted = classifications.filter((c) => c.classification !== "counted");
+                const needsReview = classifications.filter((c) => c.classification === "needsReview");
+                const otherNotCounted = classifications.filter((c) => c.classification === "notCounted");
+                if (notCounted.length === 0) return null;
+                return (
+                  <Card className="border-amber-200 bg-amber-50 dark:border-amber-800/60 dark:bg-amber-950/35">
+                    <CardContent className="p-4">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-amber-800 dark:text-amber-300">
+                            {notCounted.length} of {result.totalItems} rows not counted in Client 360
+                          </p>
+                          <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                            These rows exist in Cross-Board but are excluded from Client 360 totals:
+                          </p>
+                          <div className="mt-2 space-y-1 text-xs text-amber-700 dark:text-amber-400">
+                            {needsReview.length > 0 && (
+                              <div>
+                                <span className="font-medium">Needs review ({needsReview.length}):</span>
+                                <ul className="ml-4 list-disc space-y-0.5">
+                                  {needsReview.map((c, idx) => (
+                                    <li key={`nr-${idx}`}>{c.reason}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {otherNotCounted.length > 0 && (
+                              <div>
+                                <span className="font-medium">Other ({otherNotCounted.length}):</span>
+                                <ul className="ml-4 list-disc space-y-0.5">
+                                  {otherNotCounted.slice(0, 10).map((c, idx) => (
+                                    <li key={`nc-${idx}`}>{c.reason}</li>
+                                  ))}
+                                  {otherNotCounted.length > 10 && (
+                                    <li>…and {otherNotCounted.length - 10} more</li>
+                                  )}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* Status Breakdown */}
             <Card>
               <CardHeader className="pb-3">

@@ -92,6 +92,7 @@ import {
 import { formatDateTimeIST, formatRelativeIST, getUserLabel } from "../cell-change-utils";
 import {
   GRID_MATRIX_MIME,
+  mapSourceColumnsToTarget,
   matrixToHtml as gridMatrixToHtml,
   matrixToTSV,
   matrixSize,
@@ -99,6 +100,10 @@ import {
   resolveClipboardMatrix,
   serializeMatrix,
   type CellMatrix,
+  type ColumnMapping,
+  type ColumnMeta,
+  type GridClipboardPayload,
+  type ColumnDefinitionMinimal,
 } from "../lib/grid-clipboard";
 
 const PRESET_COLORS = [
@@ -957,7 +962,7 @@ export function TableView({
   const [gridDragSelecting, setGridDragSelecting] = useState(false);
   const gridCutRef = useRef<{r1:number;r2:number;c1:number;c2:number}|null>(null);
   const gridFillRef = useRef<{ active: boolean; source: {r1:number;r2:number;c1:number;c2:number} | null }>({ active: false, source: null });
-  const internalClipboardRef = useRef<{ values: CellMatrix; raw: GridChange[] } | null>(null);
+  const internalClipboardRef = useRef<{ payload: GridClipboardPayload; raw: GridChange[] } | null>(null);
   // Set when Ctrl+C/Ctrl+X already wrote the clipboard, so the native copy
   // event that follows does not write it a second time.
   const gridCopyHandledRef = useRef(false);
@@ -1493,6 +1498,7 @@ export function TableView({
   const copyKindRef = useRef<"row" | "columns" | null>(null);
   const headerCopyDefsRef = useRef<any[]>([]);
 
+
   const targetColumns = useCallback(() => {
     if (selectedHeaderIds.length > 0) {
       return [...columns].sort((a, b) => a.order - b.order).filter((c) => selectedHeaderIds.includes(c.id));
@@ -1522,6 +1528,39 @@ const flatRecords = useMemo(
     [groupedRecords, collapsedGroups],
   );
   const flatIndexById = useMemo(() => new Map(flatRecords.map((r, i) => [r.id, i])), [flatRecords]);
+
+  const selectableRecordIds = useMemo(
+    () => flatRecords.map((record) => record.id),
+    [flatRecords],
+  );
+  const allRecordsSelected = selection.isAllSelected(selectableRecordIds);
+
+  useEffect(() => {
+    selection.clear();
+  }, [board.id]);
+
+  useEffect(() => {
+    selection.clear();
+  }, [activeFilters]);
+
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent("powerweave:table-selection-change", {
+      detail: {
+        count: selection.count,
+        allSelected: allRecordsSelected,
+        visibleCount: selectableRecordIds.length,
+      },
+    }));
+  }, [selection.count, allRecordsSelected, selectableRecordIds.length]);
+
+  useEffect(() => {
+    const handleToolbarSelectAll = () => {
+      if (allRecordsSelected) selection.deselectAll();
+      else selection.selectAll(selectableRecordIds);
+    };
+    window.addEventListener("powerweave:table-select-all", handleToolbarSelectAll);
+    return () => window.removeEventListener("powerweave:table-select-all", handleToolbarSelectAll);
+  }, [allRecordsSelected, selectableRecordIds, selection]);
 
   const getRowColumns = useCallback((record: BoardRecord) => {
     const group = groups?.find((candidate) => candidate.id === record.groupId);
@@ -1674,8 +1713,6 @@ const flatRecords = useMemo(
     for (let r = range.r1; r <= range.r2; r++) {
       const rec = flatRecords[r];
       if (!rec) {
-        // Keep the rectangle: a missing row still occupies its slot so the
-        // pasted block has the same height as the copied one.
         rows.push(new Array(Math.max(0, range.c2 - range.c1 + 1)).fill(""));
         continue;
       }
@@ -1689,6 +1726,14 @@ const flatRecords = useMemo(
     }
     return rows;
   }, [flatRecords, gridColumnsFor, getDisplayValue]);
+
+  const getAllRowColumns = useCallback((record: BoardRecord): ColumnDefinition[] => {
+    const group = groups?.find((g) => g.id === record.groupId);
+    if (group?.columnMode === "custom") {
+      return columns.filter((c) => c.groupId === group.id && !isComputedColumn(c));
+    }
+    return columns.filter((c) => !c.groupId && !isComputedColumn(c));
+  }, [columns, groups]);
 
   const copyGridRange = useCallback(async (range: {r1:number;r2:number;c1:number;c2:number}, cut = false) => {
     const prev: GridUndo["prev"] = [];
@@ -1708,18 +1753,42 @@ const flatRecords = useMemo(
       }
     }
     const matrix = padMatrix(rows);
+
+    const anchorRec = flatRecords[range.r1] ?? records[0];
+    const anchorCols = gridColumnsFor(anchorRec);
+    const copiedColMetas: ColumnMeta[] = [];
+    for (let c = range.c1; c <= range.c2; c++) {
+      const col = anchorCols[c];
+      if (col) {
+        copiedColMetas.push({
+          id: col.id,
+          title: col.label,
+          type: col.type,
+          isPrimary: col.isPrimary ?? false,
+        });
+      } else {
+        copiedColMetas.push({ id: "", title: "", type: "text", isPrimary: false });
+      }
+    }
+
+    const payload: GridClipboardPayload = {
+      version: 2,
+      sourceBoardId: board.id,
+      columns: copiedColMetas,
+      rows: matrix,
+    };
+
     const tsv = matrixToTSV(matrix);
     const html = gridMatrixToHtml(matrix);
-    internalClipboardRef.current = { values: matrix, raw: [] };
+    internalClipboardRef.current = { payload, raw: [] };
     try {
       if (typeof ClipboardItem !== "undefined" && navigator.clipboard?.write) {
-        const payload: Record<string, Blob> = {
+        const clipPayload: Record<string, Blob> = {
           "text/plain": new Blob([tsv], { type: "text/plain" }),
           "text/html": new Blob([html], { type: "text/html" }),
         };
-        // Custom MIME types are not accepted by every ClipboardItem impl.
-        try { payload[GRID_MATRIX_MIME] = new Blob([serializeMatrix(matrix)], { type: GRID_MATRIX_MIME }); } catch { /* optional */ }
-        await navigator.clipboard.write([new ClipboardItem(payload)]);
+        try { clipPayload[GRID_MATRIX_MIME] = new Blob([serializeMatrix(payload)], { type: GRID_MATRIX_MIME }); } catch { /* optional */ }
+        await navigator.clipboard.write([new ClipboardItem(clipPayload)]);
       } else {
         await navigator.clipboard.writeText(tsv);
       }
@@ -1730,7 +1799,7 @@ const flatRecords = useMemo(
     if (cut) await applyPasteUpdates(titleUpdates, cellUpdates, prev);
     const { rows: copiedRows, cols: copiedCols } = matrixSize(matrix);
     console.log("[grid-copy]", { range, cut, rows: copiedRows, cols: copiedCols });
-  }, [flatRecords, gridColumnsFor, readGridMatrix, isTitleCell, restrictEditingColumns, cellValues, applyPasteUpdates]);
+  }, [flatRecords, gridColumnsFor, readGridMatrix, isTitleCell, restrictEditingColumns, cellValues, applyPasteUpdates, board.id]);
 
   const clearGridRange = useCallback(async (range: {r1:number;r2:number;c1:number;c2:number}) => {
     const prev: GridUndo["prev"] = [];
@@ -1751,16 +1820,15 @@ const flatRecords = useMemo(
   }, [flatRecords, gridColumnsFor, isTitleCell, restrictEditingColumns, cellValues, applyPasteUpdates]);
 
   const doGridPaste = useCallback(async (text: string, clipboard?: { getData: (format: string) => string } | null) => {
-    const resolved = resolveClipboardMatrix(clipboard ?? null, text, internalClipboardRef.current?.values ?? null);
+    const resolved = resolveClipboardMatrix(clipboard ?? null, text, internalClipboardRef.current?.payload ?? null);
     if (!resolved) return;
     const matrix = resolved.rows;
+    const sourceColumns = resolved.columns;
     const anchor = gridAnchor ?? gridEnd ?? { row: 0, col: 0 };
     const sel = gridRange ?? { r1: anchor.row, r2: anchor.row, c1: anchor.col, c2: anchor.col };
     const top = Math.max(0, sel.r1);
     const left = Math.max(0, sel.c1);
     const single = matrix.length === 1 && (matrix[0]?.length || 0) === 1;
-    // A single copied value pasted over a multi-cell selection fills that
-    // selection; a real block always lands at the anchor and keeps its shape.
     const block: CellMatrix = single && (sel.r1 !== sel.r2 || sel.c1 !== sel.c2)
       ? Array.from({ length: sel.r2 - sel.r1 + 1 }, () => Array.from({ length: sel.c2 - sel.c1 + 1 }, () => matrix[0][0] ?? ""))
       : matrix;
@@ -1770,20 +1838,17 @@ const flatRecords = useMemo(
 
     const needed = top + R;
 
-    // ── Batched row creation: one write per chunk instead of one per row ──
     const createdIds: string[] = [];
     const rowsToCreate = Math.max(0, needed - flatRecords.length);
     if (rowsToCreate > 0) {
       const gid = flatRecords[flatRecords.length - 1]?.groupId ?? (groups && groups.length > 0 ? groups[0].id : null);
       if (onBulkNewItem) {
-        // Chunked so one paste can never exceed the server-action body limit.
         for (let offset = 0; offset < rowsToCreate; offset += PASTE_CHUNK_SIZE) {
           const count = Math.min(PASTE_CHUNK_SIZE, rowsToCreate - offset);
           const ids = await onBulkNewItem(count, gid);
           createdIds.push(...(ids || []).filter(Boolean));
         }
       } else if (onNewItem) {
-        // Fallback: serial creation keeps prior behaviour when batch isn't wired.
         while (createdIds.length < rowsToCreate) {
           const id = await onNewItem(gid);
           if (id) createdIds.push(id);
@@ -1792,11 +1857,19 @@ const flatRecords = useMemo(
       }
     }
 
-    // Resolve target columns ONCE from the anchor row's group so every source
-    // column maps to the same target column across all paste rows. Groups with
-    // different column sets are handled explicitly per row below.
     const anchorRec = flatRecords[top] ?? records[0];
     const anchorCols = gridColumnsFor(anchorRec);
+
+    // Build source-to-target column mapping using shared utility
+    const targetColsMinimal: ColumnDefinitionMinimal[] = anchorCols.map((c) => ({
+      id: c.id,
+      label: c.label,
+      type: c.type,
+      isPrimary: c.isPrimary ?? false,
+      hidden: c.hidden,
+      settings: c.settings,
+    }));
+    const colMapping = mapSourceColumnsToTarget(sourceColumns, targetColsMinimal, left, C);
 
     const readOnly = restrictEditingColumns ?? new Set<string>();
     const prev: GridUndo["prev"] = [];
@@ -1805,7 +1878,7 @@ const flatRecords = useMemo(
     const skipped: Array<{row:number;col:number;label:string;value:string;reason:string}> = [];
     const warned: Array<{row:number;col:number;label:string;value:string;warning:string}> = [];
     const synthetic = new Set<string>();
-    let overflow = false;
+    const skippedColumns = new Set<string>();
 
     const liveFlat = groupedRecords.flatMap((e) => (collapsedGroups.has(e.groupId ?? "null") ? [] : e.records));
     const working = [...liveFlat];
@@ -1822,44 +1895,66 @@ const flatRecords = useMemo(
       const rec = working[top + i] || flatRecords[top + i];
       if (!rec) continue;
       if (synthetic.has(rec.id)) { skipped.push({ row: top + i + 1, col: 0, label: "row", value: "", reason: "row could not be created" }); continue; }
-      const recCols = gridColumnsFor(rec);
+      const recCols = getAllRowColumns(rec);
       const recColIds = new Set(recCols.map((c) => c.id));
       const srcRow = block[i] || [];
-      for (let j = 0; j < srcRow.length; j++) {
-        const ci = left + j;
-        if (ci >= anchorCols.length) { overflow = true; continue; }
-        const col = anchorCols[ci];
-        // Column must exist in this row's group (groups may have different columns).
-        if (!recColIds.has(col.id)) {
-          skipped.push({ row: top + i + 1, col: ci + 1, label: col.label, value: String(srcRow[j] ?? ""), reason: "column not in this row's group" });
-          continue;
+
+      // First pass: find primary column value for this row
+      let primaryValue = "";
+      for (const mapping of colMapping) {
+        const targetCol = mapping.targetIndex !== null ? anchorCols[mapping.targetIndex] : null;
+        if (targetCol?.isPrimary && mapping.sourceIndex < srcRow.length) {
+          primaryValue = String(srcRow[mapping.sourceIndex] ?? "").trim();
+          break;
         }
+      }
+
+      for (const mapping of colMapping) {
+        const j = mapping.sourceIndex;
+        if (j >= srcRow.length) continue;
+        const targetCol = mapping.targetIndex !== null ? anchorCols[mapping.targetIndex] : null;
         const raw = String(srcRow[j] ?? "");
-        if (isComputedColumn(col) || readOnly.has(col.id)) {
-          if (raw.trim() !== "") skipped.push({ row: top + i + 1, col: ci + 1, label: col.label, value: raw, reason: "read-only" });
+
+        if (!targetCol) {
+          if (raw.trim() !== "") {
+            skipped.push({ row: top + i + 1, col: j + 1, label: sourceColumns[j]?.title || `col ${j}`, value: raw, reason: "no matching column in target" });
+            skippedColumns.add(sourceColumns[j]?.title || `col ${j}`);
+          }
           continue;
         }
-        const titleHere = isTitleCell(rec, col);
+
+        // Computed/read-only columns are skipped first (they exist in grid but can't be written)
+        if (isComputedColumn(targetCol) || readOnly.has(targetCol.id)) {
+          if (raw.trim() !== "") skipped.push({ row: top + i + 1, col: j + 1, label: targetCol.label, value: raw, reason: "read-only" });
+          continue;
+        }
+
+        // Column must exist in this row's group (groups may have different columns)
+        if (!recColIds.has(targetCol.id)) {
+          skipped.push({ row: top + i + 1, col: j + 1, label: targetCol.label, value: raw, reason: "column not in this row's group" });
+          continue;
+        }
+
+        const titleHere = isTitleCell(rec, targetCol);
         if (titleHere) {
           prev.push({ kind: "title", recordId: rec.id, value: rec.title || "" });
-          titleUpdates.push({ recordId: rec.id, title: raw.trim() });
+          const titleToWrite = primaryValue || raw.trim();
+          titleUpdates.push({ recordId: rec.id, title: titleToWrite });
           continue;
         }
-        const options = getColumnOptions(col);
-        const conv = convertPastedValue(raw, col, options, (members as Member[]) || []);
-        if (conv.warning) warned.push({ row: top + i + 1, col: ci + 1, label: col.label, value: raw, warning: conv.warning });
+
+        const options = getColumnOptions(targetCol);
+        const conv = convertPastedValue(raw, targetCol, options, (members as Member[]) || []);
+        if (conv.warning) warned.push({ row: top + i + 1, col: j + 1, label: targetCol.label, value: raw, warning: conv.warning });
         if (conv.skip) {
-          skipped.push({ row: top + i + 1, col: ci + 1, label: col.label, value: raw, reason: conv.reason || "skipped" });
+          skipped.push({ row: top + i + 1, col: j + 1, label: targetCol.label, value: raw, reason: conv.reason || "skipped" });
           continue;
         }
-        prev.push({ kind: "cell", recordId: rec.id, columnId: col.id, value: cellValues.get(getCellKey(rec.id, col.id)) ?? col.defaultValue ?? null });
-        cellUpdates.push({ recordId: rec.id, columnId: col.id, value: conv.value });
+        prev.push({ kind: "cell", recordId: rec.id, columnId: targetCol.id, value: cellValues.get(getCellKey(rec.id, targetCol.id)) ?? targetCol.defaultValue ?? null });
+        cellUpdates.push({ recordId: rec.id, columnId: targetCol.id, value: conv.value });
       }
     }
-    if (overflow) skipped.push({ row: 0, col: 0, label: "block", value: "", reason: "overflow past last column" });
 
-    // One optimistic state update per type + one batched write per type:
-    // all cells in a single upsert, all titles in a single upsert.
     await applyPasteUpdates(titleUpdates, cellUpdates, prev);
     gridCutRef.current = null;
 
@@ -1873,15 +1968,17 @@ const flatRecords = useMemo(
 
     const skipCount = skipped.length;
     const warnCount = warned.length;
+    const skippedColsList = Array.from(skippedColumns).slice(0, 5);
     const skipDetail = skipped.map((s) => `row ${s.row}, col ${s.col} "${s.label}": value="${s.value}" — ${s.reason}`).join("; ");
     const warnDetail = warned.map((w) => `row ${w.row}, col ${w.col} "${w.label}": value="${w.value}" — ${w.warning}`).join("; ");
     const reportParts: string[] = [];
     if (skipDetail) reportParts.push(`${skipCount} skipped: ${skipDetail}`);
     if (warnDetail) reportParts.push(`${warnCount} warned: ${warnDetail}`);
+    const skippedColsMsg = skippedColsList.length ? `, ${skippedColsList.length} columns skipped${skippedColumns.size > 5 ? "..." : ""}: ${skippedColsList.join(", ")}` : "";
     const reportMsg = reportParts.length ? ` — ${reportParts.join(" ")}` : "";
     console.log("[grid-paste]", { source: resolved.exact ? "matrix" : "text", selected: { r1: top, c1: left, r2: Math.max(top, endR), c2: Math.max(left, endC) }, matrix: { rows: R, cols: C }, skipped, warned });
-    toast(`Pasted ${R} rows x ${C} cols${skipCount ? `, ${skipCount} skipped` : ""}${warnCount ? `, ${warnCount} warned` : ""}${reportMsg}`);
-  }, [gridAnchor, gridEnd, gridRange, flatRecords, groupedRecords, collapsedGroups, groups, onNewItem, onBulkNewItem, records, restrictEditingColumns, gridColumnsFor, cellValues, members, isTitleCell, applyPasteUpdates, scrollGridCellIntoView]);
+    toast(`Pasted ${R} rows${skippedColsMsg}${skipCount ? `, ${skipCount} cells skipped` : ""}${warnCount ? `, ${warnCount} warned` : ""}${reportMsg}`);
+  }, [gridAnchor, gridEnd, gridRange, flatRecords, groupedRecords, collapsedGroups, groups, onNewItem, onBulkNewItem, records, restrictEditingColumns, gridColumnsFor, getAllRowColumns, cellValues, members, isTitleCell, applyPasteUpdates, scrollGridCellIntoView, board.id]);
 
   const applyGridFill = useCallback(async (source: {r1:number;r2:number;c1:number;c2:number}, target: {r1:number;r2:number;c1:number;c2:number}) => {
     const down = target.r2 > source.r2;
@@ -1919,12 +2016,42 @@ const flatRecords = useMemo(
     const onWindowPaste = (e: ClipboardEvent) => {
       if (isEditable(e.target)) return;
       if (selectedHeaderIds.length > 0) return;
-      if (selection.count > 0) return;
-      if (!hasGridSelection()) return;
       const text = e.clipboardData?.getData("text/plain");
       if (text == null) return;
+
+      // If there's a grid selection, use it. Otherwise, if there's a row
+      // selection, create a temporary grid selection covering all columns of
+      // the selected rows so that paste works for "Copy row / Paste" workflow.
+      let pasteAnchor = gridAnchor;
+      let pasteEnd = gridEnd;
+      let restoreGridSelection = false;
+      if (!hasGridSelection() && selection.count > 0) {
+        const selectedIndices = flatRecords
+          .map((rec, idx) => (selection.selectedIds.has(rec.id) ? idx : -1))
+          .filter((idx) => idx >= 0);
+        if (selectedIndices.length > 0) {
+          const firstCol = 0;
+          const lastCol = Math.max(0, gridColumnsFor(flatRecords[0] || records[0]).length - 1);
+          pasteAnchor = { row: selectedIndices[0], col: firstCol };
+          pasteEnd = { row: selectedIndices[selectedIndices.length - 1], col: lastCol };
+          restoreGridSelection = true;
+        }
+      }
+      if (!pasteAnchor && !pasteEnd) return;
+
       e.preventDefault();
-      void doGridPaste(text, e.clipboardData);
+      const prevAnchor = gridAnchor;
+      const prevEnd = gridEnd;
+      if (restoreGridSelection) {
+        setGridAnchor(pasteAnchor!);
+        setGridEnd(pasteEnd!);
+      }
+      void doGridPaste(text, e.clipboardData).then(() => {
+        if (restoreGridSelection) {
+          setGridAnchor(prevAnchor);
+          setGridEnd(prevEnd);
+        }
+      });
     };
     const onWindowCopy = (e: ClipboardEvent) => {
       if (isEditable(e.target)) return;
@@ -1939,9 +2066,32 @@ const flatRecords = useMemo(
       if (cd) {
         cd.setData("text/plain", matrixToTSV(matrix));
         cd.setData("text/html", gridMatrixToHtml(matrix));
-        try { cd.setData(GRID_MATRIX_MIME, serializeMatrix(matrix)); } catch { /* optional */ }
+        // Build column metadata for the copied range
+        const anchorRec = flatRecords[gridRange.r1] ?? records[0];
+        const anchorCols = gridColumnsFor(anchorRec);
+        const copiedColMetas: ColumnMeta[] = [];
+        for (let c = gridRange.c1; c <= gridRange.c2; c++) {
+          const col = anchorCols[c];
+          if (col) {
+            copiedColMetas.push({
+              id: col.id,
+              title: col.label,
+              type: col.type,
+              isPrimary: col.isPrimary ?? false,
+            });
+          } else {
+            copiedColMetas.push({ id: "", title: "", type: "text", isPrimary: false });
+          }
+        }
+        const payload: GridClipboardPayload = {
+          version: 2,
+          sourceBoardId: board.id,
+          columns: copiedColMetas,
+          rows: matrix,
+        };
+        try { cd.setData(GRID_MATRIX_MIME, serializeMatrix(payload)); } catch { /* optional */ }
       }
-      internalClipboardRef.current = { values: matrix, raw: [] };
+      internalClipboardRef.current = { payload: { version: 2, sourceBoardId: board.id, columns: [], rows: matrix }, raw: [] };
       gridCutRef.current = null;
     };
     const onWindowCut = (e: ClipboardEvent) => {
@@ -1977,8 +2127,23 @@ const flatRecords = useMemo(
   const [focusedCell, setFocusedCell] = useState<{ rowIdx: number; colIdx: number } | null>(null);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    const target = e.target as HTMLElement;
-    if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+    const selectionTarget = e.target as HTMLElement | null;
+    const isEditing = !!selectionTarget?.closest("input:not([type='checkbox']), textarea, [contenteditable='true']");
+    if (e.key === "Escape") {
+      e.preventDefault();
+      selection.deselectAll();
+      setGridAnchor(null);
+      setGridEnd(null);
+      setFocusedCell(null);
+      return;
+    }
+    if (!isEditing && (e.ctrlKey || e.metaKey) && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      selection.toggleAll(selectableRecordIds);
+      return;
+    }
+    const keyboardTarget = e.target as HTMLElement;
+    if (keyboardTarget.tagName === "INPUT" || keyboardTarget.tagName === "TEXTAREA" || keyboardTarget.isContentEditable) return;
     const cur = gridEnd ?? gridAnchor ?? (focusedCell ? { row: focusedCell.rowIdx, col: focusedCell.colIdx } : null);
     if (!cur && !(e.ctrlKey || e.metaKey)) return;
     const maxRow = Math.max(0, flatRecords.length - 1);
@@ -2020,7 +2185,7 @@ const flatRecords = useMemo(
       case "Enter": e.preventDefault(); setSel(r+1,c,false); return;
       case "Home": e.preventDefault(); if (e.ctrlKey||e.metaKey) setSel(0,0,e.shiftKey); else setSel(r,edgeLeft(r),e.shiftKey); return;
       case "End": e.preventDefault(); if (e.ctrlKey||e.metaKey) setSel(maxRow,edgeRight(maxRow),e.shiftKey); else setSel(r,edgeRight(r),e.shiftKey); return;
-      case "a": case "A": if (e.ctrlKey||e.metaKey) { e.preventDefault(); if (flatRecords.length){ const last=flatRecords.length-1; setGridAnchor({row:0,col:0}); setGridEnd({row:last,col:edgeRight(last)}); setFocusedCell({rowIdx:0,colIdx:0}); } } return;
+      case "a": case "A": if (e.ctrlKey||e.metaKey) { e.preventDefault(); selection.toggleAll(selectableRecordIds); } return;
       case "F2": {
         const el = document.querySelector(`[data-grid-row="${r}"][data-grid-col="${c}"]`) as HTMLElement | null;
         const input = el?.querySelector("input,textarea,[contenteditable='true']") as HTMLElement | null;
@@ -2047,7 +2212,7 @@ const flatRecords = useMemo(
         try { const native = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set; native?.call(input, e.key); input.dispatchEvent(new Event("input", { bubbles: true })); } catch { /* best effort */ }
       }
     }
-  }, [gridAnchor, gridEnd, gridRange, focusedCell, flatRecords, gridColumnsFor, records, scrollGridCellIntoView, applyGridFill, undoGrid, redoGrid, clearGridRange, copyGridRange, selection, getDisplayValue, doGridPaste]);
+  }, [gridAnchor, gridEnd, gridRange, focusedCell, flatRecords, selectableRecordIds, gridColumnsFor, records, scrollGridCellIntoView, applyGridFill, undoGrid, redoGrid, clearGridRange, copyGridRange, selection, getDisplayValue, doGridPaste]);
 
   const columnWidthsList = useMemo(() => {
     const widths = [`${ROW_CHECKBOX_WIDTH}px`];
@@ -2207,6 +2372,24 @@ const flatRecords = useMemo(
           <span className="font-medium text-foreground">
             {selection.count} selected
           </span>
+          {!allRecordsSelected && (
+            <button
+              type="button"
+              className="text-xs font-medium text-primary hover:underline"
+              onClick={() => selection.selectAll(selectableRecordIds)}
+            >
+              Select all {selectableRecordIds.length} items
+            </button>
+          )}
+          {recordTotal != null && recordTotal > selectableRecordIds.length && (
+            <button
+              type="button"
+              className="text-xs text-muted-foreground"
+              onClick={() => selection.selectAll(selectableRecordIds)}
+            >
+              Select all {recordTotal} items in this board
+            </button>
+          )}
           <div className="ml-auto flex items-center gap-1">
             {onBulkArchive && (
               <Button
@@ -2317,11 +2500,15 @@ const flatRecords = useMemo(
             >
               {/* Selection checkbox header */}
               <div className="board-table-sticky sticky left-0 z-10 flex items-center justify-center border-r border-[var(--border)] px-2 py-3">
-                <button
-                  type="button"
-                  className="size-4 rounded border border-muted-foreground/40 bg-background hover:bg-accent"
-                  onClick={handleSelectAll}
-                  aria-label="Select all cells"
+                <input
+                  type="checkbox"
+                  className="board-table-checkbox"
+                  checked={allRecordsSelected}
+                  ref={(element) => {
+                    if (element) element.indeterminate = selection.isPartiallySelected(selectableRecordIds);
+                  }}
+                  onChange={() => selection.toggleAll(selectableRecordIds)}
+                  aria-label="Select all"
                   title="Select all"
                 />
               </div>
@@ -2507,6 +2694,23 @@ const flatRecords = useMemo(
                     className="board-table-group flex items-center gap-2 border-l-2 px-4 py-2 text-sm font-semibold"
                     style={{ borderLeftColor: group?.color ?? "#94a3b8", paddingLeft: ROW_CHECKBOX_WIDTH + 16 }}
                   >
+                    <input
+                      type="checkbox"
+                      className="board-table-checkbox"
+                      checked={groupRecords.length > 0 && groupRecords.every((record) => selection.isSelected(record.id))}
+                      ref={(element) => {
+                        if (!element) return;
+                        const selectedCount = groupRecords.filter((record) => selection.isSelected(record.id)).length;
+                        element.indeterminate = selectedCount > 0 && selectedCount < groupRecords.length;
+                      }}
+                      onChange={() => {
+                        const ids = groupRecords.map((record) => record.id);
+                        selection.toggleAll(ids);
+                      }}
+                      onClick={(event) => event.stopPropagation()}
+                      aria-label={`Select all rows in ${group?.name ?? "group"}`}
+                      title="Select all"
+                    />
                     <button
                       onClick={() => toggleGroup(group!.id)}
                       className="flex size-5 items-center justify-center rounded hover:bg-accent"
@@ -2633,8 +2837,11 @@ const flatRecords = useMemo(
                       type="checkbox"
                       className="board-table-checkbox"
                       checked={isSelected}
-                      onChange={() => selection.toggle(record.id)}
-                      onClick={(e) => e.stopPropagation()}
+                      onChange={() => {}}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selection.selectRange(record.id, selectableRecordIds, e.shiftKey);
+                      }}
                       aria-label={`Select ${record.title || "Untitled"}`}
                     />
                   </div>
@@ -2926,7 +3133,7 @@ const flatRecords = useMemo(
       {hasSelection && (
         <div className="flex shrink-0 items-center gap-2 border-t border-border bg-accent/30 px-4 py-2 text-sm">
           <span className="font-medium text-foreground">
-            {selection.count} Client names selected
+             {selection.count} items selected
           </span>
           <div className="ml-auto flex items-center gap-1">
             <Button
@@ -2936,12 +3143,33 @@ const flatRecords = useMemo(
                 Array.from(selection.selectedIds).forEach((id) => {
                   onRowDuplicate?.(id);
                 });
+                selection.deselectAll();
               }}
             >
               <Copy className="mr-1 size-3.5" />
               Duplicate
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => toast.message("Export coming soon")}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                const selectedRecords = flatRecords.filter((record) => selection.selectedIds.has(record.id));
+                const exportColumns = allVisibleColumns;
+                const escapeCsv = (value: string) => `"${value.replace(/"/g, '""')}"`;
+                const header = exportColumns.map((column) => escapeCsv(column.label)).join(",");
+                const rows = selectedRecords.map((record) =>
+                  exportColumns.map((column) => escapeCsv(getDisplayValue(record, column))).join(","),
+                );
+                const blob = new Blob(["\uFEFF" + [header, ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `${board.name || "board"}-selected.csv`;
+                link.click();
+                URL.revokeObjectURL(url);
+                selection.deselectAll();
+              }}
+            >
               <Download className="mr-1 size-3.5" />
               Export
             </Button>
@@ -2973,7 +3201,10 @@ const flatRecords = useMemo(
                 {STATUS_OPTIONS.map((status) => (
                   <DropdownMenuItem
                     key={status.id}
-                    onSelect={() => onMoveToStatus?.(Array.from(selection.selectedIds), status.name)}
+                    onSelect={() => {
+                      onMoveToStatus?.(Array.from(selection.selectedIds), status.name);
+                      selection.deselectAll();
+                    }}
                   >
                     <span
                       className="mr-2 size-2.5 rounded-sm"
@@ -2988,7 +3219,10 @@ const flatRecords = useMemo(
                     {(groups ?? []).filter((g) => !selection.selectedIds.has(g.id) && !STATUS_OPTIONS.some((s) => s.name === g.name)).map((group) => (
                       <DropdownMenuItem
                         key={group.id}
-                        onSelect={() => onMoveToGroup?.(Array.from(selection.selectedIds), group.id)}
+                        onSelect={() => {
+                          onMoveToGroup?.(Array.from(selection.selectedIds), group.id);
+                          selection.deselectAll();
+                        }}
                       >
                         {group.name}
                       </DropdownMenuItem>
@@ -3040,8 +3274,8 @@ const flatRecords = useMemo(
       <ConfirmDialog
         open={bulkAction === "delete"}
         onOpenChange={(open) => !open && setBulkAction(null)}
-        title="Delete records"
-        description={`Are you sure you want to permanently delete ${selection.count} record${selection.count !== 1 ? "s" : ""}? This action cannot be undone.`}
+        title={`Delete ${selection.count} items?`}
+        description="This can't be undone"
         confirmLabel="Delete"
         variant="destructive"
         onConfirm={() => {

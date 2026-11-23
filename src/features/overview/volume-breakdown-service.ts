@@ -1,9 +1,8 @@
-import "server-only";
+﻿import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { getLiveJobScope, isJobReceivedInRange, type LiveJobRow } from "@/features/client-360/live-job-scope";
 import { fetchDataBounds } from "@/features/overview/data-bounds";
-
-import { checkAndRefreshSnapshotIfNeeded } from "@/features/client-360/daily-activity-service";
 import { narrowAllTimeRange, type ResolvedTimeRange } from "@/features/overview/time-range";
 import {
   BREAKDOWN_FIELD,
@@ -18,86 +17,40 @@ export interface VolumeBreakdownOptions {
   boardIds?: string[] | null;
 }
 
-/** Coerces a JSONB number to a non-negative integer, defaulting to 0. */
-function toCount(value: unknown): number {
-  const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return Math.round(parsed);
-}
-
-function toBoolean(value: unknown): boolean {
-  return value === true || value === "true" || value === 1;
-}
-
-function parseItems(value: unknown): BreakdownItem[] {
-  if (!Array.isArray(value)) return [];
-  const items: BreakdownItem[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object") continue;
-    const record = entry as Record<string, unknown>;
-    const key = typeof record.key === "string" ? record.key : "";
-    const volume = toCount(record.volume);
-    // A group with no volume cannot be drawn and has no share of the total, so
-    // it is dropped here rather than becoming a 0% legend row downstream.
-    if (volume <= 0) continue;
-    items.push({ key, volume, jobs: toCount(record.jobs) });
-  }
-  return items;
-}
-
-/**
- * Loads the job-type breakdown for a range in a single database round trip.
- *
- * `overview_volume_breakdown()` counts real snapshot rows whose `job_date` falls
- * inside the window; the totals and the per-group counts both come from those
- * rows, so the legend can never disagree with the donut. Records with no job
- * type come back under an empty key rather than being dropped, which is what
- * lets the UI surface them as an explicit "Unclassified" slice.
- *
- * Throws when the aggregation fails. There is no fallback data path: a breakdown
- * that quietly returned zero slices would be indistinguishable from a studio
- * that genuinely did no work.
- */
 export async function fetchVolumeBreakdown(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   { organizationId, range, boardIds = null }: VolumeBreakdownOptions,
-): Promise<BreakdownPayload> {
-  // Records written moments ago only reach the snapshot on refresh; without it
-  // the breakdown would under-report the current range.
-  await checkAndRefreshSnapshotIfNeeded(supabase);
-
-  const window =
-    range.id === "all"
-      ? narrowAllTimeRange(range, await fetchDataBounds(supabase, organizationId, null))
-      : range;
-
-  const { data, error } = await supabase.rpc("overview_volume_breakdown", {
-    p_organization_id: organizationId,
-    p_board_ids: boardIds,
-    p_from: window.from,
-    p_to: window.to,
-  });
-
-  if (error) {
-    console.error("Failed to fetch volume breakdown:", error);
-    throw new Error(
-      `Failed to fetch volume breakdown: ${error.message || String(error)}`,
-    );
+): Promise<BreakdownPayload & { generatedAt: string; todayIST: string }> {
+  const scope = await getLiveJobScope(organizationId);
+  let jobs = scope.jobs;
+  if (boardIds && boardIds.length > 0) {
+    const allowed = new Set(boardIds);
+    jobs = jobs.filter((j) => allowed.has(j.board_id));
   }
 
-  const root = (data ?? {}) as Record<string, unknown>;
+  const window = range.id === "all"
+    ? narrowAllTimeRange(range, await fetchDataBounds(_supabase, organizationId, null))
+    : range;
+
+  const received = jobs.filter((j) => isJobReceivedInRange(j, window.from, window.to));
+  const counts = new Map<string, number>();
+  let jobTypeAvailable = false;
+  for (const job of received) {
+    const raw = (job.job_type ?? "").trim();
+    if (raw) jobTypeAvailable = true;
+    const key = raw || "";
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  const items: BreakdownItem[] = [...counts.entries()]
+    .map(([key, jobsCount]) => ({ key, volume: jobsCount, jobs: jobsCount }))
+    .filter((item) => item.volume > 0);
 
   return {
     range: window,
-    grouping: {
-      field: BREAKDOWN_FIELD,
-      label: BREAKDOWN_FIELD_LABEL,
-      available: toBoolean(root.job_type_available),
-    },
-    total: {
-      volume: toCount(root.total_volume),
-      jobs: toCount(root.total_jobs),
-    },
-    items: parseItems(root.items),
+    grouping: { field: BREAKDOWN_FIELD, label: BREAKDOWN_FIELD_LABEL, available: jobTypeAvailable },
+    total: { volume: received.length, jobs: received.length },
+    items,
+    generatedAt: scope.generatedAt,
+    todayIST: scope.todayIST,
   };
 }
