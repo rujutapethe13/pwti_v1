@@ -118,7 +118,7 @@ function aggregateWindow(
 export async function fetchOverviewStatCards(
   _supabase: SupabaseClient,
   { organizationId, range, boardIds = null }: OverviewStatCardsOptions,
-): Promise<StatCardsResult & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; missingReceivedDateCount: number; unlinkedReferenceCount: number }> {
+): Promise<StatCardsResult & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; boardsWithoutUploadDate: Array<{ board_id: string; board_name: string }>; boardUploadColumns: Array<{ board_id: string; board_name: string; column_label: string; source: "mapping" | "label" }>; missingReceivedDateCount: number; unlinkedReferenceCount: number }> {
   const scope = await getLiveJobScope(organizationId);
   let jobs = scope.jobs;
   if (boardIds && boardIds.length > 0) {
@@ -126,9 +126,11 @@ export async function fetchOverviewStatCards(
     jobs = jobs.filter((j) => allowed.has(j.board_id));
   }
 
-  // Boards without an upload date mapping never contribute to the Completed
-  // count; they are listed in the footnote instead.
-  const unmappedBoards = new Set(scope.boardsWithoutUploadMapping.map((b) => b.board_id));
+  // Boards with no effective upload column (neither an explicit mapping nor a
+  // label match) never contribute to the Completed count; they are listed in
+  // the footnote instead. Boards whose upload date is resolved by label still
+  // count, so Completed, Turnaround, and the jobs table agree.
+  const unmappedBoards = new Set(scope.boardsWithoutUploadDate.map((b) => b.board_id));
   const mappedJobs = jobs.filter((j) => !unmappedBoards.has(j.board_id));
 
   const bounds = await fetchDataBounds(_supabase, organizationId, null);
@@ -158,6 +160,8 @@ export async function fetchOverviewStatCards(
     generatedAt: scope.generatedAt,
     todayIST: scope.todayIST,
     boardsWithoutUploadMapping: scope.boardsWithoutUploadMapping,
+    boardsWithoutUploadDate: scope.boardsWithoutUploadDate,
+    boardUploadColumns: scope.boardsWithUploadDate,
     missingReceivedDateCount: scope.missingReceivedDate.length,
     unlinkedReferenceCount: scope.unlinkedReferences.length,
   };

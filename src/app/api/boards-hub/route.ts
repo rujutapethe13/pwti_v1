@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { timeApi } from "@/lib/board-data-cache";
 
 interface BoardRow {
   id: string;
@@ -31,27 +32,28 @@ interface OverrideRow {
 }
 
 export async function GET(_request: NextRequest) {
-  const supabase = await createClient(await cookies());
+  return timeApi("/api/boards-hub", async () => {
+    const supabase = await createClient(await cookies());
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  if (!user) {
-    return NextResponse.json(
-      { success: false, error: "Authentication required", details: null },
-      { status: 401 },
-    );
-  }
+    if (!user) {
+      return NextResponse.json(
+        { success: false, error: "Authentication required", details: null },
+        { status: 401 },
+      );
+    }
 
-  try {
-    const svc = await createServiceClient();
+    try {
+      const svc = await createServiceClient();
 
-    // ── Every workspace in the app, regardless of membership ──────────────
-    const { data: workspaces } = await svc
-      .from("workspaces")
-      .select("id, name, owner_id")
-      .order("name");
+      // ── Every workspace in the app, regardless of membership ──────────────
+      const { data: workspaces } = await svc
+        .from("workspaces")
+        .select("id, name, owner_id")
+        .order("name");
 
     const workspaceById = new Map(
       (workspaces ?? []).map((w: WorkspaceRow) => [w.id, w]),
@@ -153,4 +155,5 @@ export async function GET(_request: NextRequest) {
       { status: 500 },
     );
   }
+  });
 }

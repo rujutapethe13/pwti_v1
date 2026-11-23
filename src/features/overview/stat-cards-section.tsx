@@ -214,7 +214,7 @@ export function StatCardsSection({
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [data, setData] = useState<(StatCardsResult & { generatedAt?: string; todayIST?: string; boardsWithoutUploadMapping?: Array<{board_id:string;board_name:string}>; missingReceivedDateCount?: number; unlinkedReferenceCount?: number }) | null>(null);
+  const [data, setData] = useState<(StatCardsResult & { generatedAt?: string; todayIST?: string; boardsWithoutUploadMapping?: Array<{board_id:string;board_name:string}>; boardsWithoutUploadDate?: Array<{board_id:string;board_name:string}>; boardUploadColumns?: Array<{board_id:string;board_name:string;column_label:string;source:"mapping"|"label"}>; missingReceivedDateCount?: number; unlinkedReferenceCount?: number }) | null>(null);
 
   const load = useCallback(async () => {
     setIsLoading(true);
@@ -366,7 +366,7 @@ export function StatCardsSection({
           />
         ))}
       </div>
-      {(data && (data.generatedAt || (data.missingReceivedDateCount ?? 0) > 0 || (data.unlinkedReferenceCount ?? 0) > 0 || (data.boardsWithoutUploadMapping?.length ?? 0) > 0 || resolvedSummary?.completedReconciliation)) && (
+      {(data && (data.generatedAt || (data.missingReceivedDateCount ?? 0) > 0 || (data.unlinkedReferenceCount ?? 0) > 0 || (data.boardsWithoutUploadDate?.length ?? 0) > 0 || (data.boardUploadColumns?.length ?? 0) > 0 || resolvedSummary?.completedReconciliation)) && (
         <div className="text-muted-foreground space-y-0.5 px-1 text-[11px] leading-snug">
           {data.generatedAt ? <p>Data as of {new Date(data.generatedAt).toLocaleString()}</p> : null}
           {(data.missingReceivedDateCount ?? 0) > 0 && (
@@ -390,7 +390,19 @@ export function StatCardsSection({
           {(data.unlinkedReferenceCount ?? 0) > 0 && (
             <p>{data.unlinkedReferenceCount} unlinked reference{data.unlinkedReferenceCount !== 1 ? "s" : ""} excluded from counts.</p>
           )}
-          {(data.boardsWithoutUploadMapping?.length ?? 0) > 0 ? <p>No upload date mapping on {data.boardsWithoutUploadMapping!.map((b) => b.board_name).join(", ")}.</p> : null}
+          {(data.boardsWithoutUploadDate?.length ?? 0) > 0 ? (
+            <p>
+              No upload date column found on {data.boardsWithoutUploadDate!.map((b) => b.board_name).join(", ")} — Completed and Turnaround skip these boards.
+            </p>
+          ) : null}
+          {(data.boardUploadColumns?.length ?? 0) > 0 ? (
+            <p>
+              Upload date read from:{" "}
+              {data.boardUploadColumns!
+                .map((b) => `${b.board_name} → "${b.column_label}"${b.source === "label" ? " (auto)" : ""}`)
+                .join("; ")}
+            </p>
+          ) : null}
           {resolvedSummary?.completedReconciliation && resolvedSummary.completedReconciliation.total > 0 && (
             <p>
               {formatCount(resolvedSummary.completedReconciliation.total)} completed ={" "}

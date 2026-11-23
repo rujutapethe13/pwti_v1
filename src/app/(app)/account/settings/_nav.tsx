@@ -5,6 +5,7 @@ import {
   Bell,
   Palette,
   Users,
+  CalendarDays,
 } from "lucide-react";
 
 export interface AccountNavItem {
@@ -21,6 +22,7 @@ export const ACCOUNT_NAV_ITEMS: AccountNavItem[] = [
   { id: "privacy", label: "Privacy", href: "/account/settings/privacy", icon: Eye },
   { id: "notifications", label: "Notifications", href: "/account/settings/notifications", icon: Bell },
   { id: "appearance", label: "Appearance", href: "/account/settings/appearance", icon: Palette },
+  { id: "date-mappings", label: "Date mappings", href: "/account/settings/date-mappings", icon: CalendarDays },
   {
     id: "members",
     label: "Members & access",
@@ -36,6 +38,7 @@ const ACTIVE_PREFIXES: Record<string, string[]> = {
   privacy: ["/account/settings/privacy"],
   notifications: ["/account/settings/notifications"],
   appearance: ["/account/settings/appearance"],
+  "date-mappings": ["/account/settings/date-mappings"],
   members: ["/account/settings/members"],
 };
 

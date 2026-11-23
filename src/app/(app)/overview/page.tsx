@@ -227,6 +227,7 @@ function OverviewPage() {
   const [data, setData] = useState<OverviewResponse | null>(null);
   const [rangeId, setRangeId] = useState<TimeRangeId>(DEFAULT_TIME_RANGE_ID);
   const [customRange, setCustomRange] = useState<CustomRange | null>(null);
+  const [forceRefresh, setForceRefresh] = useState(false);
   const { settings } = useUser();
   const { user: currentUser } = useCurrentUser();
   const timeZone = settings.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -287,19 +288,22 @@ function OverviewPage() {
   );
 
   const loadData = useCallback(async () => {
+    const start = Date.now();
     setIsLoading(true);
     setError(null);
     try {
+      const refreshParam = forceRefresh ? "&refresh=1" : "";
       const boardQuery = selectedBoardIds.length ? `&boards=${selectedBoardIds.join(",")}` : "&boards=";
       const drilldownBoardQuery = selectedBoardIds.length
         ? `&boards=${selectedBoardIds.join(",")}`
         : "&boards=";
       const [res, drilldownRes] = await Promise.all([
-        fetch(`/api/overview?${rangeQuery}&range=${rangeId}${boardQuery}`, { cache: "no-store" }),
-        fetch(`/api/overview/drilldown?${rangeQuery}&range=${rangeId}${drilldownBoardQuery}`, {
+        fetch(`/api/overview?${rangeQuery}&range=${rangeId}${boardQuery}${refreshParam}`, { cache: "no-store" }),
+        fetch(`/api/overview/drilldown?${rangeQuery}&range=${rangeId}${drilldownBoardQuery}${refreshParam}`, {
           cache: "no-store",
         }),
       ]);
+      console.log(`[perf][client] overview fetch — ${Date.now() - start}ms (refresh=${forceRefresh})`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || "Failed to fetch overview data");
@@ -317,6 +321,7 @@ function OverviewPage() {
         }
       }
       setData(json);
+      setForceRefresh(false);
       if (drilldownRes.ok) {
         setDrilldownData((await drilldownRes.json()) as OverviewDrilldownPayload);
       }
@@ -325,7 +330,7 @@ function OverviewPage() {
     } finally {
       setIsLoading(false);
     }
-  }, [rangeQuery, rangeId, selectedBoardIds]);
+  }, [rangeQuery, rangeId, selectedBoardIds, forceRefresh]);
 
   useEffect(() => {
     loadData();
@@ -437,6 +442,23 @@ function OverviewPage() {
           <Button className="bg-primary text-primary-foreground hover:bg-primary/90 gap-1.5">
             <Plus className="size-4" />
             New job
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setForceRefresh(true)}
+            disabled={isLoading}
+            className="gap-1.5"
+            title="Refresh"
+          >
+            {isLoading ? (
+              <RefreshCw className="size-3 animate-spin" />
+            ) : (
+              <>
+                <RefreshCw className="size-3" />
+                Synced just now
+              </>
+            )}
           </Button>
         </div>
       </div>

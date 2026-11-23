@@ -14,7 +14,7 @@
  */
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutGrid,
   Grid3X3,
@@ -58,6 +58,11 @@ const bottomItems = [
 
 export function IconRail() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  const prefetch = (href: string) => {
+    void router.prefetch(href);
+  };
 
   const renderItem = (item: (typeof topItems)[number]) => {
     const Icon = item.icon;
@@ -68,6 +73,7 @@ export function IconRail() {
       <Link
         key={item.id}
         href={item.href}
+        onMouseEnter={() => prefetch(item.href)}
         className={cn(
           "flex h-[56px] w-full flex-col items-center justify-center gap-0.5 rounded-lg transition-colors",
           isActive

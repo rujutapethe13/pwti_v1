@@ -460,8 +460,16 @@ export function VolumeTrendSection({
               )}
             </p>
           )}
-          {Array.isArray((data as any).boardsWithoutUploadMapping) && (data as any).boardsWithoutUploadMapping.length > 0 ? (
-            <p>No upload date mapping on {(data as any).boardsWithoutUploadMapping.map((b: any) => b.board_name).join(", ")} (label-matched upload columns may still be used where present).</p>
+          {Array.isArray((data as any).boardsWithoutUploadDate) && (data as any).boardsWithoutUploadDate.length > 0 ? (
+            <p>No upload date column found on {(data as any).boardsWithoutUploadDate.map((b: any) => b.board_name).join(", ")} — Completed (uploaded) skips these boards.</p>
+          ) : null}
+          {Array.isArray((data as any).boardUploadColumns) && (data as any).boardUploadColumns.length > 0 ? (
+            <p>
+              Upload date read from:{" "}
+              {(data as any).boardUploadColumns
+                .map((b: any) => `${b.board_name} → "${b.column_label}"${b.source === "label" ? " (auto)" : ""}`)
+                .join("; ")}
+            </p>
           ) : null}
         </div>
       )}

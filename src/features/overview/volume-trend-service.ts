@@ -75,7 +75,7 @@ function computeCoverage(jobs: LiveJobRow[], from: string, to: string): RangeCov
 export async function fetchVolumeTrend(
   _supabase: SupabaseClient,
   { organizationId, range, boardIds = null, today = new Date() }: VolumeTrendOptions,
-): Promise<VolumeTrendPayload & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; boardsWithoutUploadDate: Array<{ board_id: string; board_name: string }>; missingReceivedDateCount: number }> {
+): Promise<VolumeTrendPayload & { generatedAt: string; todayIST: string; boardsWithoutUploadMapping: Array<{ board_id: string; board_name: string }>; boardsWithoutUploadDate: Array<{ board_id: string; board_name: string }>; boardUploadColumns: Array<{ board_id: string; board_name: string; column_label: string; source: "mapping" | "label" }>; missingReceivedDateCount: number }> {
   const scope = await getLiveJobScope(organizationId);
   let jobs = scope.jobs;
   if (boardIds && boardIds.length > 0) {
@@ -115,6 +115,7 @@ export async function fetchVolumeTrend(
     todayIST: scope.todayIST,
     boardsWithoutUploadMapping: scope.boardsWithoutUploadMapping,
     boardsWithoutUploadDate: scope.boardsWithoutUploadDate,
+    boardUploadColumns: scope.boardsWithUploadDate,
     missingReceivedDateCount: scope.missingReceivedDate.length,
   };
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState, useEffect, useCallback, useRef } from "react";
+import { Fragment, useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   Lock,
@@ -13,6 +13,7 @@ import {
   Shield,
   ShieldOff,
   Star,
+  RefreshCw,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -24,6 +25,7 @@ import { useWorkspace } from "@/lib/workspace-context";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useSharedData } from "@/lib/use-shared-data";
 
 interface Board {
   id: string;
@@ -45,38 +47,24 @@ interface WorkspaceGroup {
   boards: Board[];
 }
 
+async function fetchBoardsHub(force = false): Promise<WorkspaceGroup[]> {
+  const res = await fetch(`/api/boards-hub${force ? "?refresh=1" : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Request failed with status ${res.status}`);
+  return (await res.json()) as WorkspaceGroup[];
+}
+
 export default function BoardsHubPage() {
   const router = useRouter();
-  const [data, setData] = useState<WorkspaceGroup[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data, loading, refreshing, error, lastUpdated, refresh } = useSharedData<WorkspaceGroup[]>(
+    "boards-hub",
+    () => fetchBoardsHub(),
+    { ttlMs: 3 * 60 * 1000 },
+  );
   const [requestErrors, setRequestErrors] = useState<Map<string, string>>(new Map());
   const [restrictErrors, setRestrictErrors] = useState<Map<string, string>>(new Map());
   const { favoritedBoardIds, toggleBoardFavorite } = useWorkspace();
   const requestPending = useRef<Map<string, boolean>>(new Map());
   const restrictPending = useRef<Map<string, boolean>>(new Map());
-
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch("/api/boards-hub");
-      if (!res.ok) {
-        throw new Error(`Request failed with status ${res.status}`);
-      }
-      const json: WorkspaceGroup[] = await res.json();
-      setData(json);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
 
   const handleRequestAccess = async (boardId: string) => {
     if (requestPending.current.get(boardId)) return;
@@ -94,14 +82,7 @@ export default function BoardsHubPage() {
         next.delete(boardId);
         return next;
       });
-      setData((prev) =>
-        prev?.map((ws) => ({
-          ...ws,
-          boards: ws.boards.map((b) =>
-            b.id === boardId ? { ...b, requested: true } : b,
-          ),
-        })) ?? null,
-      );
+      void refresh();
       toast.success("Access request sent to the workspace owner.");
     } catch {
       setRequestErrors((prev) => {
@@ -136,14 +117,7 @@ export default function BoardsHubPage() {
       });
 
       const newRestricted = !currentlyRestricted;
-      setData((prev) =>
-        prev?.map((ws) => ({
-          ...ws,
-          boards: ws.boards.map((b) =>
-            b.id === boardId ? { ...b, is_restricted: newRestricted } : b,
-          ),
-        })) ?? null,
-      );
+      void refresh();
 
       toast.success(
         newRestricted
@@ -188,7 +162,7 @@ export default function BoardsHubPage() {
           variant="inline"
           title="Failed to load Boards hub"
           message={error}
-          onRetry={fetchData}
+          onRetry={refresh}
         />
       </div>
     );
@@ -313,6 +287,15 @@ export default function BoardsHubPage() {
               Boards are open by default. Restricted boards show a lock icon.
             </span>
           </p>
+          {lastUpdated && (
+            <p className="text-xs text-muted-foreground mt-1">
+              Synced {lastUpdated.toLocaleTimeString()}{refreshing ? " · refreshing…" : ""}
+            </p>
+          )}
+          <Button onClick={refresh} disabled={refreshing} size="sm" className="mt-3">
+            <RefreshCw className={`mr-1 h-3 w-3 ${refreshing ? "animate-spin" : ""}`} />
+            Synced just now
+          </Button>
         </div>
 
         {data

@@ -90,18 +90,32 @@ const PENDING_STATUS = new Set([
   "review", "qa", "on hold", "waiting", "wip",
 ]);
 
-const UPLOAD_LABEL_NAMES = new Set([
-  "uploaded",
-  "uploaded date",
-  "date of upload",
-  "upload date",
-  "completed date",
-  "completion date",
-  "delivered date",
-]);
+// Match a column whose label indicates it holds the upload/completion date.
+// Any label containing "upload"/"uploaded" wins, then fall back to the other
+// common names ("delivered", "completed on", "completion date", ...).
+const UPLOAD_LABEL_PATTERNS: RegExp[] = [
+  /upload/i,
+  /deliver/i,
+  /complet/i,
+];
+
+// Match a column whose label indicates it holds the received/job date.
+const RECEIVE_LABEL_PATTERNS: RegExp[] = [
+  /receiv/i,
+  /inward/i,
+  /job date/i,
+  /booked/i,
+  /intake/i,
+];
 
 function normalizeColLabel(label: string | null | undefined): string {
   return String(label ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function labelMatches(label: string | null | undefined, patterns: RegExp[]): boolean {
+  const normalized = normalizeColLabel(label);
+  if (!normalized) return false;
+  return patterns.some((re) => re.test(normalized));
 }
 
 export function getTodayIST(): string {
@@ -499,7 +513,7 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     let effectiveUploadSource: "mapping" | "label" | null = mappedUploadCol ? "mapping" : null;
     if (!effectiveUploadCol) {
       const boardCols = (columns ?? [])
-        .filter((c: any) => String(c.board_id) === board.id && UPLOAD_LABEL_NAMES.has(normalizeColLabel(c.label)))
+        .filter((c: any) => String(c.board_id) === board.id && labelMatches(c.label, UPLOAD_LABEL_PATTERNS))
         .sort((a: any, b: any) => normalizeColLabel(a.label).localeCompare(normalizeColLabel(b.label)) || String(a.id).localeCompare(String(b.id)));
       if (boardCols.length > 0 && recIds.length > 0) {
         const colIds = boardCols.map((c: any) => String(c.id));
@@ -554,7 +568,39 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     const clientColFallback = clientCol
       ? null
       : pickClientColumnByLabel(boardColumns, new Map(), recIds);
-    const recvCol = pickField(bm, "receive_date", "job_date");
+    let recvCol = pickField(bm, "receive_date", "job_date");
+    if (!recvCol) {
+      const recvCandidates = boardColumns
+        .filter((c: any) => labelMatches(c.label, RECEIVE_LABEL_PATTERNS))
+        .sort((a: any, b: any) => normalizeColLabel(a.label).localeCompare(normalizeColLabel(b.label)) || String(a.id).localeCompare(String(b.id)));
+      if (recvCandidates.length > 0) {
+        const colIds = recvCandidates.map((c: any) => String(c.id));
+        const counts = new Map<string, number>();
+        for (let i = 0; i < recIds.length; i += 80) {
+          const chunk = recIds.slice(i, i + 80);
+          const cvCount = await fetchAll<any>((from, to) =>
+            supabase
+              .from("cell_values")
+              .select("record_id,column_id,value,value_text")
+              .eq("board_id", board.id)
+              .in("record_id", chunk)
+              .in("column_id", colIds)
+              .range(from, to),
+          );
+          for (const row of cvCount ?? []) {
+            const hasVal = (row.value !== null && row.value !== undefined && row.value !== "") || (row.value_text != null && String(row.value_text).trim() !== "");
+            if (hasVal) counts.set(String(row.column_id), (counts.get(String(row.column_id)) ?? 0) + 1);
+          }
+        }
+        recvCandidates.sort((a: any, b: any) => {
+          const da = counts.get(String(a.id)) ?? 0;
+          const db = counts.get(String(b.id)) ?? 0;
+          if (db !== da) return db - da;
+          return normalizeColLabel(a.label).localeCompare(normalizeColLabel(b.label)) || String(a.id).localeCompare(String(b.id));
+        });
+        recvCol = String(recvCandidates[0].id);
+      }
+    }
     const uploadCol = effectiveUploadCol;
     const dueCol = pickField(bm, "due_date");
     const statusCol = pickField(bm, "job_status", "status");
@@ -571,7 +617,7 @@ async function resolveLiveJobScope(organizationId: string, filters?: LiveJobScop
     }
     const colMeta = (id: string | null) => (id ? { id, label: String(colById.get(id)?.label ?? id) } : null);
 
-    const usedColIds = [...new Set([...(bm ? [...bm.values()] : []), effectiveUploadCol, clientColFallback, ...connectedCols].filter(Boolean) as string[])];
+    const usedColIds = [...new Set([...(bm ? [...bm.values()] : []), effectiveUploadCol, recvCol, clientColFallback, ...connectedCols].filter(Boolean) as string[])];
     const cellsByRecord = new Map<string, Map<string, any>>();
 
     if (usedColIds.length > 0) {

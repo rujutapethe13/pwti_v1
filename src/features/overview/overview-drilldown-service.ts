@@ -168,9 +168,11 @@ export async function fetchOverviewDrilldown(
     jobs = jobs.filter((j) => allowed.has(j.board_id));
   }
 
-  // Completed is driven only by boards that map an upload date column. Boards
-  // without a mapping are excluded from the count and listed in the footnote.
-  const unmappedBoards = new Set(scope.boardsWithoutUploadMapping.map((b) => b.board_id));
+  // Completed is driven only by boards that have an effective upload column
+  // (explicit mapping or label match). Boards without any upload column are
+  // excluded from the count and listed in the footnote. This keeps Completed,
+  // Turnaround, and the jobs table reading the same upload date.
+  const unmappedBoards = new Set(scope.boardsWithoutUploadDate.map((b) => b.board_id));
   const mappedJobs = jobs.filter((j) => !unmappedBoards.has(j.board_id));
 
   const allItems = jobs.map((j) => toItem(j, todayIST, user));

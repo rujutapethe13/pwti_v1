@@ -4,13 +4,16 @@ import { format } from "date-fns";
 
 import { getUserOrganizationId } from "@/lib/organization";
 import { createServiceClient } from "@/lib/supabase/server";
-import { getLiveJobScope } from "@/features/client-360/live-job-scope";
+import { fetchLiveJobScope, timeApi } from "@/lib/board-data-cache";
 import { narrowAllTimeRange, parseTimeRangeQuery, timeRangeQueryString } from "@/features/overview/time-range";
 import { fetchDataBounds } from "@/features/overview/data-bounds";
 import { pickVolumeGranularity } from "@/features/overview/volume-buckets";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(request: NextRequest) {
-  try {
+  return timeApi("/api/overview", async () => {
+    try {
     const organizationId = await getUserOrganizationId();
     if (!organizationId) {
       return NextResponse.json({ error: "Unable to determine organization. Please ensure you are a member of a workspace." }, { status: 401 });
@@ -18,7 +21,8 @@ export async function GET(request: NextRequest) {
 
     const supabase = await createServiceClient();
     const range = parseTimeRangeQuery(request.nextUrl.searchParams);
-    const scope = await getLiveJobScope(organizationId);
+    const forceRefresh = request.nextUrl.searchParams.get("refresh") === "1";
+    const scope = await fetchLiveJobScope(organizationId, { forceRefresh });
     const dataBounds = await fetchDataBounds(supabase, organizationId, null);
     const window = narrowAllTimeRange(range, dataBounds);
 
@@ -88,8 +92,9 @@ export async function GET(request: NextRequest) {
       generatedAt: scope.generatedAt,
       todayIST: scope.todayIST,
     });
-  } catch (err) {
-    console.error("Overview API error:", err);
-    return NextResponse.json({ error: "Failed to fetch overview data" }, { status: 500 });
-  }
+    } catch (err) {
+      console.error("Overview API error:", err);
+      return NextResponse.json({ error: "Failed to fetch overview data" }, { status: 500 });
+    }
+  });
 }
