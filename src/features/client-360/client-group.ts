@@ -9,6 +9,7 @@ export const CLIENT_ALIAS_GROUPS: Record<string, string[]> = {
   "papa don't preach": ["papa don,t peach", "papa dont peach", "papa don't preach"],
   levis: ["levi's", "levis strauss & co", "levis strauss and co", "levis"],
   safari: ["safari select", "safari-genie", "safari"],
+  "house of kinder": ["house of kinder", "house & kinder", "house and kinder"],
 };
 
 export function normalizeClient(value: string | null | undefined): string {

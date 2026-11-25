@@ -5,6 +5,10 @@ import { EngineBoardPage } from "@/components/shared/engine-board-page";
 import { loadBoardPageData } from "@/features/boards/engine/data";
 import { checkBoardAccessBySlug } from "@/features/boards/engine/repository";
 
+// Always read fresh board data on navigation / refresh so a saved item name is
+// never served from a stale cached render.
+export const dynamic = "force-dynamic";
+
 interface DynamicBoardPageProps {
   params: Promise<{
     slug: string;

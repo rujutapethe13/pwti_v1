@@ -297,7 +297,7 @@ export interface TableViewProps {
   /** Batched new item callback (preferred for paste): creates N rows in one write, returns their IDs */
   onBulkNewItem?: (count: number, groupId?: string | null) => Promise<string[]>;
   /** Record title change callback */
-  onRecordTitleChange?: (recordId: string, title: string) => void;
+  onRecordTitleChange?: (recordId: string, title: string) => void | Promise<boolean>;
   /** Batched title change callback (preferred for paste / undo / redo) */
   onBulkRecordTitleChange?: (updates: Array<{ recordId: string; title: string }>) => Promise<void> | void;
   /** Batched cell change callback (preferred for paste / undo / redo) */
@@ -2863,26 +2863,11 @@ const flatRecords = useMemo(
                         </div>
                       );
                     }
-                    const isPrimary = column.id === getPrimaryColumn(columns, { groupId: record.groupId })?.id;
-                    const fallbackColumn = !isPrimary
-                      ? rowColumns.find((c) => ["text", "long_text", "email", "phone", "url"].includes(c.type))
-                      : undefined;
-                    const showTitleHere = isPrimary || column.id === fallbackColumn?.id;
-                    // The primary column is backed by records.title, not a
-                    // cell_values row. Prefer that canonical value so a
-                    // legacy empty/stale cell row cannot hide the title.
-                    // When the title is missing or a placeholder ("Untitled"),
-                    // fall back to the column's own cell value — imports can
-                    // populate cell_values without ever setting records.title.
-                    // If neither holds a value, render "Untitled".
-                    const cellValue =
+                    // Every column — including the first — renders and saves
+                    // through the exact same cell_values path. No title/primary
+                    // special-casing here.
+                    const value =
                       cellValues.get(getCellKey(record.id, column.id)) ?? column.defaultValue;
-                    const titleValue =
-                      !isPlaceholderTitle(record.title) ? record.title : undefined;
-                    const cellTitle = cellTitleText(cellValue);
-                    const value = showTitleHere
-                      ? (titleValue ?? (cellTitle || "Untitled"))
-                      : cellValue;
                     const metadata = cellMetadata?.get(getCellKey(record.id, column.id));
                     const hasValue = value !== null && value !== undefined && value !== "";
                     const isComputed = ["formula", "mirror", "rollup", "lookup"].includes(column.type);
@@ -2959,11 +2944,8 @@ const flatRecords = useMemo(
                           onUpdateColumnLabels={onUpdateColumnLabels}
                           onConfigureMirror={onConfigureMirror}
                           onChange={(nextValue) => {
-                            if (showTitleHere && typeof nextValue === "string") {
-                              onRecordTitleChange?.(record.id, nextValue);
-                            } else {
-                              onCellChange?.({ recordId: record.id, columnId: column.id, value: nextValue });
-                            }
+                            onCellChange?.({ recordId: record.id, columnId: column.id, value: nextValue });
+                            return void 0;
                           }}
                         />
                         {hasValue && changeLabel && (

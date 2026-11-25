@@ -9,6 +9,7 @@ import type { ApiResponse } from "@/types";
 import type { ColumnValue } from "../types";
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { invalidateDataCache } from "@/lib/board-data-cache";
 
 export async function updateCell(
   organizationId: string,
@@ -46,6 +47,17 @@ export async function updateCell(
   }
 
   const result = await CellService.update(parsed.data, "system");
+
+  // The Overview / Client 360 dashboards read a short-lived materialized scope
+  // cache. Bust it so a saved Client / Company name shows there immediately
+  // instead of after the TTL. Best-effort; never fails the save.
+  if (!result.error) {
+    try {
+      invalidateDataCache(organizationId);
+    } catch (err) {
+      console.error("[updateCell] cache invalidation failed:", err);
+    }
+  }
 
   // Record the acting user as last editor (writes use the service client,
   // so the DB trigger's auth.uid() is null).
@@ -296,12 +308,20 @@ export async function bulkUpdateRecordTitles(
 
   const now = new Date().toISOString();
 
-  const payload = updates.map((u) => ({
+  const filtered = updates.filter((u) => {
+    const incoming = (u.title ?? "").trim();
+    const isPlaceholder = incoming === "" || incoming === "Untitled";
+    const stored = oldTitles.get(u.recordId) ?? "";
+    return !(isPlaceholder && stored);
+  });
+
+  const payload = filtered.map((u) => ({
     id: u.recordId,
     title: u.title,
     updated_at: now,
     ...(userId ? { last_edited_at: now, last_edited_by: userId } : {}),
   }));
+  if (payload.length === 0) return { data: null, error: null, status: 200 };
   const { error } = await serviceClient.from("records").upsert(payload);
   if (error) {
     return { data: null, error: error.message, status: 500 };

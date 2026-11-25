@@ -10,11 +10,12 @@ import "server-only";
 
 import { RecordRepository } from "../repository/record-repository";
 import { CellRepository } from "../repository/cell-repository";
+import { ColumnRepository } from "../repository/column-repository";
 import { eventBus } from "../events/event-bus";
 import { initializeActivityLogging } from "../events/activity-log-subscriber";
 import type { DomainEventPayload } from "../events/event-types";
 import type { ApiResponse } from "@/types";
-import type { BoardRecord, ColumnValue, EntityStatus } from "../types";
+import type { BoardRecord, ColumnDefinition, ColumnValue, EntityStatus } from "../types";
 import type {
   CreateRecordInput,
   EditRecordInput,
@@ -32,6 +33,7 @@ initializeActivityLogging();
 
 const recordRepo = new RecordRepository();
 const cellRepo = new CellRepository();
+const columnRepo = new ColumnRepository();
 
 const IMPORT_BATCH_SIZE = 500;
 
@@ -294,6 +296,84 @@ export const RecordService = {
 
     if (result.data) {
       await eventBus.publish(createEvent("record.update:after", actorUserId, result.data, before as unknown as Record<string, unknown>, result.data as unknown as Record<string, unknown>));
+    }
+
+    return result;
+  },
+
+  /**
+   * Rename a record — the single source of truth for an item's name.
+   *
+   * Writes ONLY `records.title` for the given record and returns the row read
+   * back from the database (not the caller's value). Never touches cell_values,
+   * metadata, or any other column. Throws on a DB error instead of swallowing.
+   */
+  async rename(
+    recordId: string,
+    title: string,
+    actorUserId: string,
+    options?: { skipIfPlaceholder?: boolean; source?: string },
+  ): Promise<ApiResponse<BoardRecord>> {
+    const existing = await recordRepo.findById(recordId);
+    if (!existing.data || existing.error) {
+      return {
+        data: null,
+        error: existing.error ?? `record ${recordId} not found`,
+        status: existing.status || 404,
+      };
+    }
+
+    const incoming = (title ?? "").trim();
+    const isPlaceholder = incoming === "" || incoming === "Untitled";
+    const isBackground = options?.source === "sync";
+
+    // Background writers (sync/mirror/automation/realtime) must never clobber a
+    // non-empty stored title with an empty/"Untitled" incoming value.
+    if (isBackground && isPlaceholder && existing.data.title) {
+      return { data: existing.data, error: null, status: 200 };
+    }
+
+    const before = { ...existing.data };
+    const updates: Partial<BoardRecord> = { title };
+
+    await eventBus.publish(
+      createEvent("record.update:before", actorUserId, existing.data, before as unknown as Record<string, unknown>, updates as unknown as Record<string, unknown>),
+    );
+
+    const result = await recordRepo.update(recordId, updates);
+
+    if (!result.data || (Array.isArray(result.data) && result.data.length === 0)) {
+      return { data: null, error: result.error ?? "rename updated 0 rows", status: result.status || 500 };
+    }
+
+    // Mirror the title into cell_values so the first (title/primary) column
+    // persists on refresh regardless of which store the render path reads
+    // from (records.title vs cell_values). Consistent with RecordService.edit.
+    try {
+      const boardId = existing.data.boardId;
+      const cols = await columnRepo.findByBoard(boardId);
+      const primaryCol = (cols.data ?? []).find((c: ColumnDefinition) => c.isPrimary);
+      if (primaryCol) {
+        await cellRepo.upsert({
+          id: `${boardId}:${recordId}:${primaryCol.id}`,
+          organizationId: existing.data.organizationId,
+          workspaceId: existing.data.workspaceId,
+          boardId,
+          recordId,
+          columnId: primaryCol.id,
+          value: title,
+          valueText: typeof title === "string" ? title : JSON.stringify(title),
+          version: 1,
+        } as Parameters<typeof cellRepo.upsert>[0]);
+      }
+    } catch {
+      // Never fail the rename because of cell_values mirroring.
+    }
+
+    if (result.data) {
+      await eventBus.publish(
+        createEvent("record.update:after", actorUserId, result.data, before as unknown as Record<string, unknown>, result.data as unknown as Record<string, unknown>),
+      );
     }
 
     return result;

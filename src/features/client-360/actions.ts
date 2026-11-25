@@ -20,6 +20,7 @@ const CLIENT_ALIAS_GROUPS: Record<string, string[]> = {
   "nasher miles": ["nasher mile", "nasher miles"], bioweaves: ["bioweave", "bioweaves"],
   labbada: ["labada", "labbada"], "papa don't preach": ["papa don,t peach", "papa dont peach", "papa don't preach"],
   levis: ["levi's", "levis strauss & co", "levis strauss and co", "levis"], safari: ["safari select", "safari-genie", "safari"],
+  "house of kinder": ["house of kinder", "house & kinder", "house and kinder"],
 };
 const normalizeClient = (value: string) => value.toLowerCase().replace(/[’']/g, "").replace(/&/g, "and").replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 const toTitleCaseClientName = (value: string) => value.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());

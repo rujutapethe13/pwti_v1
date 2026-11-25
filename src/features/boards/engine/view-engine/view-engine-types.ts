@@ -137,7 +137,7 @@ export interface ViewRendererProps {
   }) => Promise<BoardRecord | void>;
 
   /** Rename a row (inline title editing). */
-  onRecordTitleChange?: (recordId: string, title: string) => void;
+  onRecordTitleChange?: (recordId: string, title: string) => void | Promise<boolean>;
   /** Batched title change callback (preferred for paste / undo / redo) */
   onBulkRecordTitleChange?: (updates: Array<{ recordId: string; title: string }>) => Promise<void> | void;
   /** Batched cell change callback (preferred for paste / undo / redo) */
@@ -224,7 +224,7 @@ export interface ViewEngineProps {
   }) => Promise<BoardRecord | void>;
 
   /** Rename a row (inline title editing). */
-  onRecordTitleChange?: (recordId: string, title: string) => void;
+  onRecordTitleChange?: (recordId: string, title: string) => void | Promise<boolean>;
   /** Batched title change callback (preferred for paste / undo / redo) */
   onBulkRecordTitleChange?: (updates: Array<{ recordId: string; title: string }>) => Promise<void> | void;
   /** Batched cell change callback (preferred for paste / undo / redo) */

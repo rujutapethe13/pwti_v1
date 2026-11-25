@@ -912,7 +912,7 @@ export interface CellRendererProps {
   value: ColumnValue;
   readOnly?: boolean;
   wrapText?: boolean;
-  onChange?: (value: ColumnValue) => void;
+  onChange?: (value: ColumnValue) => void | Promise<boolean>;
   /**
    * Persist a column's label list (Edit Labels "Apply").
    * Resolves to `true` only when the change was persisted.

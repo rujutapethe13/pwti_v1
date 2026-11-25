@@ -12,7 +12,7 @@ import { setPrimaryColumn, isTextCompatibleColumn, getPrimaryColumn, repairPrima
 import type { DemoBoardPageData } from "@/features/boards/engine/demo-data";
 import type { ColumnDefinition, BoardRecord, ColumnValue, BoardView, Group, EntityStatus, ColumnTypeKey, CellChangeMetadata } from "@/features/boards/engine/types";
 import { buildInitialCellValues } from "@/features/boards/engine/lib/record-defaults";
-import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkUpdateCells, bulkUpdateRecordTitles, bulkDeleteRecords, bulkUpdateRecords, bulkCreateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, editRecord, createView, updateViewSettings, deleteView, updateColumnLabels } from "@/features/boards/engine/actions";
+import { upsertBoard, upsertBoardColumns, upsertBoardRecords, upsertBoardCellValues, deleteBoardColumns, loadBoardColumns, updateCell, bulkUpdateCells, bulkUpdateRecordTitles, bulkDeleteRecords, bulkUpdateRecords, bulkCreateRecords, archiveRecord, deleteColumn, renameColumn, duplicateColumn, changeColumnType, hideColumns, updateBoardTitleColumnLabel, createGroup, renameGroup, reorderGroups, deleteGroup, updateGroupColor, updateGroupStatusOptions, moveGroup, duplicateGroup, collapseGroup, updateGroupTitleColumnLabel, updateGroupColumnMode, createRecord, saveItemName, createView, updateViewSettings, deleteView, updateColumnLabels } from "@/features/boards/engine/actions";
 import { isProtectedImportColumn } from "@/features/boards/engine/lib/import-export";
 import { resolveTitleColumnLabel } from "@/features/boards/engine/lib/title-column";
 import { applyColumnUpdates, buildColumnSettings, mergeColumns, sanitizeLabels } from "@/features/boards/engine/lib/option-lookup";
@@ -43,25 +43,7 @@ function cellValuesMapToArray(cellValues: Map<string, ColumnValue>): Array<[stri
 
 /**
  * Strip every reference to a deleted column id out of a view's settings.
- *
- * `BoardView.settings` is a discriminated union (KanbanViewSettings |
- * CalendarViewSettings | TimelineViewSettings | ...) whose fields are typed
- * specifically, so `settings[key]` does not satisfy an index signature and the
- * naive `for (const key of Object.keys(settings))` loop fails to typecheck.
- *
- * This walks the settings object recursively and, for each value:
- *  - a string equal to the deleted column id  → replaced with "" (keeps the
- *    field present so the per-view-type interface stays valid; the view simply
- *    has no column to point at anymore).
- *  - a string[]                              → the id is filtered out.
- *  - a nested object (groupBy, divideBy, ...) → recursed into.
- *
- * It is safe to walk generically because every string field in these settings
- * is either a column id, a group id, or a literal union member ("asc"/"desc",
- * "month"/"week", "status"/"person", ...). A column id can only ever match a
- * column-id field, never a group id or a literal, so nothing is cleared by
- * accident. Group-id arrays such as `groupBy.collapsedGroupIds` live in a
- * different UUID namespace and are unaffected.
+ * (See original notes: walks the settings object recursively.)
  */
 function clearColumnRefsFromViewSettings(
   settings: BoardView["settings"],
@@ -69,6 +51,33 @@ function clearColumnRefsFromViewSettings(
 ): BoardView["settings"] {
   const record = { ...settings } as Record<string, unknown>;
   return clearColumnRefsFromRecord(record, columnId) as BoardView["settings"];
+}
+
+/**
+ * A brand-new row is rendered with a temporary `pending-<uuid>` id while its
+ * `createRecord` server call is in flight. Writes against that id cannot reach
+ * the database, so callers buffer edits and replay them once the real id lands.
+ */
+function isTemporaryRecordId(recordId: string): boolean {
+  return recordId.startsWith("pending-");
+}
+
+function pendingKey(itemId: string): string {
+  return `pending:${itemId}`;
+}
+function writePending(itemId: string, name: string): void {
+  try {
+    window.localStorage.setItem(pendingKey(itemId), name);
+  } catch {
+    /* localStorage unavailable — draft lives only in optimistic state */
+  }
+}
+function clearPending(itemId: string): void {
+  try {
+    window.localStorage.removeItem(pendingKey(itemId));
+  } catch {
+    /* ignore */
+  }
 }
 
 function clearColumnRefsFromRecord(
@@ -150,6 +159,60 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
   // import is in flight. Reset when the wizard closes.
   const importCleanupDoneRef = useRef(false);
 
+  // Drafts for in-flight item-name saves, persisted to localStorage so a
+  // refresh or board switch can never lose a typed Client / Company name. The
+  // draft is cleared only after saveItemName confirms.
+  const pendingCellRef = useRef(new Map<string, Map<string, ColumnValue>>());
+  // Last title the SERVER confirmed for each record. The only thing the
+  // "nothing changed" check compares against.
+  const lastSavedTitleRef = useRef(new Map<string, string>());
+  // Late-bound references so handleCellChange / handleBulkCellChange (defined
+  // earlier) can route primary-column edits to the title save functions that
+  // are defined further down.
+  const saveNameRef = useRef<((boardId: string, itemId: string, name: string) => Promise<boolean>) | null>(null);
+  const bulkTitleRef = useRef<((updates: Array<{ recordId: string; title: string }>) => Promise<void>) | null>(null);
+
+  // On board load, re-send any draft left in localStorage from a previous
+  // session (refresh / board switch) so a pending name save is never lost.
+  // The value is shown meanwhile, then cleared once the server confirms.
+  useEffect(() => {
+    const pending: Array<{ itemId: string; name: string }> = [];
+    try {
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (key && key.startsWith("pending:")) {
+          const name = window.localStorage.getItem(key);
+          if (name) {
+            pending.push({ itemId: key.slice("pending:".length), name });
+          }
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+    if (pending.length === 0) return;
+    void (async () => {
+      for (const p of pending) {
+        const record = records.find((r) => r.id === p.itemId);
+        if (!record) continue;
+        // Show the draft meanwhile.
+        setRecords((prev) =>
+          prev.map((r) => (r.id === p.itemId ? { ...r, title: p.name } : r)),
+        );
+        try {
+          const response = await saveItemName({ boardId: board.id, itemId: p.itemId, newName: p.name });
+          if (!response.error && response.data) {
+            clearPending(p.itemId);
+            lastSavedTitleRef.current.set(p.itemId, response.data.title);
+          }
+        } catch {
+          /* leave the draft in localStorage; it will be retried next load */
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [board.id]);
+
   useEffect(() => {
     columnMapRef.current = new Map(columns.map((c) => [c.id, c]));
   }, [columns]);
@@ -223,6 +286,8 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
 
   const handleCellChange = useCallback(
     async ({ recordId, columnId, value }: { recordId: string; columnId: string; value: ColumnValue }) => {
+      // Every column — including the first — is stored in cell_values through
+      // this one handler. No records.title special-casing.
       const key = `${recordId}:${columnId}`;
       const prevValue = cellValues.get(key) ?? null;
       const prevRecord = records.find((r) => r.id === recordId);
@@ -233,6 +298,17 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         next.set(key, value);
         return next;
       });
+
+      // A new row that has not been persisted yet still has a temporary id.
+      // Buffer the cell edit and replay it in handleNewItem once the real id
+      // exists, so a fast edit on a brand-new row is never silently dropped.
+      if (isTemporaryRecordId(recordId)) {
+        const forRecord = pendingCellRef.current.get(recordId) ?? new Map<string, ColumnValue>();
+        forRecord.set(columnId, value);
+        pendingCellRef.current.set(recordId, forRecord);
+        return;
+      }
+
       setRecords((prev) =>
         prev.map((r) => (r.id === recordId ? { ...r, updatedAt: new Date().toISOString() } : r)),
       );
@@ -298,8 +374,37 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
 
   /** Batched cell update for paste: one optimistic state update, one server write. */
   const handleBulkCellChange = useCallback(
-    async (updates: Array<{ recordId: string; columnId: string; value: ColumnValue }>) => {
+    async (allUpdates: Array<{ recordId: string; columnId: string; value: ColumnValue }>) => {
+      if (!allUpdates.length) return;
+
+      // Determine title column per record (primary or fallback text column in that record's row)
+      const titleUpdates: Array<{ recordId: string; title: string }> = [];
+      const updates = allUpdates.filter((u) => {
+        const record = records.find((r) => r.id === u.recordId);
+        const group = record ? groups.find((g) => g.id === record.groupId) : undefined;
+        const isCustomGroup = group?.columnMode === "custom";
+        const rowColumns = isCustomGroup
+          ? columns.filter((c) => c.groupId === group!.id && !c.hidden)
+          : columns.filter((c) => !c.groupId && !c.hidden);
+        const primaryId = getPrimaryColumn(columnsRef.current, { groupId: record?.groupId ?? null })?.id;
+        const fallbackId = !primaryId
+          ? rowColumns.find((c) => ["text", "long_text", "email", "phone", "url"].includes(c.type))?.id
+          : undefined;
+        const isTitleColumn = primaryId && u.columnId === primaryId || fallbackId && u.columnId === fallbackId;
+        if (isTitleColumn) {
+          titleUpdates.push({
+            recordId: u.recordId,
+            title: typeof u.value === "string" ? u.value : String(u.value ?? ""),
+          });
+          return false;
+        }
+        return true;
+      });
+      if (titleUpdates.length > 0) {
+        void bulkTitleRef.current?.(titleUpdates);
+      }
       if (!updates.length) return;
+
       setPasteProgress({ active: true, total: updates.length });
 
       const prevCellValues = new Map(cellValues);
@@ -323,6 +428,7 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         if (response.error) {
           setCellValues(prevCellValues);
           setRecords(prevRecords);
+          setPasteProgress(null);
           toast.error(response.error);
         } else {
           setPasteProgress(null);
@@ -380,9 +486,11 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
         );
         if (response.error) {
           setRecords(prevRecords);
+          setPasteProgress(null);
           toast.error(response.error);
         } else {
           setPasteProgress(null);
+          for (const u of updates) lastSavedTitleRef.current.set(u.recordId, u.title);
         }
       } catch {
         setRecords(prevRecords);
@@ -392,6 +500,7 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
     },
     [board, records],
   );
+  bulkTitleRef.current = handleBulkRecordTitleChange;
 
    const handleBulkDelete = useCallback(
      async (recordIds: string[]) => {
@@ -406,7 +515,6 @@ export function EngineBoardPage({ data }: EngineBoardPageProps) {
            setRecords(prev => prev.filter(r => uuidRegex.test(r.id)));
            toast.warning(`Removed ${invalidRecords.length} invalid record(s) from the board.`);
          }
-         // Also, we might want to remove the invalid IDs from the recordIds array for the API call, but we already have validIds.
        }
 
        if (validIds.length === 0) {
@@ -1282,13 +1390,6 @@ setImporting(true);
         // has succeeded. Only the unmapped default columns are removed; mapped
         // default columns stay and hold the imported data. If the import had
         // failed above, this block is never reached and nothing is deleted.
-        //
-        // The delete list comes from the column plan built in the wizard, so it
-        // contains live ColumnDefinition objects with real backend ids. A stale
-        // id (non-UUID demo placeholder, an id that no longer exists after the
-        // upsert, or a leftover from a previous run) would make the
-        // deleteBoardColumns endpoint reject the whole batch with
-        // "invalid column id" and leave every unmapped default column behind.
          setRecords((prev) => [...prev, ...newRecords]);
         setCellValues((prev) => {
           const next = new Map(prev);
@@ -1636,6 +1737,7 @@ setImporting(true);
       }
 
       const created = response.data;
+      lastSavedTitleRef.current.set(created.id, created.title);
       setRecords((prev) => [...prev, created]);
       setCellValues((prev) => {
         const next = new Map(prev);
@@ -1672,36 +1774,15 @@ setImporting(true);
 
       const cellValues = buildInitialCellValues(columns);
 
-      const temporaryId = `pending-${crypto.randomUUID()}`;
-      const now = new Date().toISOString();
-      const optimistic: BoardRecord = {
-        id: temporaryId,
-        organizationId: board.organizationId,
-        workspaceId: board.workspaceId,
-        boardId: board.id,
-        groupId,
-        title: "Untitled",
-        status: "active",
-        version: 1,
-        archivedAt: null,
-        createdAt: now,
-        updatedAt: now,
-      };
-      setRecords((prev) => [...prev, optimistic]);
-      try {
-        const created = await handleRecordCreate({ title: "Untitled", cellValues, groupId });
-        if (!created) {
-          setRecords((prev) => prev.filter((record) => record.id !== temporaryId));
-          return;
-        }
-        setRecords((prev) => [
-          ...prev.filter((record) => record.id !== created.id),
-        ].map((record) => record.id === temporaryId ? created : record));
-        return created.id;
-      } catch (error) {
-        setRecords((prev) => prev.filter((record) => record.id !== temporaryId));
-        toast.error(error instanceof Error ? error.message : "Failed to create the item.");
+      // Insert the row in the database first and use the returned (real) id.
+      // handleRecordCreate adds the persisted record to state under its DB id,
+      // so any later edit targets that same row. There is no temporary id.
+      const created = await handleRecordCreate({ title: "Untitled", cellValues, groupId });
+      if (!created) {
+        return;
       }
+
+      return created.id;
     },
     [board, columns, groups, handleRecordCreate],
   );
@@ -1763,38 +1844,79 @@ setImporting(true);
     [board, columns, groups, bulkCreateRecords, createGroup],
   );
 
-  /** Rename a row from a view (inline title editing). */
-  const handleRecordTitleChange = useCallback(
-    async (recordId: string, title: string) => {
-      const previous = records.find((record) => record.id === recordId)?.title;
-      if (previous === title) return;
+  /**
+   * Dedicated save for the item name (the first / "Client / Company" column).
+   *
+   * Single source of truth is `records.title` — the exact field the board
+   * loader reads. Resolves `true` on success and `false` on failure.
+   */
+  const saveItemNameForRecord = useCallback(
+    async (boardId: string, itemId: string, newName: string): Promise<boolean> => {
 
+      // Skip ONLY when the server has already confirmed this exact title.
+      // Never compare against local state: the optimistic update would make
+      // every real edit look "unchanged".
+      if (lastSavedTitleRef.current.get(itemId) === newName) {
+        return true;
+      }
+
+      // Persist the typed draft to localStorage before the save is in flight so
+      // a refresh or board switch can never lose it. It is cleared only after
+      // the server confirms. On error the typed value is kept (no revert).
+      writePending(itemId, newName);
+
+      // Optimistic update so the typed value is visible immediately.
       setRecords((prev) =>
-        prev.map((record) => (record.id === recordId ? { ...record, title } : record)),
+        prev.map((r) => (r.id === itemId ? { ...r, title: newName } : r)),
       );
 
-      const formData = new FormData();
-      formData.set("recordId", recordId);
-      formData.set("title", title);
-
-      const response = await editRecord(formData);
-      if (response.error) {
-        if (previous !== undefined) {
-          setRecords((prev) =>
-            prev.map((record) =>
-              record.id === recordId ? { ...record, title: previous } : record,
-            ),
-          );
-        }
-        toast.error(response.error);
+      let response: Awaited<ReturnType<typeof saveItemName>>;
+      try {
+        response = await saveItemName({ boardId, itemId, newName });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error("[saveItemName] threw:", message, { itemId, newName });
+        toast.error(message);
+        return false; // draft stays in localStorage; typed value is kept
       }
+
+      if (response.error || !response.data) {
+        const message =
+          typeof response.error === "string" && response.error
+            ? response.error
+            : "Failed to save the name.";
+        console.error("[saveItemName] save failed:", message, { itemId, newName });
+        toast.error(message);
+        return false; // draft stays in localStorage; typed value is kept
+      }
+
+      // Success: adopt the server's returned row and clear the pending draft.
+      const saved = response.data;
+      clearPending(itemId);
+      lastSavedTitleRef.current.set(itemId, saved.title);
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === itemId
+            ? { ...r, title: saved.title, updatedAt: saved.updatedAt }
+            : r,
+        ),
+      );
+      return true;
     },
-    [records],
+    [],
+  );
+  saveNameRef.current = saveItemNameForRecord;
+
+  /** Rename a row from a view (inline title editing). */
+  const handleRecordTitleChange = useCallback(
+    (recordId: string, title: string): Promise<boolean> =>
+      saveItemNameForRecord(board.id, recordId, title),
+    [board.id, saveItemNameForRecord],
   );
 
   return (
     <MirrorDataProvider boardId={board.id} cellValues={cellValues} columns={columns}
-        groups={groups} records={records}>
+        records={records}>
       <>
         <BoardLayout
         boardId={board.id}

@@ -43,13 +43,22 @@ const ALIAS_GROUPS: Record<string, string[]> = {
   bioweaves: ["bioweave", "bioweaves"],
   "nasher miles": ["nasher mile", "nasher miles"],
   "papa don't preach": ["papa don,t peach", "papa dont peach", "papa don't preach"],
+  "house of kinder": ["house of kinder", "house & kinder", "house and kinder"],
 };
 
 function applyAliasGroup(normalized: string): string {
+  for (const [canonical, aliases] of Object.entries(ALIAS_GROUPS)) {
+    if (aliases.some((a) => normalizeClientName(a) === normalized)) {
+      return canonical;
+    }
+  }
   return normalized;
 }
 
 function toTitleCase(name: string): string {
+  const overrides: Record<string, string> = { "house of kinder": "House of Kinder" };
+  const lower = name.toLowerCase().trim();
+  if (overrides[lower]) return overrides[lower];
   return name
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());

@@ -28,7 +28,7 @@ export interface CellRendererComponentProps {
   organizationId: string;
   workspaceId: string;
   readOnly?: boolean;
-  onChange?: (value: ColumnValue) => void;
+  onChange?: (value: ColumnValue) => void | Promise<boolean>;
   onKeyDown?: (e: React.KeyboardEvent) => void;
   focused?: boolean;
   /**

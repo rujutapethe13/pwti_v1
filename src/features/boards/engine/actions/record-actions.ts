@@ -15,6 +15,24 @@ import {
 import { RecordService } from "../services/record-service";
 import type { ApiResponse } from "@/types";
 import type { BoardRecord } from "../types";
+import { invalidateDataCache } from "@/lib/board-data-cache";
+import { revalidatePath } from "next/cache";
+
+/**
+ * Drop the cached render of a board (by slug) plus the cross-board dashboards
+ * so a renamed Client / Company item is re-read fresh on the next navigation or
+ * refresh instead of being served from Next's RSC cache.
+ */
+function revalidateAfterNameSave(boardId: string): void {
+  try {
+    if (boardId) revalidatePath(`/${boardId}`);
+    revalidatePath("/boards-hub");
+    revalidatePath("/client-360");
+    revalidatePath("/");
+  } catch (err) {
+    console.error("[revalidateAfterNameSave] revalidation failed:", err);
+  }
+}
 
 export async function createRecord(formData: FormData): Promise<ApiResponse<BoardRecord>> {
   const rawGroupId = formData.get("groupId");
@@ -31,7 +49,21 @@ export async function createRecord(formData: FormData): Promise<ApiResponse<Boar
     return { data: null, error: parsed.error.flatten().fieldErrors as unknown as string, status: 400 };
   }
 
-  return RecordService.create(parsed.data, "system");
+  const result = await RecordService.create(parsed.data, "system");
+
+  // Keep the board fresh after a create so the new row (and its real id) is
+  // re-read instead of served from Next's RSC cache, and clear the shared
+  // Overview / Client 360 data cache for the org.
+  if (!result.error && result.data) {
+    try {
+      revalidatePath(`/${result.data.boardId}`);
+      invalidateDataCache(result.data.organizationId);
+    } catch (err) {
+      console.error("[createRecord] cache invalidation failed:", err);
+    }
+  }
+
+  return result;
 }
 
 export async function editRecord(formData: FormData): Promise<ApiResponse<BoardRecord>> {
@@ -46,7 +78,61 @@ export async function editRecord(formData: FormData): Promise<ApiResponse<BoardR
     return { data: null, error: parsed.error.flatten().fieldErrors as unknown as string, status: 400 };
   }
 
-  return RecordService.edit(parsed.data, "system");
+  const result = await RecordService.edit(parsed.data, "system");
+
+  // Keep the Overview / Client 360 materialized scope fresh after a rename.
+  if (!result.error && result.data) {
+    try {
+      invalidateDataCache(result.data.organizationId);
+    } catch (err) {
+      console.error("[editRecord] cache invalidation failed:", err);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * saveItemName — dedicated, single-purpose rename used by the board Table view.
+ *
+ * Updates the item's name (`records.title`) and nothing else, then returns the
+ * row read back from the database. The DB id is the real record id; a temporary
+ * local id is rejected by the schema (min length) and by RecordService.rename.
+ * Any error is returned verbatim to the caller — nothing is swallowed here.
+ */
+export async function saveItemName(input: {
+  boardId: string;
+  itemId: string;
+  newName: string;
+}): Promise<ApiResponse<BoardRecord>> {
+  const itemId = (input.itemId ?? "").trim();
+  const newName = input.newName ?? "";
+
+  if (!itemId || itemId.startsWith("pending-")) {
+    return {
+      data: null,
+      error: "Cannot save a name for an item that has not been persisted yet.",
+      status: 400,
+    };
+  }
+
+  // Never let an empty or placeholder ("Untitled") incoming value clobber a
+  // name that is already stored in the database. Sync, refresh, mirror and
+  // automation writers must not reset a persisted Client / Company name.
+   const result = await RecordService.rename(itemId, newName, "system");
+
+  // Keep every surface that reads the name fresh: the in-memory Overview /
+  // Client 360 scope cache AND Next's rendered board/dashboard pages.
+  if (!result.error && result.data) {
+    try {
+      invalidateDataCache(result.data.organizationId);
+    } catch (err) {
+      console.error("[saveItemName] cache invalidation failed:", err);
+    }
+    revalidateAfterNameSave(input.boardId);
+  }
+
+  return result;
 }
 
 export async function duplicateRecord(recordId: string): Promise<ApiResponse<BoardRecord>> {

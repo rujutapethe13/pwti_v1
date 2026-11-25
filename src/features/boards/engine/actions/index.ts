@@ -63,6 +63,7 @@ export {
 export {
   createRecord,
   editRecord,
+  saveItemName,
   duplicateRecord,
   deleteRecord,
   archiveRecord,

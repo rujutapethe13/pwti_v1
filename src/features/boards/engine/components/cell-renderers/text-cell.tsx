@@ -34,7 +34,7 @@ export function TextCell({
       onChange={handleChange}
       onKeyDown={onKeyDown}
       placeholder="Type here..."
-      className="h-8 border-0 bg-transparent px-2 text-sm shadow-none focus-visible:bg-muted/50 focus-visible:ring-1 focus-visible:ring-ring"
+      className="relative z-20 h-8 border-0 bg-transparent px-2 text-sm shadow-none focus-visible:bg-muted/50 focus-visible:ring-1 focus-visible:ring-ring"
     />
   );
 }

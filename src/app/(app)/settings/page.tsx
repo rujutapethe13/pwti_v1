@@ -1,6 +1,8 @@
 import { EngineBoardPage } from "@/components/shared/engine-board-page";
 import { loadBoardPageData } from "@/features/boards/engine/data";
 
+export const dynamic = "force-dynamic";
+
 export default async function SettingsPage() {
   const data = await loadBoardPageData("settings");
 

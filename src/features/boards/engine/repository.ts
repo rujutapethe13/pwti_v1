@@ -299,6 +299,32 @@ export async function loadBoardBySlug(
     if (metadata) cellMetadata.push(metadata);
   }
 
+  // Backfill: the first column of each scope is stored in cell_values like every
+  // other column. Legacy rows may still hold their first-column value only in
+  // records.title. Copy it into cell_values once (in memory) so old data is not
+  // lost and the first column renders from the same store as the rest.
+  {
+    const existing = new Set(cellValues.map(([k]) => k));
+    const firstColByScope = new Map<string, string>();
+    for (const col of (columnRows ?? []) as DatabaseRow[]) {
+      const scope = asString((col as DatabaseRow).group_id ?? (col as DatabaseRow).groupId) || "";
+      if (!firstColByScope.has(scope)) {
+        firstColByScope.set(scope, asString((col as DatabaseRow).id));
+      }
+    }
+    for (const rec of (recordRows ?? []) as DatabaseRow[]) {
+      const scope = asString((rec as DatabaseRow).group_id ?? (rec as DatabaseRow).groupId) || "";
+      const firstColId = firstColByScope.get(scope);
+      const recordId = asString((rec as DatabaseRow).id);
+      const title = asString((rec as DatabaseRow).title);
+      if (!firstColId || !recordId || !title) continue;
+      const key = `${recordId}:${firstColId}`;
+      if (existing.has(key)) continue;
+      cellValues.push([key, title]);
+      existing.add(key);
+    }
+  }
+
   const views = (viewRows ?? []).map((row) => toBoardView(row as DatabaseRow));
 
   return {
